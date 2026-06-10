@@ -18,6 +18,7 @@ def rule(_fn: Callable | None = None, **resources):
     Positional args = parent Nodes (must be annotated Node). All kwargs = config.
     Resources (threads, memory, …) declared at decoration time: @rule(threads=4).
     """
+
     def decorator(fn: Callable) -> Callable:
         _params = [
             (name, param)
@@ -30,16 +31,20 @@ def rule(_fn: Callable | None = None, **resources):
                 annotated_node = param.annotation is Node
                 is_node = isinstance(val, Node)
                 if annotated_node and not is_node:
-                    raise TypeError(f"{fn.__name__}: {name!r} annotated as Node, got {type(val).__name__!r}")
+                    raise TypeError(
+                        f"{fn.__name__}: {name!r} annotated as Node, got {type(val).__name__!r}"
+                    )
                 if is_node and not annotated_node:
-                    raise TypeError(f"{fn.__name__}: {name!r} is a Node but missing Node annotation")
+                    raise TypeError(
+                        f"{fn.__name__}: {name!r} is a Node but missing Node annotation"
+                    )
             parents = [a for a in args if isinstance(a, Node)]
             result = fn(*parents, **kwargs)
             nodes = (result,) if isinstance(result, Node) else tuple(result)
             for node in nodes:
                 node.parents = parents
                 node.config = kwargs
-                node.rule = fn
+                node.rule = wrapper
             return result
 
         wrapper.__name__ = fn.__name__
