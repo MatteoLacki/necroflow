@@ -5,7 +5,7 @@ try:
 except NameError:
     pass
 
-from necroflow import Node, rule
+from necroflow import Node, Pipeline, rule
 
 
 @rule
@@ -30,13 +30,12 @@ def quantify(bam: Node, *, gene_model):
 
 # --- build DAG ---
 
-fastq = raw_fastq(path="/data/sample.fastq.gz")
-
-bam, align_log = align(fastq, ref="hg38")
-
-sorted_bam = sort_bam(bam)
-
-counts, qc = quantify(sorted_bam, gene_model="gencode_v44")
+pipeline = Pipeline()
+with pipeline:
+    fastq = raw_fastq(path="/data/sample.fastq.gz")
+    bam, align_log = align(fastq, ref="hg38")
+    sorted_bam = sort_bam(bam)
+    counts, qc = quantify(sorted_bam, gene_model="gencode_v44")
 
 # --- inspect ---
 
@@ -50,3 +49,5 @@ print(
 )
 print(f"counts      output_name={counts.output_name!r}  config={counts.config}")
 print(f"qc          output_name={qc.output_name!r}")
+
+pipeline.plot()

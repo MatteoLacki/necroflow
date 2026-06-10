@@ -11,15 +11,16 @@ authors=[
     {name="MatteoLacki",email="matteo.lacki@gmail.com"},
 ]
 requires-python = ">=3.6"
-# dependencies = [
-#     "click",
-# ]
+dependencies = [
+    "networkx",
+    "matplotlib",
+]
 
-# [project.optional-dependencies]
-# dev = [
-#     "twine",
-#     "pytest",
-# ]
+[project.optional-dependencies]
+dev = [
+    "twine",
+    "pytest",
+]
 
 
 [project.scripts]

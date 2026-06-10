@@ -45,6 +45,12 @@ def rule(_fn: Callable | None = None, **resources):
                 node.parents = parents
                 node.config = kwargs
                 node.rule = wrapper
+            from necroflow.pipeline import _active_pipeline
+
+            p = _active_pipeline.get()
+            if p is not None:
+                for node in nodes:
+                    p._register(node)
             return result
 
         wrapper.__name__ = fn.__name__
