@@ -1,55 +1,52 @@
 from __future__ import annotations
+import inspect
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass
 class Node:
-    rule_name: str
-    parents: list[Node]
-    config: dict[str, Any]
-    output_name: str | None = None  # set for multi-output rules
+    output_name: str | None = None
+    parents: list[Node] = field(default_factory=list)
+    config: dict[str, Any] = field(default_factory=dict)
+    rule: Callable | None = None
 
 
-def rule(fn=None, *, outputs: list[str] | None = None):
-    """Decorator turning a function into a DAG rule.
+def rule(_fn: Callable | None = None, **resources):
+    """Decorator: intercepts call, injects parents + config into returned Node(s).
 
-    Single-output (default): returns Node.
-    Multi-output: @rule(outputs=["a", "b"]) returns tuple[Node, ...].
+    Positional args = parent Nodes (must be annotated Node). All kwargs = config.
+    Resources (threads, memory, …) declared at decoration time: @rule(threads=4).
     """
-    def decorator(fn):
-        def wrapper(*parents: Node, config: dict | None = None):
-            cfg = config or {}
-            if outputs is None:
-                return Node(rule_name=fn.__name__, parents=list(parents), config=cfg)
-            return tuple(
-                Node(rule_name=fn.__name__, parents=list(parents), config=cfg, output_name=name)
-                for name in outputs
-            )
+    def decorator(fn: Callable) -> Callable:
+        _params = [
+            (name, param)
+            for name, param in inspect.signature(fn).parameters.items()
+            if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD)
+        ]
+
+        def wrapper(*args, **kwargs):
+            for (name, param), val in zip(_params, args):
+                annotated_node = param.annotation is Node
+                is_node = isinstance(val, Node)
+                if annotated_node and not is_node:
+                    raise TypeError(f"{fn.__name__}: {name!r} annotated as Node, got {type(val).__name__!r}")
+                if is_node and not annotated_node:
+                    raise TypeError(f"{fn.__name__}: {name!r} is a Node but missing Node annotation")
+            parents = [a for a in args if isinstance(a, Node)]
+            result = fn(*parents, **kwargs)
+            nodes = (result,) if isinstance(result, Node) else tuple(result)
+            for node in nodes:
+                node.parents = parents
+                node.config = kwargs
+                node.rule = fn
+            return result
+
         wrapper.__name__ = fn.__name__
         wrapper.__wrapped__ = fn
+        wrapper.resources = resources
         return wrapper
 
-    if fn is not None:
-        return decorator(fn)
-    return decorator
-
-
-def input_rule(fn=None, *, outputs: list[str] | None = None):
-    """Like @rule but takes no parent nodes — wraps external inputs."""
-    def decorator(fn):
-        def wrapper(*, config: dict | None = None):
-            cfg = config or {}
-            if outputs is None:
-                return Node(rule_name=fn.__name__, parents=[], config=cfg)
-            return tuple(
-                Node(rule_name=fn.__name__, parents=[], config=cfg, output_name=name)
-                for name in outputs
-            )
-        wrapper.__name__ = fn.__name__
-        wrapper.__wrapped__ = fn
-        return wrapper
-
-    if fn is not None:
-        return decorator(fn)
+    if _fn is not None:
+        return decorator(_fn)
     return decorator
