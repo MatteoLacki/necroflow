@@ -50,4 +50,36 @@ print(
 print(f"counts      output_name={counts.output_name!r}  config={counts.config}")
 print(f"qc          output_name={qc.output_name!r}")
 
+print(pipeline)
 pipeline.plot()
+
+# --- diamond DAG ---
+
+
+@rule
+def call_variants(bam: Node, *, caller):
+    return Node()
+
+
+@rule
+def annotate(vcf: Node, *, db):
+    return Node()
+
+
+@rule
+def merge_annotations(snp_ann: Node, indel_ann: Node):
+    return Node()
+
+
+diamond_pipeline = Pipeline()
+with diamond_pipeline:
+    fastq2 = raw_fastq(path="/data/sample2.fastq.gz")
+    bam2, _ = align(fastq2, ref="hg38")
+    snp_vcf = call_variants(bam2, caller="haplotypecaller")
+    indel_vcf = call_variants(bam2, caller="mutect2")
+    snp_ann = annotate(snp_vcf, db="dbsnp")
+    indel_ann = annotate(indel_vcf, db="clinvar")
+    merged = merge_annotations(snp_ann, indel_ann)
+
+print(diamond_pipeline)
+diamond_pipeline.plot()
