@@ -5,81 +5,78 @@ try:
 except NameError:
     pass
 
-from necroflow import Node, Pipeline, rule
+from necroflow import Node, NodeType, node_types, Pipeline, rule
+
+# --- node types ---
+
+Fastq, Bam, Log, SortedBam, Counts, QcReport, Vcf, AnnotatedVcf, MergedVcf = node_types(
+    "fastq bam log sorted_bam counts qc_report vcf annotated_vcf merged_vcf"
+)
+
+
+# --- rules ---
 
 
 @rule
 def raw_fastq(*, path):
-    return Node()
+    return Fastq()
 
 
 @rule(threads=4)
-def align(fastq: Node, *, ref):
-    return Node("bam"), Node("log")
+def align(fastq: Fastq, *, ref):
+    return Bam("bam"), Log("log")
 
 
 @rule
-def sort_bam(bam: Node):
-    return Node()
+def sort_bam(bam: Bam):
+    return SortedBam()
 
 
 @rule
-def quantify(bam: Node, *, gene_model):
-    return Node("counts"), Node("qc_report")
+def quantify(bam: SortedBam, *, gene_model):
+    return Counts("counts"), QcReport("qc_report")
 
 
-# --- build DAG ---
+# --- linear pipeline ---
 
-pipeline = Pipeline()
-with pipeline:
-    fastq = raw_fastq(path="/data/sample.fastq.gz")
-    bam, align_log = align(fastq, ref="hg38")
-    sorted_bam = sort_bam(bam)
-    counts, qc = quantify(sorted_bam, gene_model="gencode_v44")
+P = Pipeline()
+P.fastq = raw_fastq(path="/data/sample.fastq.gz")
+P.bam, P.align_log = align(P.fastq, ref="hg38")
+P.sorted_bam = sort_bam(P.bam)
+P.counts, P.qc = quantify(P.sorted_bam, gene_model="gencode_v44")
 
-# --- inspect ---
+print(P)
+P.plot()
 
-print(f"fastq       rule={fastq.rule.__name__!r}  parents={fastq.parents}")
-print(
-    f"bam         output_name={bam.output_name!r}  parents=[{bam.parents[0].rule.__name__!r}]"
-)
-print(f"align_log   output_name={align_log.output_name!r}")
-print(
-    f"sorted_bam  parents=[{sorted_bam.parents[0].output_name!r} from {sorted_bam.parents[0].rule.__name__!r}]"
-)
-print(f"counts      output_name={counts.output_name!r}  config={counts.config}")
-print(f"qc          output_name={qc.output_name!r}")
-
-print(pipeline)
-pipeline.plot()
-
-# --- diamond DAG ---
+# --- diamond pipeline ---
 
 
 @rule
-def call_variants(bam: Node, *, caller):
-    return Node()
+def call_variants(bam: SortedBam, *, caller):
+    return Vcf()
 
 
 @rule
-def annotate(vcf: Node, *, db):
-    return Node()
+def annotate(vcf: Vcf, *, db):
+    return AnnotatedVcf()
 
 
 @rule
-def merge_annotations(snp_ann: Node, indel_ann: Node):
-    return Node()
+def merge_annotations(snp_ann: AnnotatedVcf, indel_ann: AnnotatedVcf):
+    return MergedVcf()
 
 
-diamond_pipeline = Pipeline()
-with diamond_pipeline:
-    fastq2 = raw_fastq(path="/data/sample2.fastq.gz")
-    bam2, _ = align(fastq2, ref="hg38")
-    snp_vcf = call_variants(bam2, caller="haplotypecaller")
-    indel_vcf = call_variants(bam2, caller="mutect2")
-    snp_ann = annotate(snp_vcf, db="dbsnp")
-    indel_ann = annotate(indel_vcf, db="clinvar")
-    merged = merge_annotations(snp_ann, indel_ann)
+D = Pipeline()
+D.fastq = raw_fastq(path="/data/sample2.fastq.gz")
+D.bam, D.align_log = align(D.fastq, ref="hg38")
+D.sorted_bam = sort_bam(D.bam)
+D.snp_vcf = call_variants(D.sorted_bam, caller="haplotypecaller")
+D.indel_vcf = call_variants(D.sorted_bam, caller="mutect2")
+D.snp_ann = annotate(D.snp_vcf, db="dbsnp")
+D.indel_ann = annotate(D.indel_vcf, db="clinvar")
+D.merged = merge_annotations(D.snp_ann, D.indel_ann)
 
-print(diamond_pipeline)
-diamond_pipeline.plot()
+
+print(D)
+D.plot()
+# D.fastq

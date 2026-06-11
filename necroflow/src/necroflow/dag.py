@@ -4,9 +4,34 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 
+class NodeType:
+    """Lightweight named node type. Use as annotation and as factory.
+
+    Fastq = NodeType("fastq")
+
+    @rule
+    def align(fastq: Fastq, *, ref):
+        return Bam("bam"), Bam("log")
+    """
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def __call__(self, output_name: str | None = None) -> Node:
+        return Node(output_name=output_name, node_type=self)
+
+    def __repr__(self) -> str:
+        return f"NodeType({self.name!r})"
+
+
+def node_types(names: str) -> tuple[NodeType, ...]:
+    return tuple(NodeType(n) for n in names.split())
+
+
 @dataclass
 class Node:
     output_name: str | None = None
+    node_type: NodeType | None = None
     parents: list[Node] = field(default_factory=list)
     config: dict[str, Any] = field(default_factory=dict)
     rule: Callable | None = None
@@ -15,8 +40,9 @@ class Node:
 def rule(_fn: Callable | None = None, **resources):
     """Decorator: intercepts call, injects parents + config into returned Node(s).
 
-    Positional args = parent Nodes (must be annotated Node). All kwargs = config.
-    Resources (threads, memory, …) declared at decoration time: @rule(threads=4).
+    Positional args = parent Nodes. All kwargs = config.
+    Annotations must be NodeType instances; types are checked at call time.
+    Resources declared at decoration time: @rule(threads=4).
     """
 
     def decorator(fn: Callable) -> Callable:
@@ -28,16 +54,24 @@ def rule(_fn: Callable | None = None, **resources):
 
         def wrapper(*args, **kwargs):
             for (name, param), val in zip(_params, args):
-                annotated_node = param.annotation is Node
+                ann = param.annotation
+                is_nodetype = isinstance(ann, NodeType)
                 is_node = isinstance(val, Node)
-                if annotated_node and not is_node:
+
+                if is_nodetype and not is_node:
                     raise TypeError(
-                        f"{fn.__name__}: {name!r} annotated as Node, got {type(val).__name__!r}"
+                        f"{fn.__name__}: {name!r} expected {ann!r}, got {type(val).__name__!r}"
                     )
-                if is_node and not annotated_node:
+                if is_node and not is_nodetype:
                     raise TypeError(
-                        f"{fn.__name__}: {name!r} is a Node but missing Node annotation"
+                        f"{fn.__name__}: {name!r} is a Node but annotation is not a NodeType"
                     )
+                if is_nodetype and is_node and val.node_type is not ann:
+                    got = repr(val.node_type)
+                    raise TypeError(
+                        f"{fn.__name__}: {name!r} expected {ann!r}, got {got}"
+                    )
+
             parents = [a for a in args if isinstance(a, Node)]
             result = fn(*parents, **kwargs)
             nodes = (result,) if isinstance(result, Node) else tuple(result)
@@ -45,12 +79,6 @@ def rule(_fn: Callable | None = None, **resources):
                 node.parents = parents
                 node.config = kwargs
                 node.rule = wrapper
-            from necroflow.pipeline import _active_pipeline
-
-            p = _active_pipeline.get()
-            if p is not None:
-                for node in nodes:
-                    p._register(node)
             return result
 
         wrapper.__name__ = fn.__name__
