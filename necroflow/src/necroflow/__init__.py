@@ -6,6 +6,8 @@ from necroflow.dag import (
     Outputs,
     Constraints,
     Rules,
+    resolve_paths,
+    resolve_command,
 )
 from necroflow.pipeline import Pipeline
 
@@ -17,5 +19,7 @@ __all__ = [
     "Outputs",
     "Constraints",
     "Rules",
+    "resolve_paths",
+    "resolve_command",
     "Pipeline",
 ]

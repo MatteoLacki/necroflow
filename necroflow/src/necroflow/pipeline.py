@@ -149,6 +149,11 @@ class Pipeline:
 
         return "\n".join(lines)
 
+    def resolve_paths(self, outdir) -> None:
+        from necroflow.dag import resolve_paths
+
+        resolve_paths(object.__getattribute__(self, "nodes"), outdir)
+
     def __repr__(self) -> str:
         return str(self)
 

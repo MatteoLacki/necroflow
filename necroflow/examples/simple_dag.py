@@ -5,6 +5,7 @@ try:
 except NameError:
     pass
 
+from pprint import pprint
 from necroflow import (
     Node,
     NodeType,
@@ -13,6 +14,7 @@ from necroflow import (
     Outputs,
     Constraints,
     Rules,
+    resolve_paths,
     Pipeline,
 )
 
@@ -69,12 +71,15 @@ def basic_pipeline(config, R):
 
 from types import SimpleNamespace
 
-config = SimpleNamespace(path="/data/sample.fastq.gz", ref="hg38", gene_model="gencode_v44")
+config = SimpleNamespace(
+    path="/data/sample.fastq.gz", ref="hg38", gene_model="gencode_v44"
+)
 P = basic_pipeline(config, R)
 
+P.resolve_paths("/results")
 print(P)
 P.plot()
-
+pprint(P.counts.path)
 
 # --- diamond pipeline ---
 
@@ -98,6 +103,7 @@ R.register(
     Outputs(merged_vcf=MergedVcf),
     "bcftools merge {snp_ann} {indel_ann} -o {merged_vcf}",
 )
+
 
 def diamond_pipeline(config, R):
     P = Pipeline()

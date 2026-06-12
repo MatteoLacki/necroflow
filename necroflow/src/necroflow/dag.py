@@ -1,7 +1,9 @@
 from __future__ import annotations
+import hashlib
 import inspect
 from collections import namedtuple
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -42,6 +44,52 @@ class Node:
     config: dict[str, Any] = field(default_factory=dict)
     rule: Any | None = None
     command: str | list[str] | None = None
+    path: Path | None = None
+    output_nodes: dict[str, Node] = field(default_factory=dict)
+
+
+def _fingerprint(node: Node) -> tuple:
+    return (
+        node.rule.__name__ if node.rule else None,
+        node.output_name,
+        tuple(sorted(node.config.items())),
+        tuple(_fingerprint(p) for p in node.parents),
+    )
+
+
+def _node_hash(node: Node) -> str:
+    return hashlib.sha256(repr(_fingerprint(node)).encode()).hexdigest()[:8]
+
+
+def resolve_command(node: Node) -> str | list[str] | None:
+    """Format node.command with input/output paths and config values.
+
+    Requires resolve_paths() to have been called first.
+    Substitutions: {input_name} -> parent.path, {output_name} -> node.path, {config_key} -> value.
+    """
+    if node.command is None:
+        return None
+    pos_input_names = [
+        n for n, t in node.rule.inputs.specs.items() if _is_nodetype(t)
+    ]
+    subs: dict[str, Any] = {}
+    for iname, parent in zip(pos_input_names, node.parents):
+        subs[iname] = parent.path
+    subs.update(node.config)
+    for oname, onode in node.output_nodes.items():
+        subs[oname] = onode.path
+    if isinstance(node.command, list):
+        return [c.format(**subs) for c in node.command]
+    return node.command.format(**subs)
+
+
+def resolve_paths(nodes: list[Node], outdir: Path | str) -> None:
+    """Set node.path for each node: outdir / rule_name / hash[:8] / output_name."""
+    outdir = Path(outdir)
+    for node in nodes:
+        rule_name = node.rule.__name__ if node.rule else "unknown"
+        name = node.output_name or "output"
+        node.path = outdir / rule_name / _node_hash(node) / name
 
 
 class Inputs:
@@ -129,6 +177,10 @@ class Rules:
                 )
                 for oname, otype in outputs.specs.items()
             ]
+
+            all_outputs = {oname: n for oname, n in zip(output_names, nodes)}
+            for n in nodes:
+                n.output_nodes = all_outputs
 
             return ReturnType(*nodes) if multi else nodes[0]
 
