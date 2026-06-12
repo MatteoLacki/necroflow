@@ -15,6 +15,7 @@ from necroflow import (
     Constraints,
     Rules,
     resolve_paths,
+    resolve_command,
     Pipeline,
 )
 
@@ -79,7 +80,10 @@ P = basic_pipeline(config, R)
 P.resolve_paths("/results")
 print(P)
 P.plot()
-pprint(P.counts.path)
+
+# resolved commands with actual paths substituted
+for node in P.nodes:
+    print(resolve_command(node))
 
 # --- diamond pipeline ---
 
@@ -120,6 +124,10 @@ def diamond_pipeline(config, R):
 
 dconfig = SimpleNamespace(path="/data/sample2.fastq.gz", ref="hg38")
 D = diamond_pipeline(dconfig, R)
+D.resolve_paths("/results")
 
 print(D)
 D.plot()
+
+for node in D.nodes:
+    print(resolve_command(node))
