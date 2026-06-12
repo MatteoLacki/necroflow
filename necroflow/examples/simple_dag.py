@@ -57,14 +57,24 @@ R.register(
 
 # --- linear pipeline ---
 
-P = Pipeline()
-P.fastq = R.raw_fastq(path="/data/sample.fastq.gz")
-P.bam, P.align_log = R.align(P.fastq, ref="hg38")
-P.sorted_bam = R.sort_bam(P.bam)
-P.counts, P.qc = R.quantify(P.sorted_bam, gene_model="gencode_v44")
+
+def basic_pipeline(config, R):
+    P = Pipeline()
+    P.fastq = R.raw_fastq(path=config.path)
+    P.bam, P.align_log = R.align(P.fastq, ref=config.ref)
+    P.sorted_bam = R.sort_bam(P.bam)
+    P.counts, P.qc = R.quantify(P.sorted_bam, gene_model=config.gene_model)
+    return P
+
+
+from types import SimpleNamespace
+
+config = SimpleNamespace(path="/data/sample.fastq.gz", ref="hg38", gene_model="gencode_v44")
+P = basic_pipeline(config, R)
 
 print(P)
 P.plot()
+
 
 # --- diamond pipeline ---
 
