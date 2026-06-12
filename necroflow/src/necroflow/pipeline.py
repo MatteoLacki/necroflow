@@ -84,8 +84,8 @@ class Pipeline:
         if node.config:
             cfg = ", ".join(f"{k}={v!r}" for k, v in node.config.items())
             parts.append(f"({cfg})")
-        if node.rule.resources:
-            res = ", ".join(f"{k}={v}" for k, v in node.rule.resources.items())
+        if node.rule and node.rule.constraints:
+            res = ", ".join(f"{k}={v}" for k, v in node.rule.constraints.items())
             parts.append(f"[{res}]")
         return " ".join(parts)
 

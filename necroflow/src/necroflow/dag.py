@@ -1,7 +1,8 @@
 from __future__ import annotations
 import inspect
+from collections import namedtuple
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 
 class NodeTypeMeta(type):
@@ -39,91 +40,103 @@ class Node:
     node_type: type[NodeType] | None = None
     parents: list[Node] = field(default_factory=list)
     config: dict[str, Any] = field(default_factory=dict)
-    rule: Callable | None = None
+    rule: Any | None = None
+    command: str | list[str] | None = None
 
 
-def rule(_fn: Callable | None = None, **resources):
-    """Decorator: intercepts call, injects parents + config into returned Node(s).
+class Inputs:
+    """Declare rule inputs: NodeType values = positional Node args; plain types = config kwargs."""
 
-    All parameters must be annotated.
-    Positional params must be annotated with a NodeType subclass.
-    Keyword-only params are type-checked via isinstance at call time (unions supported).
-    Resources declared at decoration time: @rule(threads=4).
-    """
+    def __init__(self, **specs):
+        self.specs = specs
 
-    def decorator(fn: Callable) -> Callable:
-        sig = inspect.signature(fn)
 
-        pos_params = [
-            (name, param)
-            for name, param in sig.parameters.items()
-            if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD)
-        ]
-        kw_params = {
-            name: param
-            for name, param in sig.parameters.items()
-            if param.kind == param.KEYWORD_ONLY
-        }
+class Outputs:
+    """Declare rule outputs by name: Outputs(bam=Bam, log=Log)."""
 
-        # Enforce annotations on all params at decoration time
-        for name, param in pos_params + list(kw_params.items()):
-            if param.annotation is inspect.Parameter.empty:
-                raise TypeError(
-                    f"{fn.__name__}: parameter {name!r} must have a type annotation"
-                )
+    def __init__(self, **specs):
+        self.specs = specs
+
+
+class Constraints:
+    """Declare scheduler constraints: Constraints(threads=4, memory="8G")."""
+
+    def __init__(self, **kwargs):
+        self.specs = kwargs
+
+
+class Rules:
+    """Container for registered rules. Names must be unique."""
+
+    def __init__(self):
+        object.__setattr__(self, "_registry", {})
+
+    def register(
+        self,
+        name: str,
+        inputs: Inputs,
+        outputs: Outputs,
+        command: str | list[str],
+        constraints: Constraints | None = None,
+    ) -> None:
+        registry = object.__getattribute__(self, "_registry")
+        if name in registry:
+            raise ValueError(f"Rule {name!r} already registered")
+
+        pos_inputs = [(n, t) for n, t in inputs.specs.items() if _is_nodetype(t)]
+        kw_inputs = {n: t for n, t in inputs.specs.items() if not _is_nodetype(t)}
+
+        output_names = list(outputs.specs.keys())
+        multi = len(output_names) > 1
+        ReturnType = namedtuple(f"{name}_outputs", output_names) if multi else None
+
+        constraints_dict = constraints.specs if constraints else {}
 
         def wrapper(*args, **kwargs):
-            # Check positional (Node) args
-            for (name, param), val in zip(pos_params, args):
-                ann = param.annotation
-                is_nt = _is_nodetype(ann)
-                is_node = isinstance(val, Node)
-
-                if is_nt and not is_node:
+            for (pname, ptype), val in zip(pos_inputs, args):
+                if not isinstance(val, Node):
                     raise TypeError(
-                        f"{fn.__name__}: {name!r} expected {ann.__name__}, got {type(val).__name__!r}"
+                        f"{name}: {pname!r} expected Node, got {type(val).__name__!r}"
                     )
-                if is_node and not is_nt:
+                if val.node_type is None or not issubclass(val.node_type, ptype):
+                    got = val.node_type.__name__ if val.node_type else "None"
                     raise TypeError(
-                        f"{fn.__name__}: {name!r} is a Node but annotation is not a NodeType"
+                        f"{name}: {pname!r} expected {ptype.__name__}, got {got}"
                     )
-                if is_nt and is_node:
-                    if val.node_type is None or not issubclass(val.node_type, ann):
-                        got = val.node_type.__name__ if val.node_type else "None"
-                        raise TypeError(
-                            f"{fn.__name__}: {name!r} expected {ann.__name__}, got {got}"
-                        )
 
-            # Check keyword args via isinstance (supports str | int unions)
-            for name, val in kwargs.items():
-                if name not in kw_params:
+            for kname, val in kwargs.items():
+                if kname not in kw_inputs:
                     continue
-                ann = kw_params[name].annotation
-                if _is_nodetype(ann):
-                    continue
+                ktype = kw_inputs[kname]
                 try:
-                    ok = isinstance(val, ann)
+                    ok = isinstance(val, ktype)
                 except TypeError:
-                    ok = True  # complex generics (list[str] etc.) — skip
+                    ok = True
                 if not ok:
                     raise TypeError(
-                        f"{fn.__name__}: {name!r} expected {ann}, got {type(val).__name__!r}"
+                        f"{name}: {kname!r} expected {ktype}, got {type(val).__name__!r}"
                     )
 
             parents = [a for a in args if isinstance(a, Node)]
-            result = fn(*parents, **kwargs)
-            nodes = (result,) if isinstance(result, Node) else tuple(result)
-            for node in nodes:
-                node.parents = parents
-                node.config = kwargs
-                node.rule = wrapper
-            return result
+            nodes = [
+                Node(
+                    output_name=oname,
+                    node_type=otype,
+                    parents=parents,
+                    config=kwargs,
+                    rule=wrapper,
+                    command=command,
+                )
+                for oname, otype in outputs.specs.items()
+            ]
 
-        wrapper.__name__ = fn.__name__
-        wrapper.__wrapped__ = fn
-        wrapper.resources = resources
-        return wrapper
+            return ReturnType(*nodes) if multi else nodes[0]
 
-    if _fn is not None:
-        return decorator(_fn)
-    return decorator
+        wrapper.__name__ = name
+        wrapper.constraints = constraints_dict
+        wrapper.inputs = inputs
+        wrapper.outputs = outputs
+        wrapper.command = command
+
+        registry[name] = wrapper
+        object.__setattr__(self, name, wrapper)

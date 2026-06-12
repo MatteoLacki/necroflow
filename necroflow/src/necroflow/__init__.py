@@ -1,4 +1,21 @@
-from necroflow.dag import Node, NodeType, node_types, rule
+from necroflow.dag import (
+    Node,
+    NodeType,
+    node_types,
+    Inputs,
+    Outputs,
+    Constraints,
+    Rules,
+)
 from necroflow.pipeline import Pipeline
 
-__all__ = ["Node", "NodeType", "node_types", "Pipeline", "rule"]
+__all__ = [
+    "Node",
+    "NodeType",
+    "node_types",
+    "Inputs",
+    "Outputs",
+    "Constraints",
+    "Rules",
+    "Pipeline",
+]
