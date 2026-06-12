@@ -11,30 +11,47 @@ source .venv/bin/activate
 
 ## Core concepts
 
+### NodeType (`src/necroflow/dag.py`)
+
+Lightweight base class for node types. Uses a metaclass so that calling the class creates a `Node`, not a NodeType instance.
+
+```python
+class Fastq(NodeType): ...          # single type
+class SortedBam(Bam): ...           # subtype — accepted wherever Bam expected
+
+Fastq, Bam, Log = node_types("fastq bam log")  # bulk creation (dynamic subclasses)
+
+Fastq("output_name")   # → Node(output_name="output_name", node_type=Fastq)
+```
+
+`node.node_type` is the class itself (e.g. `Fastq`), not an instance.  
+Inheritance is via normal Python class hierarchy; subtype check uses `issubclass`.
+
 ### Node (`src/necroflow/dag.py`)
 
-Single class representing a pipeline value — a promise of a future output path. Every node produced by a rule automatically gets:
+Single dataclass representing a pipeline value — a promise of a future output path. Fields:
 
-- `.rule` — the wrapper callable that produced it (carries `.resources` and `.__name__`)
+- `.rule` — wrapper callable that produced it (carries `.resources`, `.__name__`)
 - `.parents` — list of input `Node`s
 - `.config` — dict of keyword args passed at call time
 - `.output_name` — optional string label (e.g. `"bam"`, `"log"`)
+- `.node_type` — NodeType subclass (the class object, not an instance)
 
 ### `@rule` decorator (`src/necroflow/dag.py`)
 
-Turns a Python function into a DAG rule. When called, it intercepts execution and returns `Node` objects instead of running the function body (execution engine is future work).
+Turns a Python function into a DAG rule. When called, intercepts execution and returns `Node`s instead of running the function body.
 
 ```python
-@rule                        # single output
-def sort_bam(bam: Node):
-    return Node()
+@rule                                    # single output
+def sort_bam(bam: Bam) -> Node:
+    return SortedBam()
 
-@rule(threads=4)             # with scheduler resources
-def align(fastq: Node, *, ref):
-    return Node("bam"), Node("log")   # multi-output
+@rule(threads=4)                         # with scheduler resources
+def align(fastq: Fastq, *, ref: str):
+    return Bam("bam"), Log("log")        # multi-output
 ```
 
-**Call style:** positional args = parent `Node`s; all kwargs = per-call config.
+**Call style:** positional args = parent `Node`s; keyword-only args = per-call config.
 
 ```python
 bam, log = align(fastq, ref="hg38")
@@ -42,30 +59,37 @@ bam, log = align(fastq, ref="hg38")
 # bam.rule.resources == {"threads": 4}
 ```
 
-**Validation:** positional args annotated `Node` are checked at call time — passing a non-`Node` where `Node` is annotated (or vice versa) raises `TypeError`.
+**Validation — decoration time:**
+- All parameters (positional and keyword-only) must have type annotations. Missing annotation → `TypeError`.
 
-**Resources** (`@rule(threads=4, memory="8G")`) are fixed at decoration time and accessible via `node.rule.resources`. They are intended for future scheduler integration.
+**Validation — call time:**
+- Positional arg annotated with a NodeType subclass: value must be a `Node` whose `node_type` is that class or a subclass (`issubclass`).
+- Positional arg annotated with non-NodeType, but value is a `Node` → `TypeError`.
+- Positional `Node` value with non-NodeType annotation → `TypeError`.
+- Keyword-only args: `isinstance(val, annotation)` check (supports `str | int` union types; complex generics skipped silently).
+
+**Resources** (`@rule(threads=4, memory="8G")`) fixed at decoration time, accessible via `node.rule.resources`. Intended for future scheduler integration.
 
 ### `Pipeline` (`src/necroflow/pipeline.py`)
 
-Context manager that auto-registers every node produced inside the `with` block via a `contextvars.ContextVar`. No manual registration needed.
+Attribute-style registration — assigning to a pipeline attribute auto-registers nodes.
 
 ```python
-pipeline = Pipeline()
-with pipeline:
-    fastq = raw_fastq(path="/data/sample.fastq.gz")
-    bam, log = align(fastq, ref="hg38")
-    counts, qc = quantify(bam, gene_model="gencode_v44")
+P = Pipeline()
+P.fastq = raw_fastq(path="/data/sample.fastq.gz")
+P.bam, P.align_log = align(P.fastq, ref="hg38")
+P.sorted_bam = sort_bam(P.bam)
 
-print(pipeline)        # terminal box-drawing DAG
-pipeline.plot()        # matplotlib figure
+print(P)        # terminal box-drawing DAG
+P.plot()        # matplotlib figure
 ```
 
-`Pipeline.nodes` holds all nodes in creation order.
+`P.nodes` — all nodes in registration order.  
+Duplicate attribute name → `ValueError`.
 
 #### Terminal rendering (`print(pipeline)`)
 
-Layered ASCII DAG using Unicode box-drawing characters. Nodes are rendered as labelled boxes grouped by topological depth. Edges are routed with proper junction chars (`┴ ┬ └ ┘ ┼`) handling fan-out, fan-in, and diamond patterns. Already-visited nodes in a diamond are shown with a back-reference (`↑ node (see above)`).
+Layered ASCII DAG using Unicode box-drawing characters. Nodes rendered as labelled boxes grouped by topological depth. Edges routed with proper junction chars (`┴ ┬ └ ┘ ┼`) handling fan-out, fan-in, and diamond patterns.
 
 #### Matplotlib rendering (`pipeline.plot()`)
 
@@ -75,12 +99,12 @@ Uses `networkx` + `matplotlib`. Nodes laid out by topological layer.
 
 ```
 src/necroflow/
-  dag.py        — Node, @rule decorator
+  dag.py        — Node, NodeType, node_types, @rule decorator
   pipeline.py   — Pipeline, _render_connector, _BOX junction map
-  __init__.py   — exports: Node, rule, Pipeline
+  __init__.py   — exports: Node, NodeType, node_types, rule, Pipeline
 
 examples/
-  simple_dag.py — linear pipeline + diamond pipeline examples
+  simple_dag.py — linear pipeline + diamond pipeline (shows class inheritance)
 ```
 
 ## What is NOT yet implemented

@@ -76,7 +76,7 @@ class Pipeline:
         parts = [node.rule.__name__]
         suffix = ""
         if node.node_type:
-            suffix = node.node_type.name
+            suffix = node.node_type.__name__
         if node.output_name and node.output_name != suffix:
             suffix += f":{node.output_name}" if suffix else node.output_name
         if suffix:

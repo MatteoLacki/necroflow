@@ -9,21 +9,23 @@ from necroflow import Node, NodeType, node_types, Pipeline, rule
 
 # --- node types ---
 
-Fastq, Bam, Log, SortedBam, Counts, QcReport, Vcf, AnnotatedVcf, MergedVcf = node_types(
-    "fastq bam log sorted_bam counts qc_report vcf annotated_vcf merged_vcf"
+Fastq, Bam, Log, Counts, QcReport, Vcf, AnnotatedVcf, MergedVcf = node_types(
+    "fastq bam log counts qc_report vcf annotated_vcf merged_vcf"
 )
 
 
+class SortedBam(Bam):
+    """SortedBam IS-A Bam — accepted wherever Bam is expected"""
+
+
 # --- rules ---
-
-
 @rule
-def raw_fastq(*, path):
+def raw_fastq(*, path: str) -> Node:
     return Fastq()
 
 
 @rule(threads=4)
-def align(fastq: Fastq, *, ref):
+def align(fastq: Fastq, *, ref: str):
     return Bam("bam"), Log("log")
 
 
@@ -33,7 +35,7 @@ def sort_bam(bam: Bam):
 
 
 @rule
-def quantify(bam: SortedBam, *, gene_model):
+def quantify(bam: SortedBam, *, gene_model: str):
     return Counts("counts"), QcReport("qc_report")
 
 
@@ -52,12 +54,12 @@ P.plot()
 
 
 @rule
-def call_variants(bam: SortedBam, *, caller):
+def call_variants(bam: SortedBam, *, caller: str):
     return Vcf()
 
 
 @rule
-def annotate(vcf: Vcf, *, db):
+def annotate(vcf: Vcf, *, db: str):
     return AnnotatedVcf()
 
 
@@ -76,7 +78,5 @@ D.snp_ann = annotate(D.snp_vcf, db="dbsnp")
 D.indel_ann = annotate(D.indel_vcf, db="clinvar")
 D.merged = merge_annotations(D.snp_ann, D.indel_ann)
 
-
 print(D)
 D.plot()
-# D.fastq
