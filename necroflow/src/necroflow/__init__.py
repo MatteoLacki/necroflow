@@ -8,6 +8,8 @@ from necroflow.dag import (
     Rules,
     resolve_paths,
     resolve_command,
+    write_dependencies,
+    check_cache,
 )
 from necroflow.pipeline import Pipeline
 
@@ -21,5 +23,7 @@ __all__ = [
     "Rules",
     "resolve_paths",
     "resolve_command",
+    "write_dependencies",
+    "check_cache",
     "Pipeline",
 ]

@@ -136,18 +136,41 @@ resolve_command(bam_node)
 ```
 src/necroflow/
   dag.py        — Node, NodeType, node_types, Inputs, Outputs, Constraints, Rules,
-                  resolve_paths, resolve_command, _fingerprint, _node_hash
+                  resolve_paths, resolve_command, write_dependencies, check_cache,
+                  _fingerprint, _node_hash, _accumulated_config
   pipeline.py   — Pipeline, _render_connector, _BOX junction map
   __init__.py   — exports all public symbols
 
 examples/
   simple_dag.py — linear pipeline + diamond pipeline; shows registration, path resolution,
-                  command resolution
+                  command resolution, check_cache / write_dependencies usage
 ```
+
+### `dependencies.toml` — per-output provenance (`src/necroflow/dag.py`)
+
+Each output folder gets a `dependencies.toml` recording the flat accumulated config from all
+ancestors. The filesystem is the database; no SQLite/LMDB needed.
+
+```toml
+rule = "sort_bam"
+output_name = "sorted_bam"
+hash = "4fb08953"
+
+[config]
+path = "/data/sample.fastq.gz"
+ref = "hg38"
+```
+
+```python
+check_cache(node)         # True if node.path + dependencies.toml both exist
+write_dependencies(node)  # write after job succeeds
+```
+
+`_accumulated_config(node)` traverses strictly upward (ancestors only); assumes config key names
+are unique across the pipeline.
 
 ## What is NOT yet implemented
 
 - Execution engine (actually running `resolve_command` output via `subprocess.run`)
 - Scheduler integration (constraints stored but not used)
-- SQLite/LMDB storage of node hashes for cross-run caching
 - File extensions on output paths

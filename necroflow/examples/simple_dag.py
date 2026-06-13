@@ -16,6 +16,8 @@ from necroflow import (
     Rules,
     resolve_paths,
     resolve_command,
+    write_dependencies,
+    check_cache,
     Pipeline,
 )
 
@@ -85,6 +87,15 @@ P.plot()
 for node in P.nodes:
     print(resolve_command(node))
 
+# cache check: skip nodes whose outputs already exist
+for node in P.nodes:
+    if check_cache(node):
+        print(f"  CACHED  {node.output_name} -> {node.path}")
+    else:
+        print(f"  PENDING {node.output_name} -> {node.path}")
+        # after the job runs successfully, call:
+        # write_dependencies(node)  # writes dependencies.toml alongside the output
+
 # --- diamond pipeline ---
 
 R.register(
@@ -131,3 +142,10 @@ D.plot()
 
 for node in D.nodes:
     print(resolve_command(node))
+
+for node in D.nodes:
+    if check_cache(node):
+        print(f"  CACHED  {node.output_name} -> {node.path}")
+    else:
+        print(f"  PENDING {node.output_name} -> {node.path}")
+        # write_dependencies(node)  # call after job succeeds

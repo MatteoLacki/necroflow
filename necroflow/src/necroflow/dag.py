@@ -61,6 +61,37 @@ def _node_hash(node: Node) -> str:
     return hashlib.sha256(repr(_fingerprint(node)).encode()).hexdigest()[:8]
 
 
+def _accumulated_config(node: Node) -> dict:
+    config = {}
+    for parent in node.parents:
+        config.update(_accumulated_config(parent))
+    config.update(node.config)
+    return config
+
+
+def write_dependencies(node: Node) -> None:
+    """Write dependencies.toml into node.path.parent. Call after the job succeeds."""
+    import tomli_w
+
+    data = {
+        "rule": node.rule.__name__ if node.rule else "unknown",
+        "output_name": node.output_name or "output",
+        "hash": node.path.parent.name,
+        "config": _accumulated_config(node),
+    }
+    node.path.parent.mkdir(parents=True, exist_ok=True)
+    (node.path.parent / "dependencies.toml").write_bytes(tomli_w.dumps(data).encode())
+
+
+def check_cache(node: Node) -> bool:
+    """True if node.path and dependencies.toml both exist (cache hit)."""
+    return (
+        node.path is not None
+        and node.path.exists()
+        and (node.path.parent / "dependencies.toml").exists()
+    )
+
+
 def resolve_command(node: Node) -> str | list[str] | None:
     """Format node.command with input/output paths and config values.
 
