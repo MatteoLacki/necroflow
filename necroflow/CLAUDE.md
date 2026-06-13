@@ -1,6 +1,7 @@
 # necroflow
 
-Python pipeline framework inspired by Snakemake. Rules are plain Python functions; the framework owns path generation and DAG construction. Execution engine not yet implemented.
+Python pipeline framework inspired by Snakemake. Rules are registered via a `Rules` container;
+the framework owns path generation and DAG construction. Execution engine not yet implemented.
 
 ## Setup
 
@@ -13,7 +14,7 @@ source .venv/bin/activate
 
 ### NodeType (`src/necroflow/dag.py`)
 
-Lightweight base class for node types. Uses a metaclass so that calling the class creates a `Node`, not a NodeType instance.
+Base class for node types. Uses a metaclass so that calling the class creates a `Node`.
 
 ```python
 class Fastq(NodeType): ...          # single type
@@ -21,95 +22,132 @@ class SortedBam(Bam): ...           # subtype — accepted wherever Bam expected
 
 Fastq, Bam, Log = node_types("fastq bam log")  # bulk creation (dynamic subclasses)
 
-Fastq("output_name")   # → Node(output_name="output_name", node_type=Fastq)
+Fastq("label")  # → Node(output_name="label", node_type=Fastq)
 ```
 
-`node.node_type` is the class itself (e.g. `Fastq`), not an instance.  
-Inheritance is via normal Python class hierarchy; subtype check uses `issubclass`.
+`node.node_type` is the class itself. Subtype checks use `issubclass`.
 
 ### Node (`src/necroflow/dag.py`)
 
-Single dataclass representing a pipeline value — a promise of a future output path. Fields:
+Dataclass representing a pipeline value. Fields:
 
-- `.rule` — wrapper callable that produced it (carries `.resources`, `.__name__`)
+- `.rule` — wrapper callable that produced it (carries `.constraints`, `.inputs`, `.outputs`, `.command`)
 - `.parents` — list of input `Node`s
 - `.config` — dict of keyword args passed at call time
-- `.output_name` — optional string label (e.g. `"bam"`, `"log"`)
-- `.node_type` — NodeType subclass (the class object, not an instance)
+- `.output_name` — string label set from `Outputs` kwargs
+- `.node_type` — NodeType subclass
+- `.command` — raw command template string (e.g. `"samtools sort {bam} -o {sorted_bam}"`)
+- `.output_nodes` — `{name: Node}` dict of all co-outputs from the same rule call (enables command resolution)
+- `.path` — `pathlib.Path` set by `resolve_paths()`
 
-### `@rule` decorator (`src/necroflow/dag.py`)
+### `Inputs`, `Outputs`, `Constraints` (`src/necroflow/dag.py`)
 
-Turns a Python function into a DAG rule. When called, intercepts execution and returns `Node`s instead of running the function body.
-
-```python
-@rule                                    # single output
-def sort_bam(bam: Bam) -> Node:
-    return SortedBam()
-
-@rule(threads=4)                         # with scheduler resources
-def align(fastq: Fastq, *, ref: str):
-    return Bam("bam"), Log("log")        # multi-output
-```
-
-**Call style:** positional args = parent `Node`s; keyword-only args = per-call config.
+Helper classes for rule registration:
 
 ```python
-bam, log = align(fastq, ref="hg38")
-# bam.config  == {"ref": "hg38"}
-# bam.rule.resources == {"threads": 4}
+Inputs(bam=Bam, ref=str)          # NodeType values → positional Node args; plain types → kwargs
+Outputs(bam=Bam, log=Log)         # named outputs; kwargs become output_name on each Node
+Constraints(threads=4, memory="8G")  # scheduler resources
 ```
 
-**Validation — decoration time:**
-- All parameters (positional and keyword-only) must have type annotations. Missing annotation → `TypeError`.
+### `Rules` container (`src/necroflow/dag.py`)
 
-**Validation — call time:**
-- Positional arg annotated with a NodeType subclass: value must be a `Node` whose `node_type` is that class or a subclass (`issubclass`).
-- Positional arg annotated with non-NodeType, but value is a `Node` → `TypeError`.
-- Positional `Node` value with non-NodeType annotation → `TypeError`.
-- Keyword-only args: `isinstance(val, annotation)` check (supports `str | int` union types; complex generics skipped silently).
+Holds registered rules. Names must be unique. Each registered rule becomes a callable attribute.
 
-**Resources** (`@rule(threads=4, memory="8G")`) fixed at decoration time, accessible via `node.rule.resources`. Intended for future scheduler integration.
+```python
+R = Rules()
+R.register(
+    "align",
+    Inputs(fastq=Fastq, ref=str),
+    Outputs(bam=Bam, log=Log),
+    "bwa mem {ref} {fastq} > {bam} 2> {log}",
+    Constraints(threads=4),
+)
+
+bam, log = R.align(fastq_node, ref="hg38")
+# bam.config       == {"ref": "hg38"}
+# bam.rule.constraints == {"threads": 4}
+# bam.command      == "bwa mem {ref} {fastq} > {bam} 2> {log}"
+```
+
+Positional args = input Nodes (matched by NodeType annotation order); keyword args = config.
+Single output → returns `Node` directly; multiple outputs → returns named tuple.
+
+**Validation at call time:**
+- Positional arg NodeType check: `issubclass(val.node_type, expected)` — subtypes accepted
+- Keyword arg type check: `isinstance(val, type)` — union types (`str | int`) supported
 
 ### `Pipeline` (`src/necroflow/pipeline.py`)
 
-Attribute-style registration — assigning to a pipeline attribute auto-registers nodes.
+Attribute-style node registration. Assigning a Node (or named tuple of Nodes) auto-registers it.
 
 ```python
-P = Pipeline()
-P.fastq = raw_fastq(path="/data/sample.fastq.gz")
-P.bam, P.align_log = align(P.fastq, ref="hg38")
-P.sorted_bam = sort_bam(P.bam)
-
-print(P)        # terminal box-drawing DAG
-P.plot()        # matplotlib figure
+def basic_pipeline(config, R):
+    P = Pipeline()
+    P.fastq = R.raw_fastq(path=config.path)
+    P.bam, P.align_log = R.align(P.fastq, ref=config.ref)
+    P.sorted_bam = R.sort_bam(P.bam)
+    P.counts, P.qc = R.quantify(P.sorted_bam, gene_model=config.gene_model)
+    return P
 ```
 
-`P.nodes` — all nodes in registration order.  
-Duplicate attribute name → `ValueError`.
+`P.nodes` — all nodes in registration order. Duplicate attribute name → `ValueError`.
 
-#### Terminal rendering (`print(pipeline)`)
+#### Terminal rendering (`print(P)`)
 
-Layered ASCII DAG using Unicode box-drawing characters. Nodes rendered as labelled boxes grouped by topological depth. Edges routed with proper junction chars (`┴ ┬ └ ┘ ┼`) handling fan-out, fan-in, and diamond patterns.
+Layered ASCII DAG with Unicode box-drawing characters, grouped by topological depth.
 
-#### Matplotlib rendering (`pipeline.plot()`)
+#### Matplotlib rendering (`P.plot()`)
 
 Uses `networkx` + `matplotlib`. Nodes laid out by topological layer.
+
+### Path generation (`src/necroflow/dag.py`)
+
+```python
+P.resolve_paths("/results")
+# sets node.path = /results/{rule_name}/{hash8}/{output_name}
+```
+
+The 8-char hash is derived from the full ancestor config chain (all rule names, output names,
+configs, and parent fingerprints recursively). Deterministic: same DAG + same root inputs →
+same paths. Different root inputs → different hash → different path → cache miss.
+
+```python
+node.path.exists()  # True → already computed for these inputs (cache hit)
+```
+
+### Command resolution (`src/necroflow/dag.py`)
+
+```python
+resolve_command(node)
+# formats node.command template: {input_name} → parent.path, {output_name} → node.path,
+# {config_key} → config value (str/int passed through as-is)
+```
+
+Requires `resolve_paths()` to have been called first.
+
+```python
+resolve_command(bam_node)
+# "bwa mem hg38 /results/raw_fastq/e19fd828/fastq > /results/align/9ffe3fbe/bam 2> /results/align/795995c2/log"
+```
 
 ## File map
 
 ```
 src/necroflow/
-  dag.py        — Node, NodeType, node_types, @rule decorator
+  dag.py        — Node, NodeType, node_types, Inputs, Outputs, Constraints, Rules,
+                  resolve_paths, resolve_command, _fingerprint, _node_hash
   pipeline.py   — Pipeline, _render_connector, _BOX junction map
-  __init__.py   — exports: Node, NodeType, node_types, rule, Pipeline
+  __init__.py   — exports all public symbols
 
 examples/
-  simple_dag.py — linear pipeline + diamond pipeline (shows class inheritance)
+  simple_dag.py — linear pipeline + diamond pipeline; shows registration, path resolution,
+                  command resolution
 ```
 
 ## What is NOT yet implemented
 
-- Path/ID generation (content-addressed hashing, SQLite storage)
-- Rule execution engine
-- Scheduler integration (resources are stored but not used)
-- Target reuse / auto-deletion of stale outputs
+- Execution engine (actually running `resolve_command` output via `subprocess.run`)
+- Scheduler integration (constraints stored but not used)
+- SQLite/LMDB storage of node hashes for cross-run caching
+- File extensions on output paths
