@@ -21,15 +21,27 @@ class NodeType(metaclass=NodeTypeMeta):
     """Base class for node types. Subclass to define types.
 
     class Fastq(NodeType): ...
-    class SortedBam(Bam): ...   # inherits — accepted wherever Bam expected
+    class SortedBam(Bam): name = "sorted.bam"  # filename within the rule output dir
 
     Fastq("label")  # creates Node(node_type=Fastq, output_name="label")
     """
 
+    name: str | None = None
+
 
 def node_types(names: str) -> tuple[type[NodeType], ...]:
-    """Create NodeType subclasses from a space-separated string of names."""
-    return tuple(type(n, (NodeType,), {}) for n in names.split())
+    """Create NodeType subclasses from a space-separated string of names.
+
+    Optionally specify filename with '=': node_types("fastq=sample.fastq.gz bam=aligned.bam log")
+    """
+    result = []
+    for token in names.split():
+        if "=" in token:
+            tname, fname = token.split("=", 1)
+            result.append(type(tname, (NodeType,), {"name": fname}))
+        else:
+            result.append(type(token, (NodeType,), {}))
+    return tuple(result)
 
 
 def _is_nodetype(ann) -> bool:
@@ -48,17 +60,22 @@ class Node:
     output_nodes: dict[str, Node] = field(default_factory=dict)
 
 
-def _fingerprint(node: Node) -> tuple:
+def _call_fingerprint(node: Node) -> tuple:
+    """Fingerprint of the rule call that produced this node.
+
+    Shared by all co-outputs of the same call — output_name excluded from the
+    node's own hash but included in parent references so downstream nodes that
+    consume different co-outputs still get distinct hashes.
+    """
     return (
         node.rule.__name__ if node.rule else None,
-        node.output_name,
         tuple(sorted(node.config.items())),
-        tuple(_fingerprint(p) for p in node.parents),
+        tuple((_call_fingerprint(p), p.output_name) for p in node.parents),
     )
 
 
 def _node_hash(node: Node) -> str:
-    return hashlib.sha256(repr(_fingerprint(node)).encode()).hexdigest()[:8]
+    return hashlib.sha256(repr(_call_fingerprint(node)).encode()).hexdigest()[:8]
 
 
 def _accumulated_config(node: Node) -> dict:
@@ -70,12 +87,14 @@ def _accumulated_config(node: Node) -> dict:
 
 
 def write_dependencies(node: Node) -> None:
-    """Write dependencies.toml into node.path.parent. Call after the job succeeds."""
+    """Write dependencies.toml into node.path.parent. Call after the job succeeds.
+
+    Co-outputs share a directory, so calling this for any one of them is sufficient.
+    """
     import tomli_w
 
     data = {
         "rule": node.rule.__name__ if node.rule else "unknown",
-        "output_name": node.output_name or "output",
         "hash": node.path.parent.name,
         "config": _accumulated_config(node),
     }
@@ -115,12 +134,17 @@ def resolve_command(node: Node) -> str | list[str] | None:
 
 
 def resolve_paths(nodes: list[Node], outdir: Path | str) -> None:
-    """Set node.path for each node: outdir / rule_name / hash[:8] / output_name."""
+    """Set node.path for each node: outdir / rule_name / hash8 / filename.
+
+    Filename is node_type.name if set, else output_name (no extension).
+    Co-outputs of the same rule call share the same hash directory.
+    """
     outdir = Path(outdir)
     for node in nodes:
         rule_name = node.rule.__name__ if node.rule else "unknown"
-        name = node.output_name or "output"
-        node.path = outdir / rule_name / _node_hash(node) / name
+        filename = (node.node_type.name if node.node_type and node.node_type.name
+                    else node.output_name or "output")
+        node.path = outdir / rule_name / _node_hash(node) / filename
 
 
 class Inputs:

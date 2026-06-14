@@ -24,12 +24,19 @@ from necroflow import (
 # --- node types ---
 
 Fastq, Bam, Log, Counts, QcReport, Vcf, AnnotatedVcf, MergedVcf = node_types(
-    "fastq bam log counts qc_report vcf annotated_vcf merged_vcf"
+    "fastq=reads.fastq.gz"
+    " bam=aligned.bam"
+    " log=align.log"
+    " counts=counts.txt"
+    " qc_report=qc.txt"
+    " vcf=variants.vcf.gz"
+    " annotated_vcf=annotated.vcf.gz"
+    " merged_vcf=merged.vcf.gz"
 )
 
 
 class SortedBam(Bam):
-    """SortedBam IS-A Bam — accepted wherever Bam is expected."""
+    name = "sorted.bam"
 
 
 # --- rules ---
