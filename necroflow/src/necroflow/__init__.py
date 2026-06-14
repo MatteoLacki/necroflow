@@ -12,6 +12,7 @@ from necroflow.dag import (
     check_cache,
 )
 from necroflow.pipeline import Pipeline
+from necroflow.executor import execute
 
 __all__ = [
     "Node",
@@ -26,4 +27,5 @@ __all__ = [
     "write_dependencies",
     "check_cache",
     "Pipeline",
+    "execute",
 ]
