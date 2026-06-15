@@ -15,22 +15,23 @@ source .venv/bin/activate
 ### Executor (`src/necroflow/executor.py`)
 
 ```python
-execute(pipeline, outdir, total_threads=None)
+execute(graph, outdir, total_threads=None)  # graph: Pipeline, DAG, or any _GraphBase
 ```
 
-Calls `pipeline.resolve_paths(outdir)` internally, then runs all nodes:
+Calls `graph.resolve_paths(outdir)` internally, then runs all nodes:
 
-- Nodes are scheduled in topological order (`pipeline.nodes` is topological by construction)
+- Nodes scheduled in topological order (`graph.nodes` is topological by construction)
 - Parallel execution via `concurrent.futures.ThreadPoolExecutor`
 - Thread budget: sum of `constraints.threads` across running jobs ≤ `total_threads` (default `os.cpu_count()`)
 - A job whose thread requirement exceeds the budget runs solo when nothing else is running
-- Cache hits (`check_cache`) are skipped instantly before the loop starts
+- Cache hits (`check_cache`) skipped before the loop starts
 - `write_dependencies(node)` called after each successful job
-- Raises `subprocess.CalledProcessError` on the first failure
+- Raises `subprocess.CalledProcessError` on first failure
 
 ```python
-execute(P, "/results")               # use all CPUs
-execute(P, "/results", total_threads=8)
+execute(P, "/results")                 # single pipeline, all CPUs
+execute(dag, "/results", total_threads=8)  # multi-pipeline DAG
+dag.execute("/results")                # equivalent convenience method
 ```
 
 ### NodeType (`src/necroflow/dag.py`)
@@ -98,9 +99,15 @@ Single output → returns `Node` directly; multiple outputs → returns named tu
 - Positional arg NodeType check: `issubclass(val.node_type, expected)` — subtypes accepted
 - Keyword arg type check: `isinstance(val, type)` — union types (`str | int`) supported
 
-### `Pipeline` (`src/necroflow/pipeline.py`)
+### `_GraphBase`, `Pipeline`, `DAG` (`src/necroflow/pipeline.py`)
+
+`_GraphBase` is the shared base class providing `__str__`, `plot()`, `resolve_paths()`.
+Subclasses override three hooks: `nodes` (property), `_header()`, `_node_label()`, `_node_color()`.
+
+#### `Pipeline` — single-config container
 
 Attribute-style node registration. Assigning a Node (or named tuple of Nodes) auto-registers it.
+Duplicate attribute name → `ValueError`.
 
 ```python
 def basic_pipeline(config, R):
@@ -112,15 +119,32 @@ def basic_pipeline(config, R):
     return P
 ```
 
-`P.nodes` — all nodes in registration order. Duplicate attribute name → `ValueError`.
+#### `DAG` — multi-pipeline aggregator
 
-#### Terminal rendering (`print(P)`)
+Stores nodes by content-addressed hash (`_node_hash`). Deduplicates shared upstream
+computations across pipelines automatically. Tracks a required set (target nodes).
+
+```python
+dag = DAG()
+for pipeline_fn, config in zip(pipelines, configs):
+    P = pipeline_fn(config, R)
+    dag.add(P)                         # request defaults to sinks of P
+    # dag.add(P, request=[P.counts])   # explicit targets
+
+dag.execute("/results")
+```
+
+`dag.required_nodes` — nodes marked as required targets (rendered with ★ / orange).
+
+Sinks = nodes with at least one parent that no other node in the pipeline depends on.
+
+#### Terminal rendering (`print(P)` / `print(dag)`)
 
 Layered ASCII DAG with Unicode box-drawing characters, grouped by topological depth.
 
-#### Matplotlib rendering (`P.plot()`)
+#### Matplotlib rendering (`.plot()`)
 
-Uses `networkx` + `matplotlib`. Nodes laid out by topological layer.
+Uses `networkx` + `matplotlib`. Required nodes (DAG only) shown in orange.
 
 ### Path generation (`src/necroflow/dag.py`)
 
@@ -159,13 +183,12 @@ src/necroflow/
   dag.py        — Node, NodeType, node_types, Inputs, Outputs, Constraints, Rules,
                   resolve_paths, resolve_command, write_dependencies, check_cache,
                   _call_fingerprint, _node_hash, _accumulated_config
-  pipeline.py   — Pipeline, _render_connector, _BOX junction map
-  executor.py   — execute, _run_node, _node_threads
+  pipeline.py   — _GraphBase, Pipeline, DAG, _sinks, _label, _render_connector
+  executor.py   — execute (accepts any _GraphBase), _run_node, _node_threads
   __init__.py   — exports all public symbols
 
 examples/
-  simple_dag.py — linear pipeline + diamond pipeline; shows registration, path resolution,
-                  command resolution, check_cache / write_dependencies usage
+  simple_dag.py — linear + diamond pipelines; registration, path resolution, command resolution
 ```
 
 ### `dependencies.toml` — per-output provenance (`src/necroflow/dag.py`)
@@ -175,7 +198,6 @@ ancestors. The filesystem is the database; no SQLite/LMDB needed.
 
 ```toml
 rule = "sort_bam"
-output_name = "sorted_bam"
 hash = "4fb08953"
 
 [config]
