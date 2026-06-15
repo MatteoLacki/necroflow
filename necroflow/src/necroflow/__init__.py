@@ -12,7 +12,7 @@ from necroflow.dag import (
     check_cache,
 )
 from necroflow.pipeline import Pipeline, DAG
-from necroflow.executor import execute
+from necroflow.executor import execute, fifo_scheduler, connected_component_scheduler
 
 __all__ = [
     "Node",
@@ -29,4 +29,6 @@ __all__ = [
     "Pipeline",
     "DAG",
     "execute",
+    "fifo_scheduler",
+    "connected_component_scheduler",
 ]
