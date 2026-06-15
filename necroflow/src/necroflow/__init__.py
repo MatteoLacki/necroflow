@@ -11,7 +11,7 @@ from necroflow.dag import (
     write_dependencies,
     check_cache,
 )
-from necroflow.pipeline import Pipeline
+from necroflow.pipeline import Pipeline, DAG
 from necroflow.executor import execute
 
 __all__ = [
@@ -27,5 +27,6 @@ __all__ = [
     "write_dependencies",
     "check_cache",
     "Pipeline",
+    "DAG",
     "execute",
 ]

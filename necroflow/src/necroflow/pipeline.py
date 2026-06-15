@@ -50,6 +50,30 @@ def _render_connector(edges: list[tuple[int, int]]) -> list[str]:
     return ["".join(row1), "".join(row2), "".join(row3)]
 
 
+def _label(node: Node) -> str:
+    parts = [node.rule.__name__]
+    suffix = ""
+    if node.node_type:
+        suffix = node.node_type.__name__
+    if node.output_name and node.output_name != suffix:
+        suffix += f":{node.output_name}" if suffix else node.output_name
+    if suffix:
+        parts[0] += f"[{suffix}]"
+    if node.config:
+        cfg = ", ".join(f"{k}={v!r}" for k, v in node.config.items())
+        parts.append(f"({cfg})")
+    if node.rule and node.rule.constraints:
+        res = ", ".join(f"{k}={v}" for k, v in node.rule.constraints.items())
+        parts.append(f"[{res}]")
+    return " ".join(parts)
+
+
+def _sinks(pipeline: "Pipeline") -> list:
+    """Nodes with at least one parent that no other node in the pipeline depends on."""
+    is_parent = {id(p) for n in pipeline.nodes for p in n.parents}
+    return [n for n in pipeline.nodes if n.parents and id(n) not in is_parent]
+
+
 class Pipeline:
     def __init__(self):
         object.__setattr__(self, "nodes", [])
@@ -73,21 +97,7 @@ class Pipeline:
         object.__setattr__(self, name, value)
 
     def _label(self, node: Node) -> str:
-        parts = [node.rule.__name__]
-        suffix = ""
-        if node.node_type:
-            suffix = node.node_type.__name__
-        if node.output_name and node.output_name != suffix:
-            suffix += f":{node.output_name}" if suffix else node.output_name
-        if suffix:
-            parts[0] += f"[{suffix}]"
-        if node.config:
-            cfg = ", ".join(f"{k}={v!r}" for k, v in node.config.items())
-            parts.append(f"({cfg})")
-        if node.rule and node.rule.constraints:
-            res = ", ".join(f"{k}={v}" for k, v in node.rule.constraints.items())
-            parts.append(f"[{res}]")
-        return " ".join(parts)
+        return _label(node)
 
     def __str__(self) -> str:
         from collections import defaultdict
@@ -194,6 +204,155 @@ class Pipeline:
             ax=ax,
             with_labels=True,
             node_color="steelblue",
+            node_size=2000,
+            font_color="white",
+            font_size=9,
+            arrows=True,
+            arrowsize=20,
+            edge_color="gray",
+        )
+        plt.tight_layout()
+        plt.show()
+
+
+class DAG:
+    """Aggregator for multiple pipelines. Stores nodes by content-addressed hash;
+    deduplicates shared upstream computations automatically."""
+
+    def __init__(self):
+        self._nodes: dict[str, object] = {}   # hash -> Node
+        self._required: set[str] = set()
+
+    def add(self, pipeline: Pipeline, request=None) -> None:
+        """Add a pipeline's nodes. request defaults to pipeline sinks."""
+        from necroflow.dag import _node_hash
+
+        if request is None:
+            request = _sinks(pipeline)
+        for node in pipeline.nodes:
+            self._nodes[_node_hash(node)] = node
+        for node in request:
+            self._required.add(_node_hash(node))
+
+    @property
+    def nodes(self) -> list:
+        return list(self._nodes.values())
+
+    @property
+    def required_nodes(self) -> list:
+        return [n for h, n in self._nodes.items() if h in self._required]
+
+    def resolve_paths(self, outdir) -> None:
+        from necroflow.dag import resolve_paths
+        resolve_paths(self.nodes, outdir)
+
+    def execute(self, outdir, total_threads=None) -> None:
+        from necroflow.executor import execute
+        execute(self, outdir, total_threads)
+
+    def __str__(self) -> str:
+        from collections import defaultdict
+        import networkx as nx
+
+        nodes = self.nodes
+        required_ids = {id(n) for n in self.required_nodes}
+        G = nx.DiGraph()
+        for node in nodes:
+            G.add_node(id(node), node=node)
+            for parent in node.parents:
+                G.add_edge(id(parent), id(node))
+
+        depth: dict[int, int] = {}
+        for nid in nx.topological_sort(G):
+            preds = list(G.predecessors(nid))
+            depth[nid] = max((depth[p] for p in preds), default=-1) + 1
+
+        layers: dict[int, list[int]] = defaultdict(list)
+        for nid, d in depth.items():
+            layers[d].append(nid)
+
+        labels = {nid: _label(G.nodes[nid]["node"]) for nid in G.nodes}
+
+        GAP = 3
+        req_marker = " ★"
+        lines: list[str] = [f"DAG  {len(nodes)} nodes  ({len(self._required)} required)\n"]
+        centre_x: dict[int, int] = {}
+        layer_rows = []
+
+        for d in sorted(layers):
+            nids = layers[d]
+            tops, mids, bots = [], [], []
+            x = 0
+            for nid in nids:
+                lbl = labels[nid] + (req_marker if nid in required_ids else "")
+                w = len(lbl) + 2
+                tops.append("┌" + "─" * w + "┐")
+                mids.append("│ " + lbl + " │")
+                bots.append("└" + "─" * w + "┘")
+                centre_x[nid] = x + (w + 2) // 2
+                x += w + 2 + GAP
+            layer_rows.append(("   ".join(tops), "   ".join(mids), "   ".join(bots)))
+
+        for li, (top, mid, bot) in enumerate(layer_rows):
+            lines.extend([top, mid, bot])
+            d = li
+            if d + 1 not in layers:
+                continue
+            cur_nids = set(layers[d])
+            nxt_nids = set(layers[d + 1])
+            col_edges = [
+                (centre_x[u], centre_x[v])
+                for u, v in G.edges()
+                if u in cur_nids and v in nxt_nids
+            ]
+            if not col_edges:
+                lines.append("")
+                continue
+            lines.extend(_render_connector(col_edges))
+
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def plot(self, **fig_kw) -> None:
+        import networkx as nx
+        import matplotlib.pyplot as plt
+        from collections import defaultdict
+
+        nodes = self.nodes
+        required_ids = {id(n) for n in self.required_nodes}
+        G = nx.DiGraph()
+        for node in nodes:
+            G.add_node(id(node), node=node)
+            for parent in node.parents:
+                G.add_edge(id(parent), id(node))
+
+        depth: dict[int, int] = {}
+        for nid in nx.topological_sort(G):
+            preds = list(G.predecessors(nid))
+            depth[nid] = max((depth[p] for p in preds), default=-1) + 1
+
+        layers: dict[int, list[int]] = defaultdict(list)
+        for nid, d in depth.items():
+            layers[d].append(nid)
+
+        pos: dict[int, tuple[float, float]] = {}
+        for d, nids in layers.items():
+            for i, nid in enumerate(nids):
+                pos[nid] = (i - (len(nids) - 1) / 2, -d)
+
+        labels = {nid: _label(G.nodes[nid]["node"]) for nid in G.nodes}
+        colors = ["orange" if nid in required_ids else "steelblue" for nid in G.nodes]
+
+        fig, ax = plt.subplots(**fig_kw)
+        nx.draw(
+            G,
+            pos=pos,
+            labels=labels,
+            ax=ax,
+            with_labels=True,
+            node_color=colors,
             node_size=2000,
             font_color="white",
             font_size=9,
