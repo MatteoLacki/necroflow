@@ -68,40 +68,37 @@ def _label(node: Node) -> str:
     return " ".join(parts)
 
 
-def _sinks(pipeline: "Pipeline") -> list:
+def _sinks(pipeline: Pipeline) -> list:
     """Nodes with at least one parent that no other node in the pipeline depends on."""
     is_parent = {id(p) for n in pipeline.nodes for p in n.parents}
     return [n for n in pipeline.nodes if n.parents and id(n) not in is_parent]
 
 
-class Pipeline:
-    def __init__(self):
-        object.__setattr__(self, "nodes", [])
-        object.__setattr__(self, "_node_names", {})
+class _GraphBase:
+    """Shared rendering logic for Pipeline and DAG."""
 
-    def __setattr__(self, name, value):
-        from necroflow.dag import Node
+    @property
+    def nodes(self) -> list:
+        raise NotImplementedError
 
-        node_names = object.__getattribute__(self, "_node_names")
-        if name in node_names:
-            raise ValueError(f"Pipeline attribute {name!r} already assigned")
-        nodes = object.__getattribute__(self, "nodes")
-        if isinstance(value, Node):
-            nodes.append(value)
-            node_names[name] = value
-        elif isinstance(value, tuple) and any(isinstance(v, Node) for v in value):
-            for v in value:
-                if isinstance(v, Node):
-                    nodes.append(v)
-            node_names[name] = value
-        object.__setattr__(self, name, value)
+    def _header(self) -> str:
+        raise NotImplementedError
 
-    def _label(self, node: Node) -> str:
+    def _node_label(self, node: Node, nid: int) -> str:
         return _label(node)
+
+    def _node_color(self, nid: int) -> str:
+        return "steelblue"
+
+    def resolve_paths(self, outdir) -> None:
+        from necroflow.dag import resolve_paths
+        resolve_paths(self.nodes, outdir)
+
+    def __repr__(self) -> str:
+        return str(self)
 
     def __str__(self) -> str:
         from collections import defaultdict
-
         import networkx as nx
 
         G = nx.DiGraph()
@@ -119,10 +116,10 @@ class Pipeline:
         for nid, d in depth.items():
             layers[d].append(nid)
 
-        labels = {nid: self._label(G.nodes[nid]["node"]) for nid in G.nodes}
+        labels = {nid: self._node_label(G.nodes[nid]["node"], nid) for nid in G.nodes}
 
         GAP = 3
-        lines: list[str] = [f"Pipeline  {len(self.nodes)} nodes\n"]
+        lines: list[str] = [self._header() + "\n"]
         centre_x: dict[int, int] = {}
         layer_rows: list[tuple[str, str, str]] = []
 
@@ -159,17 +156,10 @@ class Pipeline:
 
         return "\n".join(lines)
 
-    def resolve_paths(self, outdir) -> None:
-        from necroflow.dag import resolve_paths
-
-        resolve_paths(object.__getattribute__(self, "nodes"), outdir)
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def plot(self, **fig_kw):
+    def plot(self, **fig_kw) -> None:
         import networkx as nx
         import matplotlib.pyplot as plt
+        from collections import defaultdict
 
         G = nx.DiGraph()
         for node in self.nodes:
@@ -182,8 +172,6 @@ class Pipeline:
             preds = list(G.predecessors(nid))
             depth[nid] = max((depth[p] for p in preds), default=-1) + 1
 
-        from collections import defaultdict
-
         layers: dict[int, list[int]] = defaultdict(list)
         for nid, d in depth.items():
             layers[d].append(nid)
@@ -191,10 +179,10 @@ class Pipeline:
         pos: dict[int, tuple[float, float]] = {}
         for d, nids in layers.items():
             for i, nid in enumerate(nids):
-                x = i - (len(nids) - 1) / 2
-                pos[nid] = (x, -d)
+                pos[nid] = (i - (len(nids) - 1) / 2, -d)
 
-        labels = {nid: self._label(G.nodes[nid]["node"]) for nid in G.nodes}
+        labels = {nid: self._node_label(G.nodes[nid]["node"], nid) for nid in G.nodes}
+        colors = [self._node_color(nid) for nid in G.nodes]
 
         fig, ax = plt.subplots(**fig_kw)
         nx.draw(
@@ -203,7 +191,7 @@ class Pipeline:
             labels=labels,
             ax=ax,
             with_labels=True,
-            node_color="steelblue",
+            node_color=colors,
             node_size=2000,
             font_color="white",
             font_size=9,
@@ -215,7 +203,37 @@ class Pipeline:
         plt.show()
 
 
-class DAG:
+class Pipeline(_GraphBase):
+    def __init__(self):
+        object.__setattr__(self, "_nodes_list", [])
+        object.__setattr__(self, "_node_names", {})
+
+    @property
+    def nodes(self) -> list:
+        return object.__getattribute__(self, "_nodes_list")
+
+    def __setattr__(self, name, value):
+        from necroflow.dag import Node
+
+        node_names = object.__getattribute__(self, "_node_names")
+        if name in node_names:
+            raise ValueError(f"Pipeline attribute {name!r} already assigned")
+        nodes = object.__getattribute__(self, "_nodes_list")
+        if isinstance(value, Node):
+            nodes.append(value)
+            node_names[name] = value
+        elif isinstance(value, tuple) and any(isinstance(v, Node) for v in value):
+            for v in value:
+                if isinstance(v, Node):
+                    nodes.append(v)
+            node_names[name] = value
+        object.__setattr__(self, name, value)
+
+    def _header(self) -> str:
+        return f"Pipeline  {len(self.nodes)} nodes"
+
+
+class DAG(_GraphBase):
     """Aggregator for multiple pipelines. Stores nodes by content-addressed hash;
     deduplicates shared upstream computations automatically."""
 
@@ -242,123 +260,15 @@ class DAG:
     def required_nodes(self) -> list:
         return [n for h, n in self._nodes.items() if h in self._required]
 
-    def resolve_paths(self, outdir) -> None:
-        from necroflow.dag import resolve_paths
-        resolve_paths(self.nodes, outdir)
+    def _header(self) -> str:
+        return f"DAG  {len(self._nodes)} nodes  ({len(self._required)} required)"
+
+    def _node_label(self, node: Node, nid: int) -> str:
+        return _label(node) + (" ★" if nid in {id(n) for n in self.required_nodes} else "")
+
+    def _node_color(self, nid: int) -> str:
+        return "orange" if nid in {id(n) for n in self.required_nodes} else "steelblue"
 
     def execute(self, outdir, total_threads=None) -> None:
         from necroflow.executor import execute
         execute(self, outdir, total_threads)
-
-    def __str__(self) -> str:
-        from collections import defaultdict
-        import networkx as nx
-
-        nodes = self.nodes
-        required_ids = {id(n) for n in self.required_nodes}
-        G = nx.DiGraph()
-        for node in nodes:
-            G.add_node(id(node), node=node)
-            for parent in node.parents:
-                G.add_edge(id(parent), id(node))
-
-        depth: dict[int, int] = {}
-        for nid in nx.topological_sort(G):
-            preds = list(G.predecessors(nid))
-            depth[nid] = max((depth[p] for p in preds), default=-1) + 1
-
-        layers: dict[int, list[int]] = defaultdict(list)
-        for nid, d in depth.items():
-            layers[d].append(nid)
-
-        labels = {nid: _label(G.nodes[nid]["node"]) for nid in G.nodes}
-
-        GAP = 3
-        req_marker = " ★"
-        lines: list[str] = [f"DAG  {len(nodes)} nodes  ({len(self._required)} required)\n"]
-        centre_x: dict[int, int] = {}
-        layer_rows = []
-
-        for d in sorted(layers):
-            nids = layers[d]
-            tops, mids, bots = [], [], []
-            x = 0
-            for nid in nids:
-                lbl = labels[nid] + (req_marker if nid in required_ids else "")
-                w = len(lbl) + 2
-                tops.append("┌" + "─" * w + "┐")
-                mids.append("│ " + lbl + " │")
-                bots.append("└" + "─" * w + "┘")
-                centre_x[nid] = x + (w + 2) // 2
-                x += w + 2 + GAP
-            layer_rows.append(("   ".join(tops), "   ".join(mids), "   ".join(bots)))
-
-        for li, (top, mid, bot) in enumerate(layer_rows):
-            lines.extend([top, mid, bot])
-            d = li
-            if d + 1 not in layers:
-                continue
-            cur_nids = set(layers[d])
-            nxt_nids = set(layers[d + 1])
-            col_edges = [
-                (centre_x[u], centre_x[v])
-                for u, v in G.edges()
-                if u in cur_nids and v in nxt_nids
-            ]
-            if not col_edges:
-                lines.append("")
-                continue
-            lines.extend(_render_connector(col_edges))
-
-        return "\n".join(lines)
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def plot(self, **fig_kw) -> None:
-        import networkx as nx
-        import matplotlib.pyplot as plt
-        from collections import defaultdict
-
-        nodes = self.nodes
-        required_ids = {id(n) for n in self.required_nodes}
-        G = nx.DiGraph()
-        for node in nodes:
-            G.add_node(id(node), node=node)
-            for parent in node.parents:
-                G.add_edge(id(parent), id(node))
-
-        depth: dict[int, int] = {}
-        for nid in nx.topological_sort(G):
-            preds = list(G.predecessors(nid))
-            depth[nid] = max((depth[p] for p in preds), default=-1) + 1
-
-        layers: dict[int, list[int]] = defaultdict(list)
-        for nid, d in depth.items():
-            layers[d].append(nid)
-
-        pos: dict[int, tuple[float, float]] = {}
-        for d, nids in layers.items():
-            for i, nid in enumerate(nids):
-                pos[nid] = (i - (len(nids) - 1) / 2, -d)
-
-        labels = {nid: _label(G.nodes[nid]["node"]) for nid in G.nodes}
-        colors = ["orange" if nid in required_ids else "steelblue" for nid in G.nodes]
-
-        fig, ax = plt.subplots(**fig_kw)
-        nx.draw(
-            G,
-            pos=pos,
-            labels=labels,
-            ax=ax,
-            with_labels=True,
-            node_color=colors,
-            node_size=2000,
-            font_color="white",
-            font_size=9,
-            arrows=True,
-            arrowsize=20,
-            edge_color="gray",
-        )
-        plt.tight_layout()
-        plt.show()
