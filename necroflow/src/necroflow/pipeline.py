@@ -237,9 +237,11 @@ class DAG(_GraphBase):
     """Aggregator for multiple pipelines. Stores nodes by content-addressed hash;
     deduplicates shared upstream computations automatically."""
 
-    def __init__(self):
+    def __init__(self, outdir=None):
+        from pathlib import Path
         self._nodes: dict[str, object] = {}   # hash -> Node
         self._required: set[str] = set()
+        self.outdir = Path(outdir) if outdir is not None else Path.cwd()
 
     def add(self, pipeline: Pipeline, request=None) -> None:
         """Add a pipeline's nodes. request defaults to pipeline sinks."""
@@ -269,6 +271,6 @@ class DAG(_GraphBase):
     def _node_color(self, nid: int) -> str:
         return "orange" if nid in {id(n) for n in self.required_nodes} else "steelblue"
 
-    def execute(self, outdir, total_threads=None) -> None:
+    def execute(self, total_threads=None) -> None:
         from necroflow.executor import execute
-        execute(self, outdir, total_threads)
+        execute(self, self.outdir, total_threads)

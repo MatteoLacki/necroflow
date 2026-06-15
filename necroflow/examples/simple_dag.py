@@ -128,13 +128,13 @@ basic_configs = [
     SimpleNamespace(path="/data/sample2.fastq.gz", ref="hg38", gene_model="gencode_v44"),
 ]
 
-dag = DAG()
+dag = DAG("/results")
 for config in basic_configs:
     dag.add(basic_pipeline(config, R))   # sinks = [counts, qc] per sample
 
 print(dag)
 dag.plot()
-dag.execute("/results")
+dag.execute()
 
 # --- multi-sample DAG: diamond pipeline ---
 
@@ -143,10 +143,10 @@ diamond_configs = [
     SimpleNamespace(path="/data/sample2.fastq.gz", ref="hg38"),
 ]
 
-dag2 = DAG()
+dag2 = DAG("/results")
 for config in diamond_configs:
     dag2.add(diamond_pipeline(config, R))  # sinks = [merged] per sample
 
 print(dag2)
 dag2.plot()
-dag2.execute("/results")
+dag2.execute()
