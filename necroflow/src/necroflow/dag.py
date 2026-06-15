@@ -1,4 +1,3 @@
-from __future__ import annotations
 import hashlib
 import inspect
 from collections import namedtuple
@@ -119,9 +118,7 @@ def resolve_command(node: Node) -> str | list[str] | None:
     """
     if node.command is None:
         return None
-    pos_input_names = [
-        n for n, t in node.rule.inputs.specs.items() if _is_nodetype(t)
-    ]
+    pos_input_names = [n for n, t in node.rule.inputs.specs.items() if _is_nodetype(t)]
     subs: dict[str, Any] = {}
     for iname, parent in zip(pos_input_names, node.parents):
         subs[iname] = parent.path
@@ -142,8 +139,11 @@ def resolve_paths(nodes: list[Node], outdir: Path | str) -> None:
     outdir = Path(outdir)
     for node in nodes:
         rule_name = node.rule.__name__ if node.rule else "unknown"
-        filename = (node.node_type.name if node.node_type and node.node_type.name
-                    else node.output_name or "output")
+        filename = (
+            node.node_type.name
+            if node.node_type and node.node_type.name
+            else node.output_name or "output"
+        )
         node.path = outdir / rule_name / _node_hash(node) / filename
 
 

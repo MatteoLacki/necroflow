@@ -15,12 +15,11 @@ source .venv/bin/activate
 ### Executor (`src/necroflow/executor.py`)
 
 ```python
-execute(graph, outdir, total_threads=None)  # graph: Pipeline, DAG, or any _GraphBase
+execute(graph, outdir, total_threads=None, scheduler=None)
 ```
 
-Calls `graph.resolve_paths(outdir)` internally, then runs all nodes:
+Accepts any `_GraphBase` (Pipeline or DAG). Calls `graph.resolve_paths(outdir)` internally, then runs all nodes:
 
-- Nodes scheduled in topological order (`graph.nodes` is topological by construction)
 - Parallel execution via `concurrent.futures.ThreadPoolExecutor`
 - Thread budget: sum of `constraints.threads` across running jobs ≤ `total_threads` (default `os.cpu_count()`)
 - A job whose thread requirement exceeds the budget runs solo when nothing else is running
@@ -29,10 +28,27 @@ Calls `graph.resolve_paths(outdir)` internally, then runs all nodes:
 - Raises `subprocess.CalledProcessError` on first failure
 
 ```python
-execute(P, "/results")                 # single pipeline, all CPUs
-execute(dag, "/results", total_threads=8)  # multi-pipeline DAG
-dag.execute("/results")                # equivalent convenience method
+execute(P, "/results")                          # single pipeline, all CPUs
+execute(P, "/results", total_threads=8)
+dag.execute()                                   # DAG uses dag.outdir
+dag.execute(scheduler=fifo_scheduler)           # explicit scheduler
 ```
+
+#### Scheduler protocol
+
+```python
+def my_scheduler(ready: list[Node], remaining: list[Node]) -> list[Node]:
+    """Return ready nodes in priority order. Executor submits from the front."""
+    ...
+```
+
+- `ready` — nodes whose parents are all done, not yet running
+- `remaining` — all not-yet-done, not-yet-running nodes (superset of ready)
+
+Built-in schedulers:
+
+- `connected_component_scheduler` *(default)* — builds undirected graph of remaining nodes, finds connected components, prioritises nodes from the smallest component. Re-analyses after each completion so splitting components are handled dynamically.
+- `fifo_scheduler` — topological (registration) order; equivalent to previous behaviour.
 
 ### NodeType (`src/necroflow/dag.py`)
 
