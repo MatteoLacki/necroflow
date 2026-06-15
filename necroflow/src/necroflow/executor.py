@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 from necroflow.dag import check_cache, resolve_command, write_dependencies
 
 if TYPE_CHECKING:
-    from necroflow.pipeline import Pipeline
+    from necroflow.pipeline import _GraphBase
 
 
-def execute(pipeline: Pipeline, outdir, total_threads: int | None = None) -> None:
+def execute(pipeline: _GraphBase, outdir, total_threads: int | None = None) -> None:
     """Run all nodes in the pipeline, respecting the thread budget.
 
     Skips nodes whose outputs already exist (cache hits). Writes
