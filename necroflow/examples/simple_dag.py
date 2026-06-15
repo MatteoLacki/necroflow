@@ -14,11 +14,9 @@ from necroflow import (
     Outputs,
     Constraints,
     Rules,
-    resolve_paths,
     resolve_command,
-    write_dependencies,
-    check_cache,
     Pipeline,
+    execute,
 )
 
 # --- node types ---
@@ -85,23 +83,16 @@ config = SimpleNamespace(
     path="/data/sample.fastq.gz", ref="hg38", gene_model="gencode_v44"
 )
 P = basic_pipeline(config, R)
-
-P.resolve_paths("/results")
 print(P)
 P.plot()
 
-# resolved commands with actual paths substituted
+# inspect resolved commands before running
+P.resolve_paths("/results")
 for node in P.nodes:
     print(resolve_command(node))
 
-# cache check: skip nodes whose outputs already exist
-for node in P.nodes:
-    if check_cache(node):
-        print(f"  CACHED  {node.output_name} -> {node.path}")
-    else:
-        print(f"  PENDING {node.output_name} -> {node.path}")
-        # after the job runs successfully, call:
-        # write_dependencies(node)  # writes dependencies.toml alongside the output
+# execute (skips cached nodes, writes dependencies.toml after each job)
+execute(P, "/results")
 
 # --- diamond pipeline ---
 
@@ -142,17 +133,7 @@ def diamond_pipeline(config, R):
 
 dconfig = SimpleNamespace(path="/data/sample2.fastq.gz", ref="hg38")
 D = diamond_pipeline(dconfig, R)
-D.resolve_paths("/results")
-
 print(D)
 D.plot()
 
-for node in D.nodes:
-    print(resolve_command(node))
-
-for node in D.nodes:
-    if check_cache(node):
-        print(f"  CACHED  {node.output_name} -> {node.path}")
-    else:
-        print(f"  PENDING {node.output_name} -> {node.path}")
-        # write_dependencies(node)  # call after job succeeds
+execute(D, "/results")
