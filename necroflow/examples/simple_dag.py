@@ -5,10 +5,8 @@ try:
 except NameError:
     pass
 
-from pprint import pprint
+from types import SimpleNamespace
 from necroflow import (
-    Node,
-    NodeType,
     node_types,
     Inputs,
     Outputs,
@@ -16,7 +14,7 @@ from necroflow import (
     Rules,
     resolve_command,
     Pipeline,
-    execute,
+    DAG,
 )
 
 # --- node types ---
@@ -65,37 +63,6 @@ R.register(
     "featureCounts -a {gene_model} {bam} -o {counts}",
 )
 
-# --- linear pipeline ---
-
-
-def basic_pipeline(config, R):
-    P = Pipeline()
-    P.fastq = R.raw_fastq(path=config.path)
-    P.bam, P.align_log = R.align(P.fastq, ref=config.ref)
-    P.sorted_bam = R.sort_bam(P.bam)
-    P.counts, P.qc = R.quantify(P.sorted_bam, gene_model=config.gene_model)
-    return P
-
-
-from types import SimpleNamespace
-
-config = SimpleNamespace(
-    path="/data/sample.fastq.gz", ref="hg38", gene_model="gencode_v44"
-)
-P = basic_pipeline(config, R)
-print(P)
-P.plot()
-
-# inspect resolved commands before running
-P.resolve_paths("/results")
-for node in P.nodes:
-    print(resolve_command(node))
-
-# execute (skips cached nodes, writes dependencies.toml after each job)
-execute(P, "/results")
-
-# --- diamond pipeline ---
-
 R.register(
     "call_variants",
     Inputs(bam=SortedBam, caller=str),
@@ -118,6 +85,17 @@ R.register(
 )
 
 
+# --- pipeline definitions ---
+
+def basic_pipeline(config, R):
+    P = Pipeline()
+    P.fastq = R.raw_fastq(path=config.path)
+    P.bam, P.align_log = R.align(P.fastq, ref=config.ref)
+    P.sorted_bam = R.sort_bam(P.bam)
+    P.counts, P.qc = R.quantify(P.sorted_bam, gene_model=config.gene_model)
+    return P
+
+
 def diamond_pipeline(config, R):
     P = Pipeline()
     P.fastq = R.raw_fastq(path=config.path)
@@ -131,9 +109,44 @@ def diamond_pipeline(config, R):
     return P
 
 
-dconfig = SimpleNamespace(path="/data/sample2.fastq.gz", ref="hg38")
-D = diamond_pipeline(dconfig, R)
-print(D)
-D.plot()
+# --- single-pipeline inspection ---
 
-execute(D, "/results")
+config = SimpleNamespace(path="/data/sample1.fastq.gz", ref="hg38", gene_model="gencode_v44")
+P = basic_pipeline(config, R)
+print(P)
+P.plot()
+
+# inspect resolved commands before running
+P.resolve_paths("/results")
+for node in P.nodes:
+    print(resolve_command(node))
+
+# --- multi-sample DAG: basic pipeline ---
+
+basic_configs = [
+    SimpleNamespace(path="/data/sample1.fastq.gz", ref="hg38", gene_model="gencode_v44"),
+    SimpleNamespace(path="/data/sample2.fastq.gz", ref="hg38", gene_model="gencode_v44"),
+]
+
+dag = DAG()
+for config in basic_configs:
+    dag.add(basic_pipeline(config, R))   # sinks = [counts, qc] per sample
+
+print(dag)
+dag.plot()
+dag.execute("/results")
+
+# --- multi-sample DAG: diamond pipeline ---
+
+diamond_configs = [
+    SimpleNamespace(path="/data/sample1.fastq.gz", ref="hg38"),
+    SimpleNamespace(path="/data/sample2.fastq.gz", ref="hg38"),
+]
+
+dag2 = DAG()
+for config in diamond_configs:
+    dag2.add(diamond_pipeline(config, R))  # sinks = [merged] per sample
+
+print(dag2)
+dag2.plot()
+dag2.execute("/results")
