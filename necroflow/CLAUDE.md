@@ -1,7 +1,7 @@
 # necroflow
 
 Python pipeline framework inspired by Snakemake. Rules are registered via a `Rules` container;
-the framework owns path generation and DAG construction. Execution engine not yet implemented.
+the framework owns path generation, DAG construction, and execution.
 
 ## Setup
 
@@ -11,6 +11,27 @@ source .venv/bin/activate
 ```
 
 ## Core concepts
+
+### Executor (`src/necroflow/executor.py`)
+
+```python
+execute(pipeline, outdir, total_threads=None)
+```
+
+Calls `pipeline.resolve_paths(outdir)` internally, then runs all nodes:
+
+- Nodes are scheduled in topological order (`pipeline.nodes` is topological by construction)
+- Parallel execution via `concurrent.futures.ThreadPoolExecutor`
+- Thread budget: sum of `constraints.threads` across running jobs ≤ `total_threads` (default `os.cpu_count()`)
+- A job whose thread requirement exceeds the budget runs solo when nothing else is running
+- Cache hits (`check_cache`) are skipped instantly before the loop starts
+- `write_dependencies(node)` called after each successful job
+- Raises `subprocess.CalledProcessError` on the first failure
+
+```python
+execute(P, "/results")               # use all CPUs
+execute(P, "/results", total_threads=8)
+```
 
 ### NodeType (`src/necroflow/dag.py`)
 
@@ -137,8 +158,9 @@ resolve_command(bam_node)
 src/necroflow/
   dag.py        — Node, NodeType, node_types, Inputs, Outputs, Constraints, Rules,
                   resolve_paths, resolve_command, write_dependencies, check_cache,
-                  _fingerprint, _node_hash, _accumulated_config
+                  _call_fingerprint, _node_hash, _accumulated_config
   pipeline.py   — Pipeline, _render_connector, _BOX junction map
+  executor.py   — execute, _run_node, _node_threads
   __init__.py   — exports all public symbols
 
 examples/
@@ -171,6 +193,7 @@ are unique across the pipeline.
 
 ## What is NOT yet implemented
 
-- Execution engine (actually running `resolve_command` output via `subprocess.run`)
-- Scheduler integration (constraints stored but not used)
-- File extensions on output paths
+- Scatter/gather (fan-out over lists of inputs)
+- Smart cache invalidation: skip tasks when nothing upstream has changed (criterion TBD — mutable input files are the open question)
+- Cluster/cloud backends
+- Retry / failure handling
