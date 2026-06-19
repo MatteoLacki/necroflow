@@ -245,14 +245,14 @@ class DAG(_GraphBase):
 
     def add(self, pipeline: Pipeline, request=None) -> None:
         """Add a pipeline's nodes. request defaults to pipeline sinks."""
-        from necroflow.dag import _node_hash
+        from necroflow.dag import _node_key
 
         if request is None:
             request = _sinks(pipeline)
         for node in pipeline.nodes:
-            self._nodes[_node_hash(node)] = node
+            self._nodes[_node_key(node)] = node
         for node in request:
-            self._required.add(_node_hash(node))
+            self._required.add(_node_key(node))
 
     @property
     def nodes(self) -> list:

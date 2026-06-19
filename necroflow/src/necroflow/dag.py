@@ -2,8 +2,19 @@ import hashlib
 import inspect
 from collections import namedtuple
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any
+
+
+class NodeState(Enum):
+    MISSING = "missing"        # in required subgraph, no output — must run
+    STALE = "stale"            # in required subgraph, output exists but a parent is newer — must run
+    UP_TO_DATE = "up_to_date"  # in required subgraph, output valid — skip
+    ORPHAN = "orphan"          # NOT in required subgraph, output exists
+    READY = "ready"            # Missing/Stale with all parents UpToDate — submit now
+    RUNNING = "running"        # submitted to thread pool
+    FAILED = "failed"          # execution error
 
 
 class NodeTypeMeta(type):
@@ -57,6 +68,7 @@ class Node:
     command: str | list[str] | None = None
     path: Path | None = None
     output_nodes: dict[str, Node] = field(default_factory=dict)
+    state: NodeState | None = None
 
 
 def _call_fingerprint(node: Node) -> tuple:
@@ -73,8 +85,21 @@ def _call_fingerprint(node: Node) -> tuple:
     )
 
 
-def _node_hash(node: Node) -> str:
+def _folder_hash(node: Node) -> str:
+    """8-char hash of the rule call — shared by all co-outputs. Names the output directory."""
     return hashlib.sha256(repr(_call_fingerprint(node)).encode()).hexdigest()[:8]
+
+
+def _node_key(node: Node) -> str:
+    """Unique key for a node: relative path rule_name/folder_hash/filename.
+    Distinct for co-outputs because filename differs."""
+    rule_name = node.rule.__name__ if node.rule else "unknown"
+    filename = (
+        node.node_type.name
+        if node.node_type and node.node_type.name
+        else node.output_name or "output"
+    )
+    return f"{rule_name}/{_folder_hash(node)}/{filename}"
 
 
 def _accumulated_config(node: Node) -> dict:
@@ -108,6 +133,65 @@ def check_cache(node: Node) -> bool:
         and node.path.exists()
         and (node.path.parent / "dependencies.toml").exists()
     )
+
+
+def _output_mtime(path: Path) -> float:
+    """Mtime of a node output. For directories, returns the max mtime of all files inside."""
+    if path.is_dir():
+        mtimes = [f.stat().st_mtime for f in path.rglob("*") if f.is_file()]
+        return max(mtimes) if mtimes else path.stat().st_mtime
+    return path.stat().st_mtime
+
+
+def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
+    """Set node.state for each node. Requires resolve_paths() to have been called first.
+
+    Nodes in the required subgraph (required_nodes + all ancestors) get Missing/Stale/UpToDate.
+    Nodes outside the subgraph with existing output get Orphan.
+    Nodes outside the subgraph with no output get state=None (excluded from execution).
+    """
+    # build required subgraph via BFS over parents using object identity
+    required_subgraph: set[int] = set()
+    frontier = list(required_nodes)
+    while frontier:
+        n = frontier.pop()
+        if id(n) in required_subgraph:
+            continue
+        required_subgraph.add(id(n))
+        frontier.extend(n.parents)
+
+    for node in nodes:
+        if id(node) not in required_subgraph:
+            if node.path is not None and node.path.exists():
+                node.state = NodeState.ORPHAN
+            else:
+                node.state = None
+            continue
+
+        if node.path is None or not node.path.exists():
+            node.state = NodeState.MISSING
+            continue
+
+        node_mtime = _output_mtime(node.path)
+        stale = any(
+            p.path is not None and p.path.exists() and _output_mtime(p.path) > node_mtime
+            for p in node.parents
+        )
+        node.state = NodeState.STALE if stale else NodeState.UP_TO_DATE
+
+    # propagate STALE transitively: if any parent is MISSING or STALE, this node is also STALE
+    changed = True
+    while changed:
+        changed = False
+        for node in nodes:
+            if node.state == NodeState.UP_TO_DATE:
+                if any(
+                    p.state in (NodeState.MISSING, NodeState.STALE)
+                    for p in node.parents
+                    if p.state is not None
+                ):
+                    node.state = NodeState.STALE
+                    changed = True
 
 
 def resolve_command(node: Node) -> str | list[str] | None:
@@ -144,7 +228,7 @@ def resolve_paths(nodes: list[Node], outdir: Path | str) -> None:
             if node.node_type and node.node_type.name
             else node.output_name or "output"
         )
-        node.path = outdir / rule_name / _node_hash(node) / filename
+        node.path = outdir / rule_name / _folder_hash(node) / filename
 
 
 class Inputs:
