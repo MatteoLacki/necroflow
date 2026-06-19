@@ -55,12 +55,17 @@ def execute(
     outdir,
     total_threads: int | None = None,
     scheduler: Scheduler | None = None,
+    keep_going: bool = False,
 ) -> None:
     """Run required nodes in the pipeline, respecting the thread budget.
 
     Classifies each node as Missing/Stale/UpToDate/Orphan before execution.
     Skips UpToDate and Orphan nodes. Writes dependencies.toml after each
-    successful job. Raises on the first failure.
+    successful job.
+
+    keep_going=False (default): raise on the first failure.
+    keep_going=True: continue running independent nodes; raise ExceptionGroup
+    at the end listing all failures.
     """
     if scheduler is None:
         scheduler = connected_component_scheduler
@@ -78,15 +83,18 @@ def execute(
 
     running: dict = {}  # future -> (node, threads_used)
     used_threads = 0
+    errors: list = []  # exceptions collected in keep_going mode
 
     _needs_run = {NodeState.MISSING, NodeState.STALE, NodeState.READY, NodeState.RUNNING}
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(active) or 1) as pool:
         while any(n.state in _needs_run for n in active):
-            # promote Missing/Stale to Ready when all parents are UpToDate
+            # promote Missing/Stale: FAILED parent → FAILED; all parents UP_TO_DATE → READY
             for n in active:
                 if n.state in (NodeState.MISSING, NodeState.STALE):
-                    if all(p.state == NodeState.UP_TO_DATE for p in n.parents):
+                    if any(p.state == NodeState.FAILED for p in n.parents):
+                        n.state = NodeState.FAILED
+                    elif all(p.state == NodeState.UP_TO_DATE for p in n.parents):
                         n.state = NodeState.READY
 
             ready = [n for n in active if n.state == NodeState.READY]
@@ -111,10 +119,18 @@ def execute(
                     f.result()
                     write_dependencies(node)
                     node.state = NodeState.UP_TO_DATE
-                except Exception:
+                except Exception as exc:
                     node.state = NodeState.FAILED
-                    raise
+                    if not keep_going:
+                        raise
+                    errors.append(exc)
                 used_threads -= t
+
+    if errors:
+        raise ExceptionGroup(
+            "necroflow: some nodes failed",
+            errors,
+        )
 
 
 def _node_threads(node) -> int:
