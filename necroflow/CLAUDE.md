@@ -16,20 +16,46 @@ source .venv/bin/activate
 
 ## Core concepts
 
+### NodeState (`src/necroflow/dag.py`)
+
+Each node carries a `state: NodeState | None` field set by `classify_nodes()`.
+
+| State | Meaning |
+|---|---|
+| `MISSING` | In required subgraph, no output — must run |
+| `STALE` | In required subgraph, output exists but a parent is newer — must run |
+| `UP_TO_DATE` | In required subgraph, output valid — skip |
+| `ORPHAN` | Outside required subgraph, output exists |
+| `READY` | MISSING/STALE with all parents UP_TO_DATE — submit now |
+| `RUNNING` | Submitted to thread pool |
+| `FAILED` | Execution error |
+
+`STALE` propagates transitively: if a parent is MISSING or STALE, all descendants are also STALE.
+
+```python
+classify_nodes(nodes, required_nodes)
+# sets node.state on every node in the list
+# required_nodes + all ancestors → MISSING/STALE/UP_TO_DATE
+# outside subgraph with output → ORPHAN
+# outside subgraph without output → None (excluded)
+```
+
+Requires `resolve_paths()` to have been called first.
+
 ### Executor (`src/necroflow/executor.py`)
 
 ```python
 execute(graph, outdir, total_threads=None, scheduler=None)
 ```
 
-Accepts any `_GraphBase` (Pipeline or DAG). Calls `graph.resolve_paths(outdir)` internally, then runs all nodes:
+Accepts any `_GraphBase` (Pipeline or DAG). Calls `graph.resolve_paths(outdir)` and `classify_nodes()` internally, then runs only the required subgraph:
 
 - Parallel execution via `concurrent.futures.ThreadPoolExecutor`
 - Thread budget: sum of `constraints.threads` across running jobs ≤ `total_threads` (default `os.cpu_count()`)
 - A job whose thread requirement exceeds the budget runs solo when nothing else is running
-- Cache hits (`check_cache`) skipped before the loop starts
+- UP_TO_DATE and ORPHAN nodes skipped; state transitions MISSING/STALE → READY → RUNNING → UP_TO_DATE/FAILED
 - `write_dependencies(node)` called after each successful job
-- Raises `subprocess.CalledProcessError` on first failure
+- Raises on first failure
 
 ```python
 execute(P, "/results")                          # single pipeline, all CPUs
@@ -81,6 +107,7 @@ Dataclass representing a pipeline value. Fields:
 - `.command` — raw command template string (e.g. `"samtools sort {bam} -o {sorted_bam}"`)
 - `.output_nodes` — `{name: Node}` dict of all co-outputs from the same rule call (enables command resolution)
 - `.path` — `pathlib.Path` set by `resolve_paths()`
+- `.state` — `NodeState | None` set by `classify_nodes()`
 
 ### `Inputs`, `Outputs`, `Constraints` (`src/necroflow/dag.py`)
 
@@ -141,8 +168,9 @@ def basic_pipeline(config, R):
 
 #### `DAG` — multi-pipeline aggregator
 
-Stores nodes by content-addressed hash (`_node_hash`). Deduplicates shared upstream
-computations across pipelines automatically. Tracks a required set (target nodes).
+Stores nodes by `_node_key` (= `rule_name/folder_hash/filename`). Deduplicates shared upstream
+computations across pipelines automatically. Co-outputs of the same rule call share a directory
+(`folder_hash`) but have distinct keys (different filename). Tracks a required set (target nodes).
 
 ```python
 dag = DAG()
@@ -170,12 +198,15 @@ Uses `networkx` + `matplotlib`. Required nodes (DAG only) shown in orange.
 
 ```python
 P.resolve_paths("/results")
-# sets node.path = /results/{rule_name}/{hash8}/{output_name}
+# sets node.path = /results/{rule_name}/{folder_hash}/{filename}
 ```
 
-The 8-char hash is derived from the full ancestor config chain (all rule names, output names,
-configs, and parent fingerprints recursively). Deterministic: same DAG + same root inputs →
-same paths. Different root inputs → different hash → different path → cache miss.
+Two-level hashing:
+
+- **`_folder_hash(node)`** — 8-char hash of the rule call (rule name + config + parent fingerprints). Shared by all co-outputs of the same call. Names the output directory.
+- **`_node_key(node)`** — `rule_name/folder_hash/filename`. Unique per node including co-outputs. Used as the DAG dict key.
+
+Deterministic: same DAG + same root inputs → same paths. Different inputs → different folder_hash → different directory → cache miss.
 
 ```python
 node.path.exists()  # True → already computed for these inputs (cache hit)
@@ -200,15 +231,19 @@ resolve_command(bam_node)
 
 ```
 src/necroflow/
-  dag.py        — Node, NodeType, node_types, Inputs, Outputs, Constraints, Rules,
+  dag.py        — Node, NodeState, NodeType, node_types, Inputs, Outputs, Constraints, Rules,
                   resolve_paths, resolve_command, write_dependencies, check_cache,
-                  _call_fingerprint, _node_hash, _accumulated_config
+                  classify_nodes, _call_fingerprint, _folder_hash, _node_key,
+                  _output_mtime, _accumulated_config
   pipeline.py   — _GraphBase, Pipeline, DAG, _sinks, _label, _render_connector
   executor.py   — execute (accepts any _GraphBase), _run_node, _node_threads
   __init__.py   — exports all public symbols
 
 examples/
   simple_dag.py — linear + diamond pipelines; registration, path resolution, command resolution
+
+tests/
+  test_classify_nodes.py — NodeState classification, co-output deduplication, stale propagation
 ```
 
 ### `dependencies.toml` — per-output provenance (`src/necroflow/dag.py`)
@@ -236,6 +271,7 @@ are unique across the pipeline.
 ## What is NOT yet implemented
 
 - Scatter/gather (fan-out over lists of inputs)
-- Smart cache invalidation: skip tasks when nothing upstream has changed (criterion TBD — mutable input files are the open question)
+- Smart cache invalidation: `_folder_hash` does not yet include the command template string, so rule code changes do not invalidate the cache
 - Cluster/cloud backends
 - Retry / failure handling
+- Deletion of Orphan outputs (state is classified but no action taken)
