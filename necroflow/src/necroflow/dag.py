@@ -80,6 +80,7 @@ def _call_fingerprint(node: Node) -> tuple:
     """
     return (
         node.rule.__name__ if node.rule else None,
+        node.command,
         tuple(sorted(node.config.items())),
         tuple((_call_fingerprint(p), p.output_name) for p in node.parents),
     )

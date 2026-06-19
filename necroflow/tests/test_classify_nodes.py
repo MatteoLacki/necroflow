@@ -41,6 +41,22 @@ def test_cooutputs_share_folder_hash():
     assert _folder_hash(P.bam) == _folder_hash(P.log)
 
 
+def test_command_change_changes_folder_hash():
+    R2 = Rules()
+    R2.register("raw_fastq", Inputs(path=str), Outputs(fastq=Fastq), "touch {fastq}")
+    R2.register("align", Inputs(fastq=Fastq, ref=str), Outputs(bam=Bam),
+                "bwa mem {ref} {fastq} > {bam}")  # different command
+    R2.register("sort_bam", Inputs(bam=Bam), Outputs(bam=Bam), "touch {bam}")
+
+    P1 = make_pipeline()  # uses original R with "touch {bam}"
+    P2 = Pipeline()
+    P2.fastq = R2.raw_fastq(path="/data/s.fastq")
+    P2.bam = R2.align(P2.fastq, ref="hg38")
+    P2.sorted = R2.sort_bam(P2.bam)
+
+    assert _folder_hash(P1.bam) != _folder_hash(P2.bam)
+
+
 def test_dag_contains_all_cooutputs(tmp_path):
     P = make_pipeline()
     dag = DAG(outdir=tmp_path)
