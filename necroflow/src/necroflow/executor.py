@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import os
 import subprocess
+import time
 from typing import TYPE_CHECKING, Callable
 
 from necroflow.dag import (
@@ -13,6 +14,7 @@ from necroflow.dag import (
     write_dependencies,
 )
 from necroflow.state_db import StateDB
+from necroflow import logger as _logger
 
 if TYPE_CHECKING:
     from necroflow.dag import Node
@@ -69,6 +71,7 @@ def execute(
     keep_going=True: continue running independent nodes; raise ExceptionGroup
     at the end listing all failures.
     """
+    _logger.setup()
     if scheduler is None:
         scheduler = connected_component_scheduler
     total_threads = total_threads or os.cpu_count() or 1
@@ -91,9 +94,12 @@ def execute(
         if n.state == NodeState.UP_TO_DATE and _node_key(n) in compromised:
             n.state = NodeState.STALE
 
-    running: dict = {}  # future -> (node, threads_used)
+    running: dict = {}  # future -> (node, start_time, threads_used)
     used_threads = 0
     errors: list = []  # exceptions collected in keep_going mode
+    n_run = n_skipped = n_failed = 0
+
+    n_skipped = sum(1 for n in active if n.state == NodeState.UP_TO_DATE)
 
     _blocked = {NodeState.FAILED, NodeState.INTERRUPTED}
     _needs_run = {NodeState.MISSING, NodeState.STALE, NodeState.READY, NodeState.RUNNING}
@@ -114,10 +120,13 @@ def execute(
                 for node in scheduler(ready, remaining):
                     t = _node_threads(node)
                     if used_threads + t <= total_threads or used_threads == 0:
+                        log_path = node.path.parent / "job.log"
                         db.mark_running(_node_key(node))
                         node.state = NodeState.RUNNING
-                        future = pool.submit(_run_node, node)
-                        running[future] = (node, t)
+                        _logger.job_start(node)
+                        start = time.monotonic()
+                        future = pool.submit(_run_node, node, log_path)
+                        running[future] = (node, start, t)
                         used_threads += t
 
                 if not running:
@@ -127,28 +136,38 @@ def execute(
                     running, return_when=concurrent.futures.FIRST_COMPLETED
                 )
                 for f in done_fs:
-                    node, t = running.pop(f)
+                    node, start, t = running.pop(f)
+                    elapsed = time.monotonic() - start
                     try:
                         f.result()
                         write_dependencies(node)
                         db.mark_done(_node_key(node), "up_to_date")
                         node.state = NodeState.UP_TO_DATE
+                        _logger.job_done(node, elapsed)
+                        n_run += 1
                     except Exception as exc:
-                        if (
-                            isinstance(exc, subprocess.CalledProcessError)
-                            and exc.returncode < 0
-                        ):
-                            node.state = NodeState.INTERRUPTED
-                            db.mark_done(_node_key(node), "interrupted")
+                        log_path = node.path.parent / "job.log"
+                        if isinstance(exc, subprocess.CalledProcessError):
+                            rc = exc.returncode
+                            if rc < 0:
+                                node.state = NodeState.INTERRUPTED
+                                db.mark_done(_node_key(node), "interrupted")
+                            else:
+                                node.state = NodeState.FAILED
+                                db.mark_done(_node_key(node), "failed")
+                            _logger.job_failed(node, elapsed, rc, log_path)
                         else:
                             node.state = NodeState.FAILED
                             db.mark_done(_node_key(node), "failed")
+                            _logger.job_error(node, elapsed, exc, log_path)
+                        n_failed += 1
                         if not keep_going:
                             raise
                         errors.append(exc)
                     used_threads -= t
     finally:
         db.close()
+        _logger.summary(n_run, n_skipped, n_failed)
 
     if errors:
         raise ExceptionGroup(
@@ -163,10 +182,11 @@ def _node_threads(node) -> int:
     return 1
 
 
-def _run_node(node) -> None:
+def _run_node(node, log_path) -> None:
     cmd = resolve_command(node)
     node.path.parent.mkdir(parents=True, exist_ok=True)
-    if isinstance(cmd, list):
-        subprocess.run(cmd, check=True)
-    else:
-        subprocess.run(cmd, shell=True, check=True)
+    with open(log_path, "w") as log:
+        if isinstance(cmd, list):
+            subprocess.run(cmd, check=True, stdout=log, stderr=log)
+        else:
+            subprocess.run(cmd, shell=True, check=True, stdout=log, stderr=log)
