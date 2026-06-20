@@ -13,12 +13,14 @@ class GraphNode:
     label: str
     detail: str
     selected: bool
+    tooltip: str
 
 
 @dataclass(frozen=True)
 class GraphEdge:
     source: str
     target: str
+    tooltip: str
 
 
 @dataclass(frozen=True)
@@ -66,12 +68,19 @@ def extract_graph(pipeline: Pipeline, selected: set[str]) -> PipelineGraph:
                 label=_node_label(node_id, node),
                 detail=_node_detail(node),
                 selected=node_id in selected,
+                tooltip=_node_tooltip(node_id, node),
             )
         )
         for parent in node.parents:
             source = ids_by_node.get(id(parent))
             if source is not None:
-                edges.append(GraphEdge(source=source, target=node_id))
+                edges.append(
+                    GraphEdge(
+                        source=source,
+                        target=node_id,
+                        tooltip=_edge_tooltip(source, node_id, parent, node),
+                    )
+                )
 
     return PipelineGraph(nodes=nodes, edges=edges)
 
@@ -115,11 +124,18 @@ def render_svg(
         x2 = margin + tx
         y2 = margin + ty + node_h / 2
         mid = (x1 + x2) / 2
+        parts.append('<g class="edge-wrap">')
+        parts.append(f'<title>{escape(edge.tooltip)}</title>')
+        parts.append(
+            '<path class="edge-hit" '
+            f'd="M{x1:.1f},{y1:.1f} C{mid:.1f},{y1:.1f} {mid:.1f},{y2:.1f} {x2:.1f},{y2:.1f}" />'
+        )
         parts.append(
             '<path class="edge" '
             f'd="M{x1:.1f},{y1:.1f} C{mid:.1f},{y1:.1f} {mid:.1f},{y2:.1f} {x2:.1f},{y2:.1f}" '
             'marker-end="url(#arrow)" />'
         )
+        parts.append('</g>')
 
     for node_id, (x, y) in positions.items():
         node = by_id[node_id]
@@ -132,6 +148,7 @@ def render_svg(
         label_lines = _fit_lines(node.label, width=20, max_lines=2)
         detail_lines = _fit_lines(node.detail, width=25, max_lines=2)
         parts.append(f'<a href="{escape(href, quote=True)}" class="{cls}">')
+        parts.append(f'<title>{escape(node.tooltip)}</title>')
         parts.append(f'<rect x="{rx}" y="{ry}" width="{node_w}" height="{node_h}" rx="8" />')
         text_y = ry + 25
         for line in label_lines:
@@ -177,6 +194,27 @@ def _node_detail(node: Node) -> str:
         return type_name
     config = ", ".join(f"{key}={value!r}" for key, value in node.config.items())
     return f"{type_name} {config}"
+
+
+def _node_tooltip(node_id: str, node: Node) -> str:
+    lines = [_node_label(node_id, node), _node_detail(node)]
+    rule_info = getattr(node.rule, "info", None)
+    if rule_info:
+        lines.extend(["", f"Rule: {rule_info}"])
+    if node.info:
+        lines.extend(["", f"Node: {node.info}"])
+    return "\n".join(lines)
+
+
+def _edge_tooltip(source_id: str, target_id: str, source: Node, target: Node) -> str:
+    lines = [f"{source_id} -> {target_id}"]
+    source_info = source.info
+    target_rule_info = getattr(target.rule, "info", None)
+    if source_info:
+        lines.extend(["", f"Output: {source_info}"])
+    if target_rule_info:
+        lines.extend(["", f"Consumes into rule: {target_rule_info}"])
+    return "\n".join(lines)
 
 
 def _layout(graph: PipelineGraph) -> dict[str, tuple[int, int]]:

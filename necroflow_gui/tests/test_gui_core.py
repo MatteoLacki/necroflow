@@ -57,6 +57,19 @@ def test_svg_node_text_is_fitted_inside_boxes():
     assert "height=\"98\"" in svg
 
 
+def test_svg_contains_node_and_edge_tooltips_from_info():
+    spec = next(spec for spec in PIPELINES if spec.id == "necroalchemy")
+    config = spec.configs[0]
+    graph = extract_graph(spec.build(config.values, spec.rules), set())
+
+    svg = render_svg(graph, spec.id, config.id)
+
+    assert "<title>seed make_seed.seed" in svg
+    assert "Rule: Write the input word to a file" in svg
+    assert "seed -&gt; upper" in svg
+    assert "Consumes into rule: Convert all characters to uppercase." in svg
+
+
 def test_node_ids_resolve_after_rebuild():
     spec = PIPELINES[1]
     config = spec.configs[0]

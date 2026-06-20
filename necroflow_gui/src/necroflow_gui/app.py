@@ -451,11 +451,24 @@ li { margin: 8px 0; }
   width: 100%;
   height: auto;
 }
+.edge-wrap { cursor: help; }
+.edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16;
+  pointer-events: stroke;
+}
 .edge {
   fill: none;
   stroke: #8b98aa;
   stroke-width: 2;
+  pointer-events: none;
 }
+.edge-wrap:hover .edge {
+  stroke: var(--blue);
+  stroke-width: 3;
+}
+.node { cursor: help; }
 .node rect {
   fill: var(--node-fill);
   stroke: var(--node-stroke);
