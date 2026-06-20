@@ -72,6 +72,13 @@ class Node:
     path: Path | None = None
     output_nodes: dict[str, Node] = field(default_factory=dict)
     state: NodeState | None = None
+    info: str | None = None
+
+    def __post_init__(self):
+        if self.info is None and self.node_type is not None:
+            doc = self.node_type.__doc__
+            if doc:
+                self.info = doc.strip()
 
 
 def _call_fingerprint(node: Node) -> tuple:
@@ -294,6 +301,7 @@ class Rules:
         outputs: Outputs,
         command: str | list[str],
         constraints: Constraints | None = None,
+        info: str | None = None,
     ) -> None:
         registry = object.__getattribute__(self, "_registry")
         if name in registry:
@@ -357,6 +365,7 @@ class Rules:
         wrapper.inputs = inputs
         wrapper.outputs = outputs
         wrapper.command = command
+        wrapper.info = info
 
         registry[name] = wrapper
         object.__setattr__(self, name, wrapper)

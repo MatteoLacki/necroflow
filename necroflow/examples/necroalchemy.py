@@ -30,47 +30,77 @@ try:
 except NameError:
     pass
 
-from necroflow import Constraints, DAG, Inputs, Outputs, Pipeline, Rules, node_types
+from necroflow import Constraints, DAG, Inputs, NodeType, Outputs, Pipeline, Rules
 
 # ── node types ────────────────────────────────────────────────────────────────
 
-(
-    Seed,
-    Upper,
-    Lower,
-    Reversed,
-    Rot13,
-    Repeated,
-    Merged,
-    SortedChars,
-    UniqueChars,
-    Combined,
-    Stats,
-    Audit,
-    UpperRot,
-    SortedCombined,
-    LineCounts,
-    FinalMix,
-    GrandSummary,
-) = node_types(
-    "seed=seed.txt"
-    " upper=upper.txt"
-    " lower=lower.txt"
-    " reversed=rev.txt"
-    " rot13=rot13.txt"
-    " repeated=rep.txt"
-    " merged=merged.txt"
-    " sorted_chars=sorted.txt"
-    " unique_chars=unique.txt"
-    " combined=combined.txt"
-    " stats=stats.txt"
-    " audit=audit.txt"
-    " upper_rot=upper_rot.txt"
-    " sorted_combined=sorted_combined.txt"
-    " line_counts=lines.txt"
-    " final_mix=final_mix.txt"
-    " grand_summary=summary.txt"
-)
+class Seed(NodeType):
+    """The input word written to disk — starting point for all transforms."""
+    name = "seed.txt"
+
+class Upper(NodeType):
+    """The seed word converted to uppercase."""
+    name = "upper.txt"
+
+class Lower(NodeType):
+    """The seed word converted to lowercase."""
+    name = "lower.txt"
+
+class Reversed(NodeType):
+    """The seed word with characters in reverse order."""
+    name = "rev.txt"
+
+class Rot13(NodeType):
+    """ROT13 cipher applied to the uppercased seed."""
+    name = "rot13.txt"
+
+class Repeated(NodeType):
+    """The lowercased word repeated n times, one per line."""
+    name = "rep.txt"
+
+class Merged(NodeType):
+    """Uppercase and lowercase variants pasted side by side."""
+    name = "merged.txt"
+
+class SortedChars(NodeType):
+    """Individual characters of the seed, sorted alphabetically."""
+    name = "sorted.txt"
+
+class UniqueChars(NodeType):
+    """Deduplicated character set derived from the sorted character list."""
+    name = "unique.txt"
+
+class Combined(NodeType):
+    """All four transform outputs concatenated into one blob."""
+    name = "combined.txt"
+
+class Stats(NodeType):
+    """Byte count of the combined blob."""
+    name = "stats.txt"
+
+class Audit(NodeType):
+    """Unique-character count of the combined blob."""
+    name = "audit.txt"
+
+class UpperRot(NodeType):
+    """ROT13 output re-uppercased for maximum shouting energy."""
+    name = "upper_rot.txt"
+
+class SortedCombined(NodeType):
+    """Combined blob with lines sorted lexicographically."""
+    name = "sorted_combined.txt"
+
+class LineCounts(NodeType):
+    """Total line count of the combined blob."""
+    name = "lines.txt"
+
+class FinalMix(NodeType):
+    """Shouted ROT13 and sorted blob concatenated."""
+    name = "final_mix.txt"
+
+class GrandSummary(NodeType):
+    """Final assembly of stats, line counts, and the final mix."""
+    name = "summary.txt"
 
 # ── rules (16 rules → 17 nodes) ───────────────────────────────────────────────
 # Each command sleeps 1-3 s so the scheduler and parallelism are visible.
@@ -85,6 +115,7 @@ R.register(
     Inputs(word=str),
     Outputs(seed=Seed),
     _S + "echo {word} > {seed}",
+    info="Write the input word to a file — the starting point for all transforms.",
 )
 
 # steps 2-4 — three independent transforms of the seed (fan-out)
@@ -93,6 +124,7 @@ R.register(
     Inputs(seed=Seed),
     Outputs(upper=Upper),
     _S + "tr a-z A-Z < {seed} > {upper}",
+    info="Convert all characters to uppercase.",
 )
 
 R.register(
@@ -100,6 +132,7 @@ R.register(
     Inputs(seed=Seed),
     Outputs(lower=Lower),
     _S + "tr A-Z a-z < {seed} > {lower}",
+    info="Convert all characters to lowercase.",
 )
 
 R.register(
@@ -107,6 +140,7 @@ R.register(
     Inputs(seed=Seed),
     Outputs(reversed=Reversed),
     _S + "rev {seed} > {reversed}",
+    info="Reverse the character order of the seed.",
 )
 
 # step 5 — character inventory of the seed
@@ -115,6 +149,7 @@ R.register(
     Inputs(seed=Seed),
     Outputs(sorted_chars=SortedChars),
     _S + "grep -o . {seed} | sort > {sorted_chars}",
+    info="Extract individual characters and sort them alphabetically.",
 )
 
 # step 6 — rot13 on the uppercased text
@@ -123,6 +158,7 @@ R.register(
     Inputs(upper=Upper),
     Outputs(rot13=Rot13),
     _S + "tr A-Za-z N-ZA-Mn-za-m < {upper} > {rot13}",
+    info="Apply ROT13 substitution cipher to the uppercased text.",
 )
 
 # step 7 — repeat the lowercased word n times
@@ -131,6 +167,7 @@ R.register(
     Inputs(lower=Lower, n=int),
     Outputs(repeated=Repeated),
     _S + "for _ in $(seq {n}); do cat {lower}; done > {repeated}",
+    info="Repeat the lowercased word n times, one per line.",
 )
 
 # step 8 — diamond merge: put upper and lower side by side
@@ -139,6 +176,7 @@ R.register(
     Inputs(upper=Upper, lower=Lower),
     Outputs(merged=Merged),
     _S + "paste {upper} {lower} > {merged}",
+    info="Paste uppercase and lowercase versions side by side (diamond convergence).",
 )
 
 # step 9 — unique character set
@@ -147,6 +185,7 @@ R.register(
     Inputs(sorted_chars=SortedChars),
     Outputs(unique_chars=UniqueChars),
     _S + "uniq {sorted_chars} > {unique_chars}",
+    info="Deduplicate the sorted character list to get the unique character set.",
 )
 
 # step 10 — 4-way merge into one blob
@@ -155,6 +194,7 @@ R.register(
     Inputs(merged=Merged, rot13=Rot13, repeated=Repeated, reversed=Reversed),
     Outputs(combined=Combined),
     _S + "cat {merged} {rot13} {repeated} {reversed} > {combined}",
+    info="Concatenate all four transform outputs into one blob (4-way fan-in).",
 )
 
 # step 11+12 — co-outputs: byte count + unique-char count (from the same rule call)
@@ -163,6 +203,7 @@ R.register(
     Inputs(combined=Combined, unique_chars=UniqueChars),
     Outputs(stats=Stats, audit=Audit),
     _S + "wc -c {combined} > {stats} && wc -l {unique_chars} > {audit}",
+    info="Compute byte count of combined blob and unique-character count (co-outputs).",
 )
 
 # step 13 — shout the rot13 (uppercase again)
@@ -171,6 +212,7 @@ R.register(
     Inputs(rot13=Rot13),
     Outputs(upper_rot=UpperRot),
     _S + "tr a-z A-Z < {rot13} > {upper_rot}",
+    info="Re-uppercase the ROT13 output for maximum shouting energy.",
 )
 
 # step 14 — sort the combined blob
@@ -179,6 +221,7 @@ R.register(
     Inputs(combined=Combined),
     Outputs(sorted_combined=SortedCombined),
     _S + "sort {combined} > {sorted_combined}",
+    info="Lexicographically sort all lines in the combined blob.",
 )
 
 # step 15 — count lines in combined blob
@@ -187,6 +230,7 @@ R.register(
     Inputs(combined=Combined),
     Outputs(line_counts=LineCounts),
     _S + "wc -l < {combined} > {line_counts}",
+    info="Count the total number of lines in the combined blob.",
 )
 
 # step 16 — mix the shouted rot13 with the sorted blob
@@ -195,6 +239,7 @@ R.register(
     Inputs(upper_rot=UpperRot, sorted_combined=SortedCombined),
     Outputs(final_mix=FinalMix),
     _S + "cat {upper_rot} {sorted_combined} > {final_mix}",
+    info="Concatenate shouted ROT13 and sorted blob into the final mix.",
 )
 
 # step 17 — grand convergence: stats + line counts + the final mix
@@ -203,6 +248,7 @@ R.register(
     Inputs(stats=Stats, line_counts=LineCounts, final_mix=FinalMix),
     Outputs(grand_summary=GrandSummary),
     _S + "cat {stats} {line_counts} {final_mix} > {grand_summary}",
+    info="Assemble stats, line counts, and final mix into the grand summary.",
 )
 
 

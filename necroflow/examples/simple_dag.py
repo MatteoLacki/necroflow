@@ -7,6 +7,7 @@ except NameError:
 
 from types import SimpleNamespace
 from necroflow import (
+    NodeType,
     node_types,
     Inputs,
     Outputs,
@@ -19,27 +20,54 @@ from necroflow import (
 
 # --- node types ---
 
-Fastq, Bam, Log, Counts, QcReport, Vcf, AnnotatedVcf, MergedVcf = node_types(
-    "fastq=reads.fastq.gz"
-    " bam=aligned.bam"
-    " log=align.log"
-    " counts=counts.txt"
-    " qc_report=qc.txt"
-    " vcf=variants.vcf.gz"
-    " annotated_vcf=annotated.vcf.gz"
-    " merged_vcf=merged.vcf.gz"
-)
+class Fastq(NodeType):
+    """Raw sequencing reads (FASTQ format)."""
+    name = "reads.fastq.gz"
 
+class Bam(NodeType):
+    """Aligned reads in BAM format."""
+    name = "aligned.bam"
 
 class SortedBam(Bam):
+    """Coordinate-sorted BAM; required before quantification or variant calling."""
     name = "sorted.bam"
+
+class Log(NodeType):
+    """Aligner log capturing mapping statistics."""
+    name = "align.log"
+
+class Counts(NodeType):
+    """Per-gene read counts produced by featureCounts."""
+    name = "counts.txt"
+
+class QcReport(NodeType):
+    """Alignment QC summary from featureCounts."""
+    name = "qc.txt"
+
+class Vcf(NodeType):
+    """Raw variant calls in VCF format."""
+    name = "variants.vcf.gz"
+
+class AnnotatedVcf(NodeType):
+    """Variant calls enriched with database annotations."""
+    name = "annotated.vcf.gz"
+
+class MergedVcf(NodeType):
+    """SNP and indel calls merged into a single VCF."""
+    name = "merged.vcf.gz"
 
 
 # --- rules ---
 
 R = Rules()
 
-R.register("raw_fastq", Inputs(path=str), Outputs(fastq=Fastq), "ln -s {path} {fastq}")
+R.register(
+    "raw_fastq",
+    Inputs(path=str),
+    Outputs(fastq=Fastq),
+    "ln -s {path} {fastq}",
+    info="Symlink a raw FASTQ file into the output tree.",
+)
 
 R.register(
     "align",
@@ -47,6 +75,7 @@ R.register(
     Outputs(bam=Bam, log=Log),
     "bwa mem {ref} {fastq} > {bam}",
     Constraints(threads=4),
+    info="Align reads to a reference genome with BWA-MEM.",
 )
 
 R.register(
@@ -54,6 +83,7 @@ R.register(
     Inputs(bam=Bam),
     Outputs(sorted_bam=SortedBam),
     "samtools sort {bam} -o {sorted_bam}",
+    info="Sort BAM by coordinate with samtools.",
 )
 
 R.register(
@@ -61,6 +91,7 @@ R.register(
     Inputs(bam=SortedBam, gene_model=str),
     Outputs(counts=Counts, qcreport=QcReport),
     "featureCounts -a {gene_model} {bam} -o {counts}",
+    info="Count reads per gene using featureCounts.",
 )
 
 R.register(
@@ -68,6 +99,7 @@ R.register(
     Inputs(bam=SortedBam, caller=str),
     Outputs(vcf=Vcf),
     "gatk HaplotypeCaller -I {bam} -O {vcf} --caller {caller}",
+    info="Call germline SNPs and indels with GATK HaplotypeCaller.",
 )
 
 R.register(
@@ -75,6 +107,7 @@ R.register(
     Inputs(vcf=Vcf, db=str),
     Outputs(annotated_vcf=AnnotatedVcf),
     "bcftools annotate -a {db} {vcf} -o {annotated_vcf}",
+    info="Annotate variants against a reference database with bcftools.",
 )
 
 R.register(
@@ -82,6 +115,7 @@ R.register(
     Inputs(snp_ann=AnnotatedVcf, indel_ann=AnnotatedVcf),
     Outputs(merged_vcf=MergedVcf),
     "bcftools merge {snp_ann} {indel_ann} -o {merged_vcf}",
+    info="Merge SNP and indel annotated VCFs into one file.",
 )
 
 
