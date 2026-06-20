@@ -161,8 +161,72 @@ Run state is persisted to `outdir/.rip/state.db` (SQLite) between invocations. A
 
 Each job's stdout/stderr is captured to `outdir/{rule}/{hash}/{job.log}`. On failure the log is printed to the terminal.
 
+## Command-line interface
+
+necroflow ships a `necroflow` command that runs pipelines from TOML configs.
+
+```bash
+necroflow \
+  --pipeline path/to/factory.py:function_name \
+  --config   experiment.toml \
+  --outdir   /results \
+  [--threads 16] [--keep-going] [--link-outputs]
+```
+
+`--pipeline` points to a Python file and names a factory function inside it.
+The function receives a plain `dict` (the parsed config) and must return a `Pipeline`.
+
+`--config` / `-c` may be repeated; all configs feed into the same DAG so shared
+upstream nodes are deduplicated across configs automatically.
+
+### Parameter grids
+
+Any TOML key ending in `__grid` is expanded into a Cartesian product of all
+combinations. The resulting output subfolders use the same naming scheme as
+[snakemakeconfigs](https://github.com/MatteoLacki/snakemakeconfigs).
+
+```toml
+# experiment.toml
+ref__grid    = ["hg38", "mm10"]
+aligner__grid = ["bwa", "bowtie2"]
+```
+
+This produces four pipelines: `experiment__ref+hg38__aligner+bwa`,
+`experiment__ref+hg38__aligner+bowtie2`, etc.
+
+The factory function:
+
+```python
+# factory.py
+from my_pipeline import rna_pipeline   # imported from the same directory
+
+def factory(cfg: dict):
+    return rna_pipeline(ref=cfg["ref"], aligner=cfg["aligner"])
+```
+
+### `--link-outputs`
+
+After execution, creates one subfolder per grid combo under `outdir/`:
+
+```
+/results/
+  {rule}/{hash}/{file}           ← real outputs (content-addressed)
+  experiment__ref+hg38__aligner+bwa/
+    {rule}/{hash}/{file}         ← symlinks into the hash tree
+    manifest.toml                ← sink output paths for this combo
+  experiment__ref+hg38__aligner+bowtie2/
+    ...
+```
+
+The symlink tree preserves the full `{rule}/{hash}/{file}` structure so paths
+remain stable and cacheable; the manifest lists just the sink (requested) outputs
+for quick programmatic access.
+
+See `examples/necroalchemy_grid.toml` and `examples/necroalchemy_factory.py`
+for a runnable example.
+
 ## What is not yet implemented
 
-- Scatter/gather (fan-out over lists of inputs)
+- Scatter/gather within a single pipeline (fan-out over lists of inputs)
 - Cluster / cloud backends
 - Deletion of orphan outputs (classified but no action taken)

@@ -244,14 +244,19 @@ src/necroflow/
                   classify_nodes, _call_fingerprint, _folder_hash, _node_key,
                   _output_mtime, _accumulated_config
   pipeline.py   — _GraphBase (incl. save()), Pipeline, DAG, _sinks, _label, _render_connector
-  executor.py   — execute (accepts any _GraphBase), _run_node, _node_threads
+  executor.py   — execute (accepts any _GraphBase), _run_node, _node_threads;
+                  parent-normalisation step before classify_nodes (see note below)
   state_db.py   — StateDB: SQLite persistence of run state in outdir/.rip/state.db
   logger.py     — thread-safe logging: job_start/done/failed/error/output, summary
+  grid.py       — TOML __grid expansion (vendored from snakemakeconfigs) + iter_configs()
+  cli.py        — necroflow CLI entry point; _load_factory, _create_link_outputs
   __init__.py   — exports all public symbols
 
 examples/
-  simple_dag.py    — linear + diamond pipelines; registration, path resolution, command resolution
-  necroalchemy.py  — 17-node silly text-transform pipeline; multi-word DAG; uses .save()
+  simple_dag.py             — linear + diamond pipelines; registration, path resolution, command resolution
+  necroalchemy.py           — 17-node silly text-transform pipeline; multi-word DAG; uses .save()
+  necroalchemy_factory.py   — CLI factory for necroalchemy; import-safe (CLI adds examples/ to sys.path)
+  necroalchemy_grid.toml    — parameter grid TOML (word × n); run with necroalchemy_factory.py
 
 tests/
   test_classify_nodes.py — NodeState classification, co-output deduplication, stale propagation,

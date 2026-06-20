@@ -1,0 +1,14 @@
+# Necroalchemy parameter grid
+#
+# Keys ending in __grid are expanded into all combinations.
+# This produces 6 pipelines: 3 words × 2 repetition counts.
+#
+# Run with:
+#   necroflow \
+#     --pipeline examples/necroalchemy_factory.py:factory \
+#     --config   examples/necroalchemy_grid.toml \
+#     --outdir   /tmp/necroalchemy_cli \
+#     --link-outputs
+
+word__grid = ["necroflow", "snakemake", "python"]
+n__grid    = [2, 5]
