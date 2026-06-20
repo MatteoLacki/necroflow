@@ -88,7 +88,7 @@ def _call_fingerprint(node: Node) -> tuple:
 
 def _folder_hash(node: Node) -> str:
     """8-char hash of the rule call — shared by all co-outputs. Names the output directory."""
-    return hashlib.sha256(repr(_call_fingerprint(node)).encode()).hexdigest()[:8]
+    return hashlib.sha256(repr(_call_fingerprint(node)).encode()).hexdigest()[:16]
 
 
 def _node_key(node: Node) -> str:
