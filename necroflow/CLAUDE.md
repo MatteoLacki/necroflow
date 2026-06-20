@@ -287,9 +287,77 @@ write_dependencies(node)  # write after job succeeds
 `_accumulated_config(node)` traverses strictly upward (ancestors only); assumes config key names
 are unique across the pipeline.
 
+### Parent normalisation in executor (`src/necroflow/executor.py`)
+
+After DAG deduplication, unique nodes can hold parent references to superseded
+objects (from other pipelines) that are never classified, leaving them with
+`state=None`. The executor remaps all parent pointers to canonical nodes before
+calling `classify_nodes`, so the READY-promotion check `all(p.state == UP_TO_DATE)` sees
+consistent state:
+
+```python
+canonical = {_node_key(n): n for n in nodes}
+for n in nodes:
+    n.parents[:] = [canonical.get(_node_key(p), p) for p in n.parents]
+```
+
+This runs after `resolve_paths` and before `classify_nodes` on every `execute()` call.
+
+### `grid.py` — parameter grids (`src/necroflow/grid.py`)
+
+Vendored from `snakemakeconfigs.toml_patcher`. Expands `__grid` keys in TOML
+documents into a Cartesian product of (label, plain_dict) pairs.
+
+```python
+from necroflow.grid import iter_configs
+import tomlkit
+
+doc = tomlkit.parse("""
+word__grid = ["necroflow", "snakemake"]
+n__grid    = [2, 5]
+""")
+
+for label, cfg in iter_configs(doc, base_stem="experiment"):
+    print(label, cfg)
+# experiment__word+necroflow__n+2  {'word': 'necroflow', 'n': 2}
+# experiment__word+necroflow__n+5  {'word': 'necroflow', 'n': 5}
+# experiment__word+snakemake__n+2  {'word': 'snakemake', 'n': 2}
+# experiment__word+snakemake__n+5  {'word': 'snakemake', 'n': 5}
+```
+
+`iter_configs(doc, base_stem, grid_suffixes, short_names, equal_sign)` yields
+`(label: str, config: dict)`. If no `__grid` keys, yields `(base_stem, plain_dict)`.
+
+`_to_plain_dict(doc)` converts tomlkit proxy types to plain Python dicts/lists/scalars.
+
+### CLI (`src/necroflow/cli.py`)
+
+Entry point: `necroflow.cli:main`, registered as `necroflow` in `pyproject.toml`.
+
+```bash
+necroflow \
+  --pipeline path/to/factory.py:function_name \
+  --config   experiment.toml \        # repeatable
+  --outdir   /results \
+  [--threads 16] [--keep-going] [--link-outputs]
+```
+
+- `--pipeline FILE:FUNC` — loads `FILE`, imports `FUNC(cfg: dict) -> Pipeline`
+- `--config`/`-c` — repeatable; each TOML is expanded with `iter_configs()`; all
+  pipelines share one DAG (shared upstream nodes deduplicated automatically)
+- `--link-outputs` — after execution, creates `outdir/{combo_label}/` with symlinks
+  into the hash tree + `manifest.toml` listing sink output paths
+
+Key internals:
+- `_load_factory(spec)` — splits `"file.py:func"`, loads with `importlib.util`,
+  inserts `file.parent` into `sys.path` so relative imports in the factory work
+- `_create_link_outputs(outdir, combos)` — relative symlinks preserving
+  `{rule}/{hash}/{file}` structure; skips nodes with no path or non-existent output
+- `_sinks(P)` — nodes with no children in the pipeline (leaf nodes)
+
 ## What is NOT yet implemented
 
-- Scatter/gather (fan-out over lists of inputs)
+- Scatter/gather within a single pipeline (fan-out over lists of inputs)
 - Cluster/cloud backends
 - Deletion of Orphan outputs (state is classified but no action taken)
 - Long-range edges in the ASCII renderer (edges skipping layers are omitted)
