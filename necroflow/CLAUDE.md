@@ -45,7 +45,7 @@ Requires `resolve_paths()` to have been called first.
 ### Executor (`src/necroflow/executor.py`)
 
 ```python
-execute(graph, outdir, total_threads=None, scheduler=None)
+execute(graph, outdir, total_threads=None, scheduler=None, keep_going=False)
 ```
 
 Accepts any `_GraphBase` (Pipeline or DAG). Calls `graph.resolve_paths(outdir)` and `classify_nodes()` internally, then runs only the required subgraph:
@@ -54,14 +54,17 @@ Accepts any `_GraphBase` (Pipeline or DAG). Calls `graph.resolve_paths(outdir)` 
 - Thread budget: sum of `constraints.threads` across running jobs ≤ `total_threads` (default `os.cpu_count()`)
 - A job whose thread requirement exceeds the budget runs solo when nothing else is running
 - UP_TO_DATE and ORPHAN nodes skipped; state transitions MISSING/STALE → READY → RUNNING → UP_TO_DATE/FAILED
+- FAILED state propagates to descendants (they are skipped)
 - `write_dependencies(node)` called after each successful job
-- Raises on first failure
+- `keep_going=False` (default): raise on first failure
+- `keep_going=True`: continue running independent branches; raise `ExceptionGroup` at the end listing all failures
 
 ```python
 execute(P, "/results")                          # single pipeline, all CPUs
 execute(P, "/results", total_threads=8)
 dag.execute()                                   # DAG uses dag.outdir
-dag.execute(scheduler=fifo_scheduler)           # explicit scheduler
+dag.execute(scheduler=fifo_scheduler)
+dag.execute(keep_going=True)                    # continue past failures
 ```
 
 #### Scheduler protocol
@@ -203,7 +206,7 @@ P.resolve_paths("/results")
 
 Two-level hashing:
 
-- **`_folder_hash(node)`** — 8-char hash of the rule call (rule name + config + parent fingerprints). Shared by all co-outputs of the same call. Names the output directory.
+- **`_folder_hash(node)`** — 8-char hash of the rule call (rule name + command + config + parent fingerprints). Shared by all co-outputs of the same call. Names the output directory. Command string included so rule code changes invalidate the cache.
 - **`_node_key(node)`** — `rule_name/folder_hash/filename`. Unique per node including co-outputs. Used as the DAG dict key.
 
 Deterministic: same DAG + same root inputs → same paths. Different inputs → different folder_hash → different directory → cache miss.
@@ -243,7 +246,9 @@ examples/
   simple_dag.py — linear + diamond pipelines; registration, path resolution, command resolution
 
 tests/
-  test_classify_nodes.py — NodeState classification, co-output deduplication, stale propagation
+  test_classify_nodes.py — NodeState classification, co-output deduplication, stale propagation,
+                           command-change cache invalidation
+  test_keep_going.py     — keep_going=True: independent branches, failure propagation, ExceptionGroup
 ```
 
 ### `dependencies.toml` — per-output provenance (`src/necroflow/dag.py`)
@@ -271,7 +276,6 @@ are unique across the pipeline.
 ## What is NOT yet implemented
 
 - Scatter/gather (fan-out over lists of inputs)
-- Smart cache invalidation: `_folder_hash` does not yet include the command template string, so rule code changes do not invalidate the cache
 - Cluster/cloud backends
 - Retry / failure handling
 - Deletion of Orphan outputs (state is classified but no action taken)
