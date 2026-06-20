@@ -14,7 +14,8 @@ class NodeState(Enum):
     ORPHAN = "orphan"          # NOT in required subgraph, output exists
     READY = "ready"            # Missing/Stale with all parents UpToDate — submit now
     RUNNING = "running"        # submitted to thread pool
-    FAILED = "failed"          # execution error
+    FAILED = "failed"          # command returned non-zero exit code
+    INTERRUPTED = "interrupted"  # killed by signal, or left RUNNING when necroflow crashed
 
 
 class NodeTypeMeta(type):

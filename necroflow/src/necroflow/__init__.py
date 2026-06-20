@@ -15,6 +15,7 @@ from necroflow.dag import (
 )
 from necroflow.pipeline import Pipeline, DAG
 from necroflow.executor import execute, fifo_scheduler, connected_component_scheduler
+from necroflow.state_db import StateDB
 
 __all__ = [
     "Node",
@@ -35,4 +36,5 @@ __all__ = [
     "execute",
     "fifo_scheduler",
     "connected_component_scheduler",
+    "StateDB",
 ]
