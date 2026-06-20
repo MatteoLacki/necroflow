@@ -156,6 +156,11 @@ class _GraphBase:
 
         return "\n".join(lines)
 
+    def save(self, path) -> None:
+        """Write the ASCII DAG render to a file."""
+        from pathlib import Path
+        Path(path).write_text(str(self) + "\n", encoding="utf-8")
+
     def plot(self, **fig_kw) -> None:
         import networkx as nx
         import matplotlib.pyplot as plt

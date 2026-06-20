@@ -151,7 +151,7 @@ Single output → returns `Node` directly; multiple outputs → returns named tu
 
 ### `_GraphBase`, `Pipeline`, `DAG` (`src/necroflow/pipeline.py`)
 
-`_GraphBase` is the shared base class providing `__str__`, `plot()`, `resolve_paths()`.
+`_GraphBase` is the shared base class providing `__str__`, `save()`, `plot()`, `resolve_paths()`.
 Subclasses override three hooks: `nodes` (property), `_header()`, `_node_label()`, `_node_color()`.
 
 #### `Pipeline` — single-config container
@@ -192,6 +192,11 @@ Sinks = nodes with at least one parent that no other node in the pipeline depend
 #### Terminal rendering (`print(P)` / `print(dag)`)
 
 Layered ASCII DAG with Unicode box-drawing characters, grouped by topological depth.
+Only edges between adjacent layers are drawn; long-range edges are omitted (known visual gap).
+
+#### File rendering (`.save(path)`)
+
+`P.save("pipeline.txt")` / `dag.save("dag.txt")` — writes `str(self) + "\n"` to a UTF-8 file.
 
 #### Matplotlib rendering (`.plot()`)
 
@@ -238,17 +243,21 @@ src/necroflow/
                   resolve_paths, resolve_command, write_dependencies, check_cache,
                   classify_nodes, _call_fingerprint, _folder_hash, _node_key,
                   _output_mtime, _accumulated_config
-  pipeline.py   — _GraphBase, Pipeline, DAG, _sinks, _label, _render_connector
+  pipeline.py   — _GraphBase (incl. save()), Pipeline, DAG, _sinks, _label, _render_connector
   executor.py   — execute (accepts any _GraphBase), _run_node, _node_threads
+  state_db.py   — StateDB: SQLite persistence of run state in outdir/.rip/state.db
+  logger.py     — thread-safe logging: job_start/done/failed/error/output, summary
   __init__.py   — exports all public symbols
 
 examples/
-  simple_dag.py — linear + diamond pipelines; registration, path resolution, command resolution
+  simple_dag.py    — linear + diamond pipelines; registration, path resolution, command resolution
+  necroalchemy.py  — 17-node silly text-transform pipeline; multi-word DAG; uses .save()
 
 tests/
   test_classify_nodes.py — NodeState classification, co-output deduplication, stale propagation,
                            command-change cache invalidation
   test_keep_going.py     — keep_going=True: independent branches, failure propagation, ExceptionGroup
+  test_state_db.py       — StateDB unit tests + crash/fail/interrupt integration tests
 ```
 
 ### `dependencies.toml` — per-output provenance (`src/necroflow/dag.py`)
@@ -277,5 +286,5 @@ are unique across the pipeline.
 
 - Scatter/gather (fan-out over lists of inputs)
 - Cluster/cloud backends
-- Retry / failure handling
 - Deletion of Orphan outputs (state is classified but no action taken)
+- Long-range edges in the ASCII renderer (edges skipping layers are omitted)

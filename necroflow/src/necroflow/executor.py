@@ -160,6 +160,7 @@ def execute(
                             node.state = NodeState.FAILED
                             db.mark_done(_node_key(node), "failed")
                             _logger.job_error(node, elapsed, exc, log_path)
+                        _logger.job_output(log_path)
                         n_failed += 1
                         if not keep_going:
                             raise

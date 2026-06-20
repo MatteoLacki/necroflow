@@ -52,6 +52,16 @@ def job_error(node, elapsed: float, exc: Exception, log_path) -> None:
     )
 
 
+def job_output(log_path) -> None:
+    """Emit captured job output to the terminal after a failure."""
+    try:
+        content = log_path.read_text()
+    except OSError:
+        return
+    if content.strip():
+        _log.error("output:\n%s", content.rstrip())
+
+
 def summary(n_run: int, n_skipped: int, n_failed: int) -> None:
     parts = []
     if n_run:

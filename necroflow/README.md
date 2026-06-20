@@ -90,8 +90,11 @@ Nodes with identical upstream configs (e.g. a shared reference index) are dedupl
 from necroflow import resolve_command
 
 P = rna_pipeline(config, R)
-print(P)             # layered ASCII DAG
-P.plot()             # matplotlib figure
+print(P)                    # layered ASCII DAG to stdout
+P.save("pipeline.txt")      # same render to a file
+P.plot()                    # matplotlib figure
+
+dag.save("dag.txt")         # works on DAG too
 
 P.resolve_paths("/results")
 for node in P.nodes:
@@ -146,9 +149,20 @@ R.register("quantify",
     ...)
 ```
 
+## Failure handling
+
+```python
+dag.execute(keep_going=True)   # continue independent branches past failures
+```
+
+With `keep_going=False` (default) the first failure raises immediately. With `keep_going=True` independent branches keep running and all failures are collected into an `ExceptionGroup` at the end.
+
+Run state is persisted to `outdir/.rip/state.db` (SQLite) between invocations. A node whose output exists on disk but whose previous run was interrupted by a signal or left in an unknown state is automatically re-executed next time.
+
+Each job's stdout/stderr is captured to `outdir/{rule}/{hash}/{job.log}`. On failure the log is printed to the terminal.
+
 ## What is not yet implemented
 
 - Scatter/gather (fan-out over lists of inputs)
-- Smart cache invalidation based on upstream file modification times
 - Cluster / cloud backends
-- Retry and partial failure handling
+- Deletion of orphan outputs (classified but no action taken)
