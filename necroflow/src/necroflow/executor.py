@@ -78,6 +78,14 @@ def execute(
     pipeline.resolve_paths(outdir)
     nodes = list(pipeline.nodes)
 
+    # After DAG deduplication, unique nodes may hold parent references to
+    # superseded objects that are never classified.  Remap every parent pointer
+    # to the canonical node (same _node_key) so classify_nodes and the state
+    # machine operate on a consistent graph.
+    canonical = {_node_key(n): n for n in nodes}
+    for n in nodes:
+        n.parents[:] = [canonical.get(_node_key(p), p) for p in n.parents]
+
     req = getattr(pipeline, "required_nodes", None)
     if req is None:
         req = nodes

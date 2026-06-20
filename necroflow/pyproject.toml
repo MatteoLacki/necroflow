@@ -15,7 +15,11 @@ dependencies = [
     "networkx",
     "matplotlib",
     "tomli-w",
+    "tomlkit",
 ]
+
+[project.scripts]
+necroflow = "necroflow.cli:main"
 
 [project.optional-dependencies]
 dev = [
