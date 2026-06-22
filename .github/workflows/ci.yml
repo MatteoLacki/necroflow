@@ -25,6 +25,8 @@ jobs:
 
       - name: Install dependencies
         run: uv pip install --system -e ".[dev]"
+        working-directory: necroflow
 
       - name: Run tests
         run: pytest -v --cov=necroflow --cov-report=term-missing
+        working-directory: necroflow
