@@ -227,6 +227,7 @@ class Pipeline(_GraphBase):
         if isinstance(value, Node):
             nodes.append(value)
             node_names[name] = value
+            value.pipeline_label = name
         elif isinstance(value, tuple) and any(isinstance(v, Node) for v in value):
             for v in value:
                 if isinstance(v, Node):

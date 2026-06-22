@@ -73,6 +73,7 @@ class Node:
     output_nodes: dict[str, Node] = field(default_factory=dict)
     state: NodeState | None = None
     info: str | None = None
+    pipeline_label: str | None = None
 
     def __post_init__(self):
         if self.info is None and self.node_type is not None:

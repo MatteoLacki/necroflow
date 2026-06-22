@@ -8,8 +8,7 @@ Usage (from the necroflow/ project root):
     necroflow \\
         --pipeline examples/necroalchemy_factory.py:factory \\
         --config   examples/necroalchemy_grid.toml \\
-        --outdir   /tmp/necroalchemy_cli \\
-        --link-outputs
+        --outdir   /tmp/necroalchemy_cli
 
 After the run, /tmp/necroalchemy_cli/ contains:
   - The hash-addressed output tree  (rule/hash/file)
@@ -17,7 +16,8 @@ After the run, /tmp/necroalchemy_cli/ contains:
       necroalchemy_grid__word+necroflow__n+2/
       necroalchemy_grid__word+necroflow__n+5/
       ...
-  - A manifest.toml inside each subfolder listing sink output paths.
+  - A manifest.toml inside each subfolder listing sink output paths,
+    keyed by Pipeline attribute name (e.g. summary, audit).
 
 Multiple --config flags are accepted; each expands independently and all
 pipelines share the same DAG (upstream nodes common across configs run once).

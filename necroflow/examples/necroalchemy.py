@@ -294,3 +294,8 @@ if __name__ == "__main__":
     print("DAG render      → /tmp/necroalchemy_dag.txt")
 
     dag.execute(keep_going=True)
+
+    # pipeline_label (the P.xxx attribute name) is the handle for each output
+    for node in dag.nodes:
+        if node.pipeline_label == "summary" and node.path:
+            print(f"summary → {node.path}")

@@ -164,11 +164,17 @@ basic_configs = [
 
 dag = DAG("/results")
 for config in basic_configs:
-    dag.add(basic_pipeline(config, R))   # sinks = [counts, qc] per sample
+    P = basic_pipeline(config, R)
+    dag.add(P, request=[P.counts])   # only run up to counts, skip qc
 
 print(dag)
 dag.plot()
 dag.execute()
+
+# pipeline_label (the P.xxx name) is the handle for each output
+for node in dag.nodes:
+    if node.pipeline_label and node.path:
+        print(f"{node.pipeline_label}: {node.path}")
 
 # --- multi-sample DAG: diamond pipeline ---
 
@@ -184,3 +190,7 @@ for config in diamond_configs:
 print(dag2)
 dag2.plot()
 dag2.execute()
+
+for node in dag2.nodes:
+    if node.pipeline_label and node.path:
+        print(f"{node.pipeline_label}: {node.path}")

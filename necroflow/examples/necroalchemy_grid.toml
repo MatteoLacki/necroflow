@@ -7,8 +7,7 @@
 #   necroflow \
 #     --pipeline examples/necroalchemy_factory.py:factory \
 #     --config   examples/necroalchemy_grid.toml \
-#     --outdir   /tmp/necroalchemy_cli \
-#     --link-outputs
+#     --outdir   /tmp/necroalchemy_cli
 
 word__grid = ["necroflow", "snakemake", "python"]
 n__grid    = [2, 5]

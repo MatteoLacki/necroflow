@@ -40,13 +40,13 @@ def _load_factory(spec: str) -> Callable:
 
 def _create_link_outputs(
     outdir: Path,
-    combos: list[tuple[str, list, list]],
+    combos: list[tuple[str, object, list]],
 ) -> None:
     """Create per-combo symlink trees and manifests under outdir/{label}/."""
-    for label, pipeline_nodes, sink_nodes in combos:
+    for label, pipeline, sink_nodes in combos:
         combo_dir = outdir / label
 
-        for node in pipeline_nodes:
+        for node in pipeline.nodes:
             if node.path is None or not node.path.exists():
                 continue
             rel = node.path.relative_to(outdir)
@@ -61,7 +61,8 @@ def _create_link_outputs(
             if node.path is not None and node.path.exists():
                 rel = node.path.relative_to(outdir)
                 key = (
-                    node.output_name
+                    node.pipeline_label
+                    or node.output_name
                     or (node.node_type.__name__ if node.node_type else "output")
                 )
                 manifest_lines.append(f'{key} = "{rel.as_posix()}"\n')
@@ -111,15 +112,6 @@ def main(argv=None) -> None:
         action="store_true",
         help="Continue past failures and collect all errors at the end.",
     )
-    parser.add_argument(
-        "--link-outputs",
-        action="store_true",
-        help=(
-            "After execution, create outdir/{combo_label}/ with symlinks "
-            "mirroring the hash folder structure and a manifest.toml listing "
-            "sink output paths."
-        ),
-    )
 
     args = parser.parse_args(argv)
     factory = _load_factory(args.pipeline)
@@ -137,16 +129,15 @@ def main(argv=None) -> None:
             P = factory(config_dict)
             sinks = _sinks(P)
             dag.add(P)
-            combos.append((label, list(P.nodes), sinks))
+            combos.append((label, P, sinks))
 
     dag.execute(total_threads=args.threads, keep_going=args.keep_going)
 
-    if args.link_outputs:
-        # resolve paths on each pipeline's own node objects; nodes that were
-        # deduplicated in the DAG may not have had paths set during execute()
-        for _label, pipeline_nodes, _sinks_nodes in combos:
-            resolve_paths(pipeline_nodes, args.outdir)
-        _create_link_outputs(args.outdir, combos)
+    # resolve paths on each pipeline's own node objects; nodes that were
+    # deduplicated in the DAG may not have had paths set during execute()
+    for _label, pipeline, _sink_nodes in combos:
+        resolve_paths(pipeline.nodes, args.outdir)
+    _create_link_outputs(args.outdir, combos)
 
 
 if __name__ == "__main__":
