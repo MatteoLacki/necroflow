@@ -166,9 +166,29 @@ dag.execute(keep_going=True)   # continue independent branches past failures
 
 With `keep_going=False` (default) the first failure raises immediately. With `keep_going=True` independent branches keep running and all failures are collected into an `ExceptionGroup` at the end.
 
+After each successful job, necroflow verifies that the declared output file exists. A command that exits 0 but writes no output is treated as a failure.
+
+Run state is persisted to `outdir/.rip/state.db` (SQLite) between invocations. A node whose output exists on disk but whose previous run was interrupted by a signal or left in an unknown state is automatically re-executed next time.
+
+Each job's stdout/stderr is captured to `outdir/{rule}/{hash}/{job.log}`. On failure the log is printed to the terminal.
+
+## Multi-output rules
+
+A rule with multiple declared outputs runs its command **once**; all co-outputs are marked complete when the command finishes:
+
+```python
+R.register("align",
+    Inputs(fastq=Fastq, ref=str),
+    Outputs(bam=Bam, log=Log),      # one command, two outputs
+    "bwa mem {ref} {fastq} > {bam} 2> {log}",
+    Constraints(threads=4))
+
+bam, log = R.align(fastq_node, ref="hg38")
+```
+
 ## Cleaning orphan outputs
 
-Outputs that existed from a previous run but are no longer in the required subgraph are classified as `ORPHAN`. Pass `autoclean=True` to delete them per-file (co-outputs in the same directory are handled individually):
+Outputs that existed from a previous run but are no longer in the required subgraph are classified as `ORPHAN`. Pass `autoclean=True` to delete them per-file (files via `unlink`, directories via `rmtree`):
 
 ```python
 dag.execute(autoclean=True)
@@ -180,10 +200,6 @@ Or via CLI:
 necroflow --pipeline factory.py:factory --config exp.toml --outdir /results --autoclean
 ```
 
-Run state is persisted to `outdir/.rip/state.db` (SQLite) between invocations. A node whose output exists on disk but whose previous run was interrupted by a signal or left in an unknown state is automatically re-executed next time.
-
-Each job's stdout/stderr is captured to `outdir/{rule}/{hash}/{job.log}`. On failure the log is printed to the terminal.
-
 ## Command-line interface
 
 necroflow ships a `necroflow` command that runs pipelines from TOML configs.
@@ -193,7 +209,7 @@ necroflow \
   --pipeline path/to/factory.py:function_name \
   --config   experiment.toml \
   --outdir   /results \
-  [--threads 16] [--keep-going]
+  [--threads 16] [--keep-going] [--autoclean]
 ```
 
 `--pipeline` points to a Python file and names a factory function inside it.
