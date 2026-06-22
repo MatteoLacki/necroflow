@@ -62,7 +62,11 @@ def job_output(log_path) -> None:
         _log.error("output:\n%s", content.rstrip())
 
 
-def summary(n_run: int, n_skipped: int, n_failed: int) -> None:
+def cleaned(node) -> None:
+    _log.info("clean  %s", node.path)
+
+
+def summary(n_run: int, n_skipped: int, n_failed: int, n_cleaned: int = 0) -> None:
     parts = []
     if n_run:
         parts.append(f"{n_run} completed")
@@ -70,6 +74,8 @@ def summary(n_run: int, n_skipped: int, n_failed: int) -> None:
         parts.append(f"{n_skipped} skipped (up-to-date)")
     if n_failed:
         parts.append(f"{n_failed} failed")
+    if n_cleaned:
+        parts.append(f"{n_cleaned} orphans cleaned")
     if not parts:
         parts = ["nothing to do"]
     _log.info("done: %s", ", ".join(parts))

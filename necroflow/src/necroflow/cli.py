@@ -112,6 +112,11 @@ def main(argv=None) -> None:
         action="store_true",
         help="Continue past failures and collect all errors at the end.",
     )
+    parser.add_argument(
+        "--autoclean",
+        action="store_true",
+        help="Delete orphan output files (outputs no longer in the required subgraph).",
+    )
 
     args = parser.parse_args(argv)
     factory = _load_factory(args.pipeline)
@@ -131,7 +136,7 @@ def main(argv=None) -> None:
             dag.add(P)
             combos.append((label, P, sinks))
 
-    dag.execute(total_threads=args.threads, keep_going=args.keep_going)
+    dag.execute(total_threads=args.threads, keep_going=args.keep_going, autoclean=args.autoclean)
 
     # resolve paths on each pipeline's own node objects; nodes that were
     # deduplicated in the DAG may not have had paths set during execute()

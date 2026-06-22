@@ -101,6 +101,43 @@ def test_single_thread_budget(tmp_path):
     assert P.a.path.exists() and P.b.path.exists()
 
 
+def test_autoclean_deletes_orphan(tmp_path):
+    # first run: produce a and b
+    P1 = Pipeline()
+    P1.a = R.make_a(x="x")
+    P1.b = R.make_b(P1.a)
+    execute(P1, tmp_path)
+    b_path = P1.b.path
+    assert b_path.exists()
+
+    # second run: only request a — b becomes ORPHAN
+    P2 = Pipeline()
+    P2.a = R.make_a(x="x")
+    P2.b = R.make_b(P2.a)
+    dag = DAG(tmp_path)
+    dag.add(P2, request=[P2.a])
+    dag.execute(autoclean=True)
+
+    assert not b_path.exists()
+
+
+def test_autoclean_false_leaves_orphan(tmp_path):
+    P1 = Pipeline()
+    P1.a = R.make_a(x="x")
+    P1.b = R.make_b(P1.a)
+    execute(P1, tmp_path)
+    b_path = P1.b.path
+
+    P2 = Pipeline()
+    P2.a = R.make_a(x="x")
+    P2.b = R.make_b(P2.a)
+    dag = DAG(tmp_path)
+    dag.add(P2, request=[P2.a])
+    dag.execute(autoclean=False)
+
+    assert b_path.exists()
+
+
 def test_heavy_job_runs_solo(tmp_path):
     # job needing 4 threads runs even with total_threads=2 (solo when nothing else is running)
     P = Pipeline()

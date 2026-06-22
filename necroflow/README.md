@@ -166,6 +166,20 @@ dag.execute(keep_going=True)   # continue independent branches past failures
 
 With `keep_going=False` (default) the first failure raises immediately. With `keep_going=True` independent branches keep running and all failures are collected into an `ExceptionGroup` at the end.
 
+## Cleaning orphan outputs
+
+Outputs that existed from a previous run but are no longer in the required subgraph are classified as `ORPHAN`. Pass `autoclean=True` to delete them per-file (co-outputs in the same directory are handled individually):
+
+```python
+dag.execute(autoclean=True)
+```
+
+Or via CLI:
+
+```bash
+necroflow --pipeline factory.py:factory --config exp.toml --outdir /results --autoclean
+```
+
 Run state is persisted to `outdir/.rip/state.db` (SQLite) between invocations. A node whose output exists on disk but whose previous run was interrupted by a signal or left in an unknown state is automatically re-executed next time.
 
 Each job's stdout/stderr is captured to `outdir/{rule}/{hash}/{job.log}`. On failure the log is printed to the terminal.
@@ -244,4 +258,3 @@ for a runnable example.
 
 - Scatter/gather within a single pipeline (fan-out over lists of inputs)
 - Cluster / cloud backends
-- Deletion of orphan outputs (classified but no action taken)

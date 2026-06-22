@@ -60,6 +60,7 @@ def execute(
     total_threads: int | None = None,
     scheduler: Scheduler | None = None,
     keep_going: bool = False,
+    autoclean: bool = False,
 ) -> None:
     """Run required nodes in the pipeline, respecting the thread budget.
 
@@ -93,6 +94,14 @@ def execute(
 
     # only operate on nodes in the required subgraph
     active = [n for n in nodes if n.state is not None and n.state != NodeState.ORPHAN]
+
+    n_cleaned = 0
+    if autoclean:
+        for n in nodes:
+            if n.state == NodeState.ORPHAN and n.path is not None and n.path.exists():
+                n.path.unlink()
+                _logger.cleaned(n)
+                n_cleaned += 1
 
     db = StateDB(outdir)
     compromised = db.compromised_keys()
@@ -176,7 +185,7 @@ def execute(
                     used_threads -= t
     finally:
         db.close()
-        _logger.summary(n_run, n_skipped, n_failed)
+        _logger.summary(n_run, n_skipped, n_failed, n_cleaned)
 
     if errors:
         raise ExceptionGroup(
