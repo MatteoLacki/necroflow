@@ -198,6 +198,11 @@ def test_wrong_config_type_raises():
         R.to_upper(txt, n="not_an_int")   # str passed where int expected
 
 
+def test_missing_positional_input_raises():
+    with pytest.raises(TypeError, match="missing required inputs"):
+        R.to_upper(n=1)   # txt input omitted
+
+
 def test_subtype_accepted():
     # SortedTxt is a subclass of Txt — to_upper accepts Txt and must accept SortedTxt too
     stxt = R.make_sorted_txt(word="hi")

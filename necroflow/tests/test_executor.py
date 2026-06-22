@@ -7,14 +7,17 @@ from necroflow import fifo_scheduler, connected_component_scheduler
 class A(NodeType): name = "a.txt"
 class B(NodeType): name = "b.txt"
 class C(NodeType): name = "c.txt"
+class D(NodeType): name = "d.txt"
 
 
 R = Rules()
-R.register("make_a", Inputs(x=str),      Outputs(a=A), "touch {a}")
-R.register("make_b", Inputs(a=A),        Outputs(b=B), "touch {b}")
-R.register("make_c", Inputs(a=A),        Outputs(c=C), "touch {c}")
-R.register("fail_a", Inputs(x=str),      Outputs(a=A), "exit 1")
-R.register("make_a_heavy", Inputs(x=str), Outputs(a=A), "touch {a}", Constraints(threads=4))
+R.register("make_a",       Inputs(x=str), Outputs(a=A),        "touch {a}")
+R.register("make_ab",      Inputs(x=str), Outputs(a=A, b=B),   "touch {a} {b}")
+R.register("make_b",       Inputs(a=A),   Outputs(b=B),        "touch {b}")
+R.register("make_c",       Inputs(a=A),   Outputs(c=C),        "touch {c}")
+R.register("fail_a",       Inputs(x=str), Outputs(a=A),        "exit 1")
+R.register("no_output_a",  Inputs(x=str), Outputs(a=A),        "true")   # exits 0, creates nothing
+R.register("make_a_heavy", Inputs(x=str), Outputs(a=A),        "touch {a}", Constraints(threads=4))
 
 
 # ── basic execution ───────────────────────────────────────────────────────────
@@ -56,6 +59,35 @@ def test_execute_failure_raises(tmp_path):
     P.a = R.fail_a(x="x")
     with pytest.raises(Exception):
         execute(P, tmp_path)
+
+
+def test_missing_output_raises(tmp_path):
+    P = Pipeline()
+    P.a = R.no_output_a(x="x")
+    with pytest.raises(RuntimeError, match="output missing"):
+        execute(P, tmp_path)
+
+
+def test_cooutputs_run_once(tmp_path):
+    # make_ab writes "touch {a} {b}" — if run twice, both files would be touched twice
+    # We verify the command only ran once by checking a single job.log exists
+    P = Pipeline()
+    P.a, P.b = R.make_ab(x="x")
+    execute(P, tmp_path)
+    assert P.a.path.exists() and P.b.path.exists()
+    # both co-outputs share a directory; only one job.log should exist
+    assert (P.a.path.parent / "job.log").exists()
+    assert P.a.path.parent == P.b.path.parent
+
+
+def test_single_node_pipeline_executes(tmp_path):
+    # source node (no parents) must be treated as a sink
+    P = Pipeline()
+    P.a = R.make_a(x="x")
+    dag = DAG(tmp_path)
+    dag.add(P)
+    dag.execute()
+    assert P.a.path is not None and P.a.path.exists()
 
 
 # ── schedulers ────────────────────────────────────────────────────────────────

@@ -30,6 +30,13 @@ def diamond():
 
 # ── _sinks ────────────────────────────────────────────────────────────────────
 
+def test_sinks_source_node():
+    # single node with no parents and no children — must be a sink
+    P = Pipeline()
+    P.a = R.make_a(x="x")
+    assert _sinks(P) == [P.a]
+
+
 def test_sinks_linear():
     P = Pipeline()
     P.a = R.make_a(x="x")

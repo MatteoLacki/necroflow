@@ -69,9 +69,9 @@ def _label(node: Node) -> str:
 
 
 def _sinks(pipeline: Pipeline) -> list:
-    """Nodes with at least one parent that no other node in the pipeline depends on."""
+    """Nodes with no dependents (children) in the pipeline — includes source nodes."""
     is_parent = {id(p) for n in pipeline.nodes for p in n.parents}
-    return [n for n in pipeline.nodes if n.parents and id(n) not in is_parent]
+    return [n for n in pipeline.nodes if id(n) not in is_parent]
 
 
 class _GraphBase:

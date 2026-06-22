@@ -279,6 +279,9 @@ class Rules:
         constraints_dict = constraints.specs if constraints else {}
 
         def wrapper(*args, **kwargs):
+            if len(args) < len(pos_inputs):
+                missing = [pname for pname, _ in pos_inputs[len(args):]]
+                raise TypeError(f"{name}: missing required inputs: {missing!r}")
             for (pname, ptype), val in zip(pos_inputs, args):
                 if not isinstance(val, Node):
                     raise TypeError(

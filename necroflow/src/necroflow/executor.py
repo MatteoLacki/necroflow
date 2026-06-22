@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import os
+import shutil
 import subprocess
 import time
 from typing import TYPE_CHECKING, Callable
@@ -99,7 +100,10 @@ def execute(
     if autoclean:
         for n in nodes:
             if n.state == NodeState.ORPHAN and n.path is not None and n.path.exists():
-                n.path.unlink()
+                if n.path.is_dir():
+                    shutil.rmtree(n.path)
+                else:
+                    n.path.unlink()
                 _logger.cleaned(n)
                 n_cleaned += 1
 
@@ -132,9 +136,14 @@ def execute(
                         elif all(p.state == NodeState.UP_TO_DATE for p in n.parents):
                             n.state = NodeState.READY
 
+                active_ids = {id(n) for n in active}
                 ready = [n for n in active if n.state == NodeState.READY]
                 remaining = [n for n in active if n.state in _needs_run]
                 for node in scheduler(ready, remaining):
+                    # skip co-outputs whose sibling is already running or done
+                    coouts = [c for c in node.output_nodes.values() if id(c) in active_ids and c is not node]
+                    if any(c.state in (NodeState.RUNNING, NodeState.UP_TO_DATE) for c in coouts):
+                        continue
                     t = _node_threads(node)
                     if used_threads + t <= total_threads or used_threads == 0:
                         log_path = node.path.parent / "job.log"
@@ -157,7 +166,14 @@ def execute(
                     elapsed = time.monotonic() - start
                     try:
                         f.result()
+                        if not node.path.exists():
+                            raise RuntimeError(f"command succeeded but output missing: {node.path}")
                         write_dependencies(node)
+                        # mark co-outputs that were skipped in the scheduler
+                        for conode in node.output_nodes.values():
+                            if conode is not node and id(conode) in active_ids and conode.state in _needs_run:
+                                db.mark_done(_node_key(conode), "up_to_date")
+                                conode.state = NodeState.UP_TO_DATE
                         db.mark_done(_node_key(node), "up_to_date")
                         node.state = NodeState.UP_TO_DATE
                         _logger.job_done(node, elapsed)
