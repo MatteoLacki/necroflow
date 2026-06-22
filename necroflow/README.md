@@ -22,10 +22,17 @@ source .venv/bin/activate
 ## Quick example
 
 ```python
-from necroflow import node_types, Inputs, Outputs, Constraints, Rules, Pipeline, DAG
+from necroflow import NodeType, Inputs, Outputs, Constraints, Rules, Pipeline, DAG
 
 # 1. Define types
-Fastq, Bam, Counts = node_types("fastq=reads.fastq.gz bam=aligned.bam counts=counts.txt")
+class Fastq(NodeType):
+    name = "reads.fastq.gz"
+
+class Bam(NodeType):
+    name = "aligned.bam"
+
+class Counts(NodeType):
+    name = "counts.txt"
 
 # 2. Register rules
 R = Rules()
@@ -170,7 +177,7 @@ necroflow \
   --pipeline path/to/factory.py:function_name \
   --config   experiment.toml \
   --outdir   /results \
-  [--threads 16] [--keep-going] [--link-outputs]
+  [--threads 16] [--keep-going]
 ```
 
 `--pipeline` points to a Python file and names a factory function inside it.
@@ -204,9 +211,9 @@ def factory(cfg: dict):
     return rna_pipeline(ref=cfg["ref"], aligner=cfg["aligner"])
 ```
 
-### `--link-outputs`
+### Linked outputs
 
-After execution, creates one subfolder per grid combo under `outdir/`:
+After every run the CLI creates one subfolder per grid combo under `outdir/`:
 
 ```
 /results/
@@ -218,9 +225,15 @@ After execution, creates one subfolder per grid combo under `outdir/`:
     ...
 ```
 
-The symlink tree preserves the full `{rule}/{hash}/{file}` structure so paths
-remain stable and cacheable; the manifest lists just the sink (requested) outputs
-for quick programmatic access.
+The symlink tree mirrors the hash structure; `manifest.toml` lists only the sink
+(requested) outputs, keyed by the Pipeline attribute name assigned in the factory:
+
+```toml
+[outputs]
+counts = "count/a3f1bc92/counts.txt"
+```
+
+The key (`counts`) matches `P.counts = R.count(...)` in the factory function.
 
 See `examples/necroalchemy_grid.toml` and `examples/necroalchemy_factory.py`
 for a runnable example.

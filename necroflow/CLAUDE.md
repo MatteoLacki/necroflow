@@ -91,8 +91,6 @@ Base class for node types. Uses a metaclass so that calling the class creates a 
 class Fastq(NodeType): ...          # single type
 class SortedBam(Bam): ...           # subtype — accepted wherever Bam expected
 
-Fastq, Bam, Log = node_types("fastq bam log")  # bulk creation (dynamic subclasses)
-
 Fastq("label")  # → Node(output_name="label", node_type=Fastq)
 ```
 
@@ -106,6 +104,7 @@ Dataclass representing a pipeline value. Fields:
 - `.parents` — list of input `Node`s
 - `.config` — dict of keyword args passed at call time
 - `.output_name` — string label set from `Outputs` kwargs
+- `.pipeline_label` — Pipeline attribute name set when `P.xxx = node` is assigned; used as the manifest key in linked outputs
 - `.node_type` — NodeType subclass
 - `.command` — raw command template string (e.g. `"samtools sort {bam} -o {sorted_bam}"`)
 - `.output_nodes` — `{name: Node}` dict of all co-outputs from the same rule call (enables command resolution)
@@ -156,7 +155,7 @@ Subclasses override three hooks: `nodes` (property), `_header()`, `_node_label()
 
 #### `Pipeline` — single-config container
 
-Attribute-style node registration. Assigning a Node (or named tuple of Nodes) auto-registers it.
+Attribute-style node registration. Assigning a Node auto-registers it and stamps `node.pipeline_label = attr_name`.
 Duplicate attribute name → `ValueError`.
 
 ```python
@@ -239,12 +238,13 @@ resolve_command(bam_node)
 
 ```
 src/necroflow/
-  dag.py        — Node, NodeState, NodeType, node_types, Inputs, Outputs, Constraints, Rules,
+  dag.py        — Node, NodeState, NodeType, Inputs, Outputs, Constraints, Rules,
                   resolve_paths, resolve_command, write_dependencies, check_cache,
                   classify_nodes, _call_fingerprint, _folder_hash, _node_key,
                   _output_mtime, _accumulated_config
   pipeline.py   — _GraphBase (incl. save()), Pipeline, DAG, _sinks, _label, _render_connector
-  executor.py   — execute (accepts any _GraphBase), _run_node, _node_threads;
+  executor.py   — execute (accepts any _GraphBase), _run_node, _node_threads,
+                  fifo_scheduler, connected_component_scheduler;
                   parent-normalisation step before classify_nodes (see note below)
   state_db.py   — StateDB: SQLite persistence of run state in outdir/.rip/state.db
   logger.py     — thread-safe logging: job_start/done/failed/error/output, summary
@@ -257,12 +257,13 @@ examples/
   necroalchemy.py           — 17-node silly text-transform pipeline; multi-word DAG; uses .save()
   necroalchemy_factory.py   — CLI factory for necroalchemy; import-safe (CLI adds examples/ to sys.path)
   necroalchemy_grid.toml    — parameter grid TOML (word × n); run with necroalchemy_factory.py
+  schedulers.py             — minimal example comparing fifo_scheduler vs default (connected_component)
 
 tests/
   test_classify_nodes.py — NodeState classification, co-output deduplication, stale propagation,
                            command-change cache invalidation
   test_keep_going.py     — keep_going=True: independent branches, failure propagation, ExceptionGroup
-  test_state_db.py       — StateDB unit tests + crash/fail/interrupt integration tests
+  test_state_db.py       — StateDB unit tests + crash/fail/interrupt/retry integration tests
 ```
 
 ### `dependencies.toml` — per-output provenance (`src/necroflow/dag.py`)
@@ -339,14 +340,17 @@ necroflow \
   --pipeline path/to/factory.py:function_name \
   --config   experiment.toml \        # repeatable
   --outdir   /results \
-  [--threads 16] [--keep-going] [--link-outputs]
+  [--threads 16] [--keep-going]
 ```
 
 - `--pipeline FILE:FUNC` — loads `FILE`, imports `FUNC(cfg: dict) -> Pipeline`
 - `--config`/`-c` — repeatable; each TOML is expanded with `iter_configs()`; all
   pipelines share one DAG (shared upstream nodes deduplicated automatically)
-- `--link-outputs` — after execution, creates `outdir/{combo_label}/` with symlinks
-  into the hash tree + `manifest.toml` listing sink output paths
+
+After every run the CLI unconditionally creates `outdir/{combo_label}/` with:
+- Symlinks mirroring the `{rule}/{hash}/{file}` hash tree
+- `manifest.toml` listing sink output paths, keyed by `node.pipeline_label`
+  (the `P.xxx` attribute name from the factory function)
 
 Key internals:
 - `_load_factory(spec)` — splits `"file.py:func"`, loads with `importlib.util`,
