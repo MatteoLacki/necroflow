@@ -1,9 +1,11 @@
 import sqlite3
 import pytest
-from necroflow import Rules, Inputs, Outputs, Pipeline, DAG, node_types, NodeState, StateDB
+from necroflow import Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState, StateDB
 from necroflow.dag import _node_key
 
-A, B, C = node_types("a b c")
+class A(NodeType): pass
+class B(NodeType): pass
+class C(NodeType): pass
 
 R = Rules()
 R.register("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")

@@ -8,7 +8,6 @@ except NameError:
 from types import SimpleNamespace
 from necroflow import (
     NodeType,
-    node_types,
     Inputs,
     Outputs,
     Constraints,

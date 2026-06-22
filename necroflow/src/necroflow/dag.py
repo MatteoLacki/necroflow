@@ -44,20 +44,6 @@ class NodeType(metaclass=NodeTypeMeta):
     name: str | None = None
 
 
-def node_types(names: str) -> tuple[type[NodeType], ...]:
-    """Create NodeType subclasses from a space-separated string of names.
-
-    Optionally specify filename with '=': node_types("fastq=sample.fastq.gz bam=aligned.bam log")
-    """
-    result = []
-    for token in names.split():
-        if "=" in token:
-            tname, fname = token.split("=", 1)
-            result.append(type(tname, (NodeType,), {"name": fname}))
-        else:
-            result.append(type(token, (NodeType,), {}))
-    return tuple(result)
-
 
 def _is_nodetype(ann) -> bool:
     return inspect.isclass(ann) and issubclass(ann, NodeType)

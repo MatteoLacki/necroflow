@@ -1,7 +1,10 @@
 import pytest
-from necroflow import Rules, Inputs, Outputs, Pipeline, DAG, node_types, NodeState
+from necroflow import Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState
 
-A, B, C, D = node_types("a b c d")
+class A(NodeType): pass
+class B(NodeType): pass
+class C(NodeType): pass
+class D(NodeType): pass
 
 R = Rules()
 R.register("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")

@@ -3,12 +3,14 @@ import pytest
 from pathlib import Path
 
 from necroflow import (
-    Rules, Inputs, Outputs, Pipeline, DAG, node_types, NodeState, classify_nodes,
+    Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState, classify_nodes,
 )
 from necroflow.dag import _folder_hash, _node_key
 
 
-Fastq, Bam, Log = node_types("fastq bam log")
+class Fastq(NodeType): pass
+class Bam(NodeType): pass
+class Log(NodeType): pass
 
 R = Rules()
 R.register("raw_fastq", Inputs(path=str), Outputs(fastq=Fastq), "touch {fastq}")
