@@ -1,4 +1,5 @@
 import sqlite3
+import time
 import pytest
 from necroflow import Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState, StateDB
 from necroflow.dag import _node_key
@@ -132,3 +133,71 @@ def test_interrupted_node_state(tmp_path):
     db = StateDB(tmp_path)
     assert _node_key(c_node) in db.compromised_keys()
     db.close()
+
+
+# --- Integration: retry after failure / interruption ---
+
+class X(NodeType): pass
+class Y(NodeType): pass
+
+R2 = Rules()
+R2.register("make_x",        Inputs(v=str), Outputs(x=X), "touch {x}")
+R2.register("make_y_fail",   Inputs(x=X),   Outputs(y=Y), "touch {y} && exit 1")
+R2.register("make_y_signal", Inputs(x=X),   Outputs(y=Y), "touch {y}; kill -TERM $$")
+
+
+def _xy_dag(tmp_path, y_rule="make_y_fail"):
+    P = Pipeline()
+    P.x = R2.make_x(v="v")
+    P.y = getattr(R2, y_rule)(P.x)
+    dag = DAG(outdir=tmp_path)
+    dag.add(P)
+    return dag, P
+
+
+def test_failed_node_reruns_on_retry(tmp_path):
+    """Node that writes its output then exits non-zero is compromised.
+    On retry: upstream (x) is skipped, failed node (y) re-executes."""
+    dag, P = _xy_dag(tmp_path, "make_y_fail")
+
+    with pytest.raises(Exception):
+        dag.execute()
+
+    dag.resolve_paths(tmp_path)
+    x = next(n for n in dag.nodes if n.rule.__name__ == "make_x")
+    y = next(n for n in dag.nodes if n.rule.__name__ == "make_y_fail")
+    assert x.path.exists() and y.path.exists()
+
+    x_mtime = x.path.stat().st_mtime
+    y_mtime = y.path.stat().st_mtime
+    time.sleep(0.05)
+
+    with pytest.raises(Exception):
+        dag.execute()
+
+    assert x.path.stat().st_mtime == x_mtime  # x not re-run
+    assert y.path.stat().st_mtime > y_mtime    # y re-executed despite output existing
+
+
+def test_interrupted_node_reruns_on_retry(tmp_path):
+    """Node that writes its output then receives SIGTERM is compromised.
+    On retry: upstream (x) is skipped, interrupted node (y) re-executes."""
+    dag, P = _xy_dag(tmp_path, "make_y_signal")
+
+    with pytest.raises(Exception):
+        dag.execute()
+
+    dag.resolve_paths(tmp_path)
+    x = next(n for n in dag.nodes if n.rule.__name__ == "make_x")
+    y = next(n for n in dag.nodes if n.rule.__name__ == "make_y_signal")
+    assert x.path.exists() and y.path.exists()
+
+    x_mtime = x.path.stat().st_mtime
+    y_mtime = y.path.stat().st_mtime
+    time.sleep(0.05)
+
+    with pytest.raises(Exception):
+        dag.execute()
+
+    assert x.path.stat().st_mtime == x_mtime  # x not re-run
+    assert y.path.stat().st_mtime > y_mtime    # y re-executed despite output existing
