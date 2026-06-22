@@ -25,6 +25,7 @@ necroflow = "necroflow.cli:main"
 dev = [
     "twine",
     "pytest",
+    "pytest-cov",
 ]
 
 

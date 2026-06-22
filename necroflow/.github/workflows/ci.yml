@@ -27,4 +27,4 @@ jobs:
         run: uv pip install --system -e ".[dev]"
 
       - name: Run tests
-        run: pytest -v
+        run: pytest -v --cov=necroflow --cov-report=term-missing
