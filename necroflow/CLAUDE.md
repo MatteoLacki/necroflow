@@ -45,7 +45,7 @@ Requires `resolve_paths()` to have been called first.
 ### Executor (`src/necroflow/executor.py`)
 
 ```python
-execute(graph, outdir, total_threads=None, scheduler=None, keep_going=False)
+execute(graph, outdir, total_threads=None, scheduler=None, keep_going=False, autoclean=False)
 ```
 
 Accepts any `_GraphBase` (Pipeline or DAG). Calls `graph.resolve_paths(outdir)` and `classify_nodes()` internally, then runs only the required subgraph:
@@ -54,10 +54,13 @@ Accepts any `_GraphBase` (Pipeline or DAG). Calls `graph.resolve_paths(outdir)` 
 - Thread budget: sum of `constraints.threads` across running jobs ≤ `total_threads` (default `os.cpu_count()`)
 - A job whose thread requirement exceeds the budget runs solo when nothing else is running
 - UP_TO_DATE and ORPHAN nodes skipped; state transitions MISSING/STALE → READY → RUNNING → UP_TO_DATE/FAILED
+- **Co-outputs** (same rule call, same hash dir) are submitted once; all siblings are marked UP_TO_DATE when the representative node completes
+- After a successful job, `node.path.exists()` is checked — `RuntimeError` if the command exited 0 but the declared output is absent
 - FAILED state propagates to descendants (they are skipped)
 - `write_dependencies(node)` called after each successful job
 - `keep_going=False` (default): raise on first failure
 - `keep_going=True`: continue running independent branches; raise `ExceptionGroup` at the end listing all failures
+- `autoclean=True`: delete each ORPHAN `node.path` before execution (files via `unlink`, directories via `rmtree`)
 
 ```python
 execute(P, "/results")                          # single pipeline, all CPUs
@@ -65,6 +68,7 @@ execute(P, "/results", total_threads=8)
 dag.execute()                                   # DAG uses dag.outdir
 dag.execute(scheduler=fifo_scheduler)
 dag.execute(keep_going=True)                    # continue past failures
+dag.execute(autoclean=True)                     # delete orphan outputs first
 ```
 
 #### Scheduler protocol
@@ -145,6 +149,7 @@ Positional args = input Nodes (matched by NodeType annotation order); keyword ar
 Single output → returns `Node` directly; multiple outputs → returns named tuple.
 
 **Validation at call time:**
+- Positional arity: too few positional args → `TypeError` naming the missing inputs
 - Positional arg NodeType check: `issubclass(val.node_type, expected)` — subtypes accepted
 - Keyword arg type check: `isinstance(val, type)` — union types (`str | int`) supported
 
@@ -186,7 +191,7 @@ dag.execute("/results")
 
 `dag.required_nodes` — nodes marked as required targets (rendered with ★ / orange).
 
-Sinks = nodes with at least one parent that no other node in the pipeline depends on.
+Sinks = nodes with no dependents (children) in the pipeline. Includes source nodes (nodes with no parents), so a single-node pipeline is valid and executes correctly.
 
 #### Terminal rendering (`print(P)` / `print(dag)`)
 
