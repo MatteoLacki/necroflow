@@ -228,11 +228,6 @@ class Pipeline(_GraphBase):
             nodes.append(value)
             node_names[name] = value
             value.pipeline_label = name
-        elif isinstance(value, tuple) and any(isinstance(v, Node) for v in value):
-            for v in value:
-                if isinstance(v, Node):
-                    nodes.append(v)
-            node_names[name] = value
         object.__setattr__(self, name, value)
 
     def _header(self) -> str:

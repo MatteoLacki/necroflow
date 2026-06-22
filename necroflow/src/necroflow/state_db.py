@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import sqlite3
-import time
 from pathlib import Path
 
 _COMPROMISED = {"running", "failed", "interrupted"}
 
 _CREATE = """
 CREATE TABLE IF NOT EXISTS node_runs (
-    node_key   TEXT PRIMARY KEY,
-    state      TEXT NOT NULL,
-    updated_at REAL NOT NULL
+    node_key TEXT PRIMARY KEY,
+    state    TEXT NOT NULL
 );
 """
 
@@ -41,16 +39,16 @@ class StateDB:
 
     def mark_running(self, node_key: str) -> None:
         self._conn.execute(
-            "INSERT OR REPLACE INTO node_runs (node_key, state, updated_at) VALUES (?, 'running', ?)",
-            (node_key, time.time()),
+            "INSERT OR REPLACE INTO node_runs (node_key, state) VALUES (?, 'running')",
+            (node_key,),
         )
         self._conn.commit()
 
     def mark_done(self, node_key: str, state: str) -> None:
         """state: 'up_to_date' | 'failed' | 'interrupted'"""
         self._conn.execute(
-            "INSERT OR REPLACE INTO node_runs (node_key, state, updated_at) VALUES (?, ?, ?)",
-            (node_key, state, time.time()),
+            "INSERT OR REPLACE INTO node_runs (node_key, state) VALUES (?, ?)",
+            (node_key, state),
         )
         self._conn.commit()
 

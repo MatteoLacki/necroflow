@@ -8,6 +8,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import tomlkit
+
 
 class NodeState(Enum):
     MISSING = "missing"        # in required subgraph, no output — must run
@@ -132,35 +134,8 @@ def write_dependencies(node: Node) -> None:
         "hash": node.path.parent.name,
         "config": _accumulated_config(node),
     }
-    try:
-        import tomli_w
-
-        text = tomli_w.dumps(data)
-    except ModuleNotFoundError:
-        text = _dump_dependencies_toml(data)
     node.path.parent.mkdir(parents=True, exist_ok=True)
-    (node.path.parent / "dependencies.toml").write_text(text)
-
-
-def _dump_dependencies_toml(data: dict) -> str:
-    lines = [
-        f"rule = {_toml_value(data['rule'])}",
-        f"hash = {_toml_value(data['hash'])}",
-        "",
-        "[config]",
-    ]
-    for key, value in data["config"].items():
-        lines.append(f"{key} = {_toml_value(value)}")
-    return "\n".join(lines) + "\n"
-
-
-def _toml_value(value) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (int, float)):
-        return str(value)
-    text = str(value).replace("\\", "\\\\").replace("\"", "\\\"")
-    return f"\"{text}\""
+    (node.path.parent / "dependencies.toml").write_text(tomlkit.dumps(data))
 
 
 def check_cache(node: Node) -> bool:
