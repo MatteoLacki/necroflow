@@ -9,13 +9,16 @@ class A(NodeType): name = "a.txt"
 class B(NodeType): name = "b.txt"
 class C(NodeType): name = "c.txt"
 class D(NodeType): name = "d.txt"
+class E(NodeType): name = "e.txt"
 
 
 R = Rules()
-R.register("make_a", Inputs(x=str),  Outputs(a=A), "touch {a}")
-R.register("make_b", Inputs(a=A),    Outputs(b=B), "touch {b}")
-R.register("make_c", Inputs(a=A),    Outputs(c=C), "touch {c}")
-R.register("make_d", Inputs(b=B, c=C), Outputs(d=D), "touch {d}")
+R.register("make_a",        Inputs(x=str),      Outputs(a=A), "touch {a}")
+R.register("make_b",        Inputs(a=A),         Outputs(b=B), "touch {b}")
+R.register("make_c",        Inputs(a=A),         Outputs(c=C), "touch {c}")
+R.register("make_d",        Inputs(b=B, c=C),    Outputs(d=D), "touch {d}")
+R.register("make_c_from_b", Inputs(b=B),         Outputs(c=C), "touch {c}")
+R.register("make_e_from_ac",Inputs(a=A, c=C),    Outputs(e=E), "touch {e}")
 
 
 def diamond():
@@ -73,6 +76,14 @@ def test_pipeline_nodes_accumulate():
     P.a = R.make_a(x="x")
     P.b = R.make_b(P.a)
     assert len(P.nodes) == 2
+
+
+def test_pipeline_dot_prefix_raises():
+    """Label starting with '.' must raise — reserved for .rip internal folder."""
+    P = Pipeline()
+    with pytest.raises(ValueError, match=r"must not start with '\.'"):
+        setattr(P, ".hidden", R.make_a(x="x"))
+
 
 
 def test_pipeline_duplicate_raises():
@@ -143,6 +154,28 @@ def test_dag_explicit_request():
     dag.add(P, request=[P.b, P.c])
     req_rules = {n.rule.__name__ for n in dag.required_nodes}
     assert req_rules == {"make_b", "make_c"}
+
+
+def test_str_long_range_edge():
+    """Long-range edges (spanning >1 layer) render as │ pass-throughs, not silently dropped.
+
+    Chain: a(0)→b(1)→c(2), plus direct a→e(3). The a→e edge skips two layers; dummy
+    pass-through nodes are inserted so the connector is drawn through all intermediate layers.
+    """
+    P = Pipeline()
+    P.a = R.make_a(x="x")
+    P.b = R.make_b(P.a)
+    P.c = R.make_c_from_b(P.b)
+    P.e = R.make_e_from_ac(P.a, P.c)
+    rendered = str(P)
+    # all node labels present
+    for label in ("make_a", "make_b", "make_c_from_b", "make_e_from_ac"):
+        assert label in rendered
+    # dummy pass-throughs add an extra │ to the mid row of intermediate layers,
+    # e.g. "│ make_b[B:b] │   │" has 3 pipe chars vs 2 for a plain box row
+    rows_with_dummy = [l for l in rendered.splitlines()
+                       if "make_" in l and l.count("│") >= 3]
+    assert len(rows_with_dummy) > 0, "expected dummy │ pass-through in intermediate layer rows"
 
 
 def test_dag_save(tmp_path):

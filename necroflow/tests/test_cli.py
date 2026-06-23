@@ -1,10 +1,11 @@
-"""Tests for CLI internals: _create_link_outputs, manifest keys."""
+"""Tests for CLI internals: _create_link_outputs, manifest keys, main()."""
+import textwrap
 import tomlkit
 import pytest
 from pathlib import Path
 from necroflow import NodeType, Inputs, Outputs, Rules, Pipeline
 from necroflow.dag import resolve_paths
-from necroflow.cli import _create_link_outputs
+from necroflow.cli import _create_link_outputs, main
 from necroflow.pipeline import _sinks
 
 
@@ -102,6 +103,126 @@ def test_manifest_only_sinks(tmp_path):
     # "out" is intermediate (P.out), "log" is the sink (P.log)
     assert "out" not in keys
     assert "log" in keys
+
+
+# ── main() integration ───────────────────────────────────────────────────────
+
+FACTORY_SRC = textwrap.dedent("""\
+    from necroflow import Pipeline, NodeType, Inputs, Outputs, Rules
+    class A(NodeType): name = "a.txt"
+    class B(NodeType): name = "b.txt"
+    R = Rules()
+    R.register("make_a", Inputs(v=str), Outputs(a=A), "touch {a}")
+    R.register("make_b", Inputs(a=A),  Outputs(b=B), "touch {b}")
+    def factory(cfg):
+        P = Pipeline()
+        P.a = R.make_a(v=cfg["v"])
+        P.b = R.make_b(P.a)
+        return P
+""")
+
+
+@pytest.fixture
+def factory_file(tmp_path):
+    f = tmp_path / "pipe.py"
+    f.write_text(FACTORY_SRC)
+    return f
+
+
+@pytest.fixture
+def job_toml(tmp_path, factory_file):
+    t = tmp_path / "job.toml"
+    t.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    return t
+
+
+def test_main_runs_pipeline(tmp_path, factory_file):
+    """main() executes a job TOML and produces output files."""
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    outdir = tmp_path / "out"
+    main(["--outdir", str(outdir), str(job)])
+    # both nodes should have been run (rglob includes symlinks; just check presence)
+    assert any(outdir.rglob("a.txt"))
+    assert any(outdir.rglob("b.txt"))
+
+
+def test_main_request_limits_execution(tmp_path, factory_file):
+    """.requests = ['a'] should only run the requested node and its ancestors."""
+    job = tmp_path / "job.toml"
+    job.write_text(
+        f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n".requests" = ["a"]\n'
+    )
+    outdir = tmp_path / "out"
+    main(["--outdir", str(outdir), str(job)])
+    assert list(outdir.rglob("a.txt"))
+    assert not list(outdir.rglob("b.txt"))
+
+
+def test_main_dry_run_no_outputs(tmp_path, factory_file):
+    """--dry-run must not create any output files."""
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    outdir = tmp_path / "out"
+    main(["--outdir", str(outdir), "--dry-run", str(job)])
+    assert not list(outdir.rglob("a.txt"))
+
+
+def test_main_grid_expansion(tmp_path, factory_file):
+    """__grid in job TOML expands into multiple pipeline runs."""
+    job = tmp_path / "job.toml"
+    job.write_text(
+        f'".pipeline" = "{factory_file}:factory"\nv__grid = ["hello", "world"]\n'
+    )
+    outdir = tmp_path / "out"
+    main(["--outdir", str(outdir), str(job)])
+    # two distinct hash dirs (different v → different hash) — ignore symlink copies
+    a_real = [p for p in outdir.rglob("a.txt") if not p.is_symlink()]
+    assert len(a_real) == 2
+
+
+def test_main_missing_pipeline_key_errors(tmp_path):
+    """A job TOML without a '.pipeline' key must raise SystemExit."""
+    job = tmp_path / "job.toml"
+    job.write_text('v = "hello"\n')
+    with pytest.raises(SystemExit):
+        main(["--outdir", str(tmp_path / "out"), str(job)])
+
+
+def test_main_bad_request_label_errors(tmp_path, factory_file):
+    """A .requests label that doesn't match any pipeline_label must raise SystemExit."""
+    job = tmp_path / "job.toml"
+    job.write_text(
+        f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n".requests" = ["nonexistent"]\n'
+    )
+    with pytest.raises(SystemExit):
+        main(["--outdir", str(tmp_path / "out"), str(job)])
+
+
+def test_narrow_request_combo_excludes_prior_outputs(tmp_path, factory_file):
+    """Combo dir must not link b.txt when it exists from a prior run but isn't requested.
+
+    Guards the regression where _create_link_outputs iterated all pipeline nodes
+    instead of only requested nodes, leaking outputs from earlier broader runs.
+    """
+    outdir = tmp_path / "out"
+
+    # full run — produces both a.txt and b.txt in the hash tree
+    job_full = tmp_path / "job_full.toml"
+    job_full.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    main(["--outdir", str(outdir), str(job_full)])
+    assert any(p for p in outdir.rglob("b.txt") if not p.is_symlink())
+
+    # narrow run — only request a; b.txt still exists in hash tree
+    job_narrow = tmp_path / "job_narrow.toml"
+    job_narrow.write_text(
+        f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n".requests" = ["a"]\n'
+    )
+    main(["--outdir", str(outdir), str(job_narrow)])
+
+    combo_dir = outdir / "job_narrow"
+    assert any(combo_dir.rglob("a.txt"))       # requested output symlinked
+    assert not any(combo_dir.rglob("b.txt"))   # unrequested output excluded
 
 
 # ── multiple combos ───────────────────────────────────────────────────────────

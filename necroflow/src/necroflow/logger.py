@@ -10,7 +10,7 @@ def setup() -> None:
     """Configure the necroflow logger if not already set up."""
     if _log.handlers:
         return
-    handler = logging.StreamHandler(sys.stderr)
+    handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S"))
     _log.addHandler(handler)
     _log.setLevel(logging.INFO)
@@ -64,6 +64,18 @@ def job_output(log_path) -> None:
 
 def cleaned(node) -> None:
     _log.info("clean  %s", node.path)
+
+
+def dry_run_node(node) -> None:
+    desc = node.rule.__name__ if node.rule else "?"
+    _log.info("would-run  %-8s  %s → %s", node.state.name, desc, node.path)
+
+
+def dry_run_summary(n_would_run: int, n_up_to_date: int) -> None:
+    parts = [f"{n_would_run} would run"]
+    if n_up_to_date:
+        parts.append(f"{n_up_to_date} up-to-date")
+    _log.info("dry-run: %s", ", ".join(parts))
 
 
 def summary(n_run: int, n_skipped: int, n_failed: int, n_cleaned: int = 0) -> None:

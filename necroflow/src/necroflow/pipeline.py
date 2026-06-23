@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from necroflow.dag import Node
+from necroflow.nodes import Node
+from necroflow.dag import resolve_paths as _resolve_paths, _node_key
 
 # Maps frozenset of active directions {U,D,L,R} to box-drawing char
 _BOX = {
@@ -91,32 +89,64 @@ class _GraphBase:
         return "steelblue"
 
     def resolve_paths(self, outdir) -> None:
-        from necroflow.dag import resolve_paths
-        resolve_paths(self.nodes, outdir)
+        _resolve_paths(self.nodes, outdir)
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
-        from collections import defaultdict
-        import networkx as nx
+        from collections import defaultdict, deque
 
-        G = nx.DiGraph()
-        for node in self.nodes:
-            G.add_node(id(node), node=node)
-            for parent in node.parents:
-                G.add_edge(id(parent), id(node))
+        nodes = list(self.nodes)
+        id_to_node = {id(n): n for n in nodes}
+        node_ids = set(id_to_node)
+
+        # build forward edges and compute depth via Kahn's topo sort
+        children: dict[int, list[int]] = {nid: [] for nid in node_ids}
+        in_degree: dict[int, int] = {nid: 0 for nid in node_ids}
+        for n in nodes:
+            for p in n.parents:
+                if id(p) in node_ids:
+                    children[id(p)].append(id(n))
+                    in_degree[id(n)] += 1
 
         depth: dict[int, int] = {}
-        for nid in nx.topological_sort(G):
-            preds = list(G.predecessors(nid))
-            depth[nid] = max((depth[p] for p in preds), default=-1) + 1
+        queue: deque[int] = deque(nid for nid in node_ids if in_degree[nid] == 0)
+        for nid in queue:
+            depth[nid] = 0
+        while queue:
+            nid = queue.popleft()
+            for cid in children[nid]:
+                depth[cid] = max(depth.get(cid, -1), depth[nid] + 1)
+                in_degree[cid] -= 1
+                if in_degree[cid] == 0:
+                    queue.append(cid)
 
         layers: dict[int, list[int]] = defaultdict(list)
         for nid, d in depth.items():
             layers[d].append(nid)
 
-        labels = {nid: self._node_label(G.nodes[nid]["node"], nid) for nid in G.nodes}
+        labels = {nid: self._node_label(id_to_node[nid], nid) for nid in node_ids}
+        raw_edges = [(id(p), id(n)) for n in nodes for p in n.parents if id(p) in node_ids]
+
+        # Insert dummy pass-through nodes for long-range edges (span > 1 layer)
+        dummy_ids: set[int] = set()
+        routing_edges: list[tuple[int, int]] = []
+        dummy_counter = 0
+        for u, v in raw_edges:
+            if depth[v] - depth[u] <= 1:
+                routing_edges.append((u, v))
+            else:
+                prev = u
+                for d in range(depth[u] + 1, depth[v]):
+                    did = -(dummy_counter + 1)
+                    dummy_counter += 1
+                    dummy_ids.add(did)
+                    layers[d].append(did)
+                    depth[did] = d
+                    routing_edges.append((prev, did))
+                    prev = did
+                routing_edges.append((prev, v))
 
         GAP = 3
         lines: list[str] = [self._header() + "\n"]
@@ -128,13 +158,20 @@ class _GraphBase:
             tops, mids, bots = [], [], []
             x = 0
             for nid in nids:
-                lbl = labels[nid]
-                w = len(lbl) + 2
-                tops.append("┌" + "─" * w + "┐")
-                mids.append("│ " + lbl + " │")
-                bots.append("└" + "─" * w + "┘")
-                centre_x[nid] = x + (w + 2) // 2
-                x += w + 2 + GAP
+                if nid in dummy_ids:
+                    tops.append(" ")
+                    mids.append("│")
+                    bots.append(" ")
+                    centre_x[nid] = x
+                    x += 1 + GAP
+                else:
+                    lbl = labels[nid]
+                    w = len(lbl) + 2
+                    tops.append("┌" + "─" * w + "┐")
+                    mids.append("│ " + lbl + " │")
+                    bots.append("└" + "─" * w + "┘")
+                    centre_x[nid] = x + (w + 2) // 2
+                    x += w + 2 + GAP
             layer_rows.append(("   ".join(tops), "   ".join(mids), "   ".join(bots)))
 
         for li, (top, mid, bot) in enumerate(layer_rows):
@@ -146,7 +183,7 @@ class _GraphBase:
             nxt_nids = set(layers[d + 1])
             col_edges = [
                 (centre_x[u], centre_x[v])
-                for u, v in G.edges()
+                for u, v in routing_edges
                 if u in cur_nids and v in nxt_nids
             ]
             if not col_edges:
@@ -161,72 +198,29 @@ class _GraphBase:
         from pathlib import Path
         Path(path).write_text(str(self) + "\n", encoding="utf-8")
 
-    def plot(self, **fig_kw) -> None:
-        import networkx as nx
-        import matplotlib.pyplot as plt
-        from collections import defaultdict
 
-        G = nx.DiGraph()
-        for node in self.nodes:
-            G.add_node(id(node), node=node)
-            for parent in node.parents:
-                G.add_edge(id(parent), id(node))
-
-        depth: dict[int, int] = {}
-        for nid in nx.topological_sort(G):
-            preds = list(G.predecessors(nid))
-            depth[nid] = max((depth[p] for p in preds), default=-1) + 1
-
-        layers: dict[int, list[int]] = defaultdict(list)
-        for nid, d in depth.items():
-            layers[d].append(nid)
-
-        pos: dict[int, tuple[float, float]] = {}
-        for d, nids in layers.items():
-            for i, nid in enumerate(nids):
-                pos[nid] = (i - (len(nids) - 1) / 2, -d)
-
-        labels = {nid: self._node_label(G.nodes[nid]["node"], nid) for nid in G.nodes}
-        colors = [self._node_color(nid) for nid in G.nodes]
-
-        fig, ax = plt.subplots(**fig_kw)
-        nx.draw(
-            G,
-            pos=pos,
-            labels=labels,
-            ax=ax,
-            with_labels=True,
-            node_color=colors,
-            node_size=2000,
-            font_color="white",
-            font_size=9,
-            arrows=True,
-            arrowsize=20,
-            edge_color="gray",
-        )
-        plt.tight_layout()
-        plt.show()
 
 
 class Pipeline(_GraphBase):
     def __init__(self):
-        object.__setattr__(self, "_nodes_list", [])
-        object.__setattr__(self, "_node_names", {})
+        self._nodes_list = []
+        self._node_names = {}
 
     @property
     def nodes(self) -> list:
-        return object.__getattribute__(self, "_nodes_list")
+        return self._nodes_list
 
     def __setattr__(self, name, value):
-        from necroflow.dag import Node
-
-        node_names = object.__getattribute__(self, "_node_names")
-        if name in node_names:
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+            return
+        if name.startswith("."):
+            raise ValueError(f"Pipeline attribute {name!r} must not start with '.'")
+        if name in self._node_names:
             raise ValueError(f"Pipeline attribute {name!r} already assigned")
-        nodes = object.__getattribute__(self, "_nodes_list")
         if isinstance(value, Node):
-            nodes.append(value)
-            node_names[name] = value
+            self._nodes_list.append(value)
+            self._node_names[name] = value
             value.pipeline_label = name
         object.__setattr__(self, name, value)
 
@@ -246,8 +240,6 @@ class DAG(_GraphBase):
 
     def add(self, pipeline: Pipeline, request=None) -> None:
         """Add a pipeline's nodes. request defaults to pipeline sinks."""
-        from necroflow.dag import _node_key
-
         if request is None:
             request = _sinks(pipeline)
         for node in pipeline.nodes:
@@ -272,6 +264,6 @@ class DAG(_GraphBase):
     def _node_color(self, nid: int) -> str:
         return "orange" if nid in {id(n) for n in self.required_nodes} else "steelblue"
 
-    def execute(self, total_threads=None, scheduler=None, keep_going=False, autoclean=False) -> None:
+    def execute(self, total_threads=None, scheduler=None, keep_going=False, autoclean=False, dry_run=False) -> None:
         from necroflow.executor import execute
-        execute(self, self.outdir, total_threads, scheduler, keep_going, autoclean)
+        execute(self, self.outdir, total_threads, scheduler, keep_going, autoclean, dry_run)

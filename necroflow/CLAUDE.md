@@ -11,6 +11,8 @@ the framework owns path generation, DAG construction, and execution.
 
 When investigating pytest failures, read the failing test docstring first; it should describe the problem rationale and the behavior the test is guarding.
 
+A pre-commit hook at `.githooks/pre-commit` runs `pytest` before every commit and rejects the commit if any test fails. Git is configured to use this via `core.hooksPath = .githooks`. **If a commit is rejected by the hook, automatically diagnose and fix the failing tests before re-attempting the commit.**
+
 ## Setup
 
 ```bash
@@ -64,7 +66,7 @@ Accepts any `_GraphBase` (Pipeline or DAG). Calls `graph.resolve_paths(outdir)` 
 - `write_dependencies(node)` called after each successful job
 - `keep_going=False` (default): raise on first failure
 - `keep_going=True`: continue running independent branches; raise `ExceptionGroup` at the end listing all failures
-- `autoclean=True`: delete each ORPHAN `node.path` before execution (files via `unlink`, directories via `rmtree`)
+- `autoclean=True`: (1) delete ORPHAN outputs before execution; (2) during execution, delete each intermediate node's output as soon as all its children are UP_TO_DATE (frees disk space progressively)
 
 ```python
 execute(P, "/results")                          # single pipeline, all CPUs
@@ -72,7 +74,7 @@ execute(P, "/results", total_threads=8)
 dag.execute()                                   # DAG uses dag.outdir
 dag.execute(scheduler=fifo_scheduler)
 dag.execute(keep_going=True)                    # continue past failures
-dag.execute(autoclean=True)                     # delete orphan outputs first
+dag.execute(autoclean=True)                     # delete orphans + intermediates when done
 ```
 
 #### Scheduler protocol
@@ -159,7 +161,7 @@ Single output → returns `Node` directly; multiple outputs → returns named tu
 
 ### `_GraphBase`, `Pipeline`, `DAG` (`src/necroflow/pipeline.py`)
 
-`_GraphBase` is the shared base class providing `__str__`, `save()`, `plot()`, `resolve_paths()`.
+`_GraphBase` is the shared base class providing `__str__`, `save()`, `resolve_paths()`.
 Subclasses override three hooks: `nodes` (property), `_header()`, `_node_label()`, `_node_color()`.
 
 #### `Pipeline` — single-config container
@@ -206,9 +208,6 @@ Only edges between adjacent layers are drawn; long-range edges are omitted (know
 
 `P.save("pipeline.txt")` / `dag.save("dag.txt")` — writes `str(self) + "\n"` to a UTF-8 file.
 
-#### Matplotlib rendering (`.plot()`)
-
-Uses `networkx` + `matplotlib`. Required nodes (DAG only) shown in orange.
 
 ### Path generation (`src/necroflow/dag.py`)
 
@@ -370,7 +369,5 @@ Key internals:
 
 ## What is NOT yet implemented
 
-- Scatter/gather within a single pipeline (fan-out over lists of inputs)
-- Cluster/cloud backends
-- Deletion of Orphan outputs (state is classified but no action taken)
-- Long-range edges in the ASCII renderer (edges skipping layers are omitted)
+- Cluster/cloud backends (long-term goal, not currently prioritised)
+- Long-range edges in the ASCII renderer (edges skipping layers are omitted; planned fix: dummy-node insertion)

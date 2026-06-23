@@ -12,9 +12,6 @@ authors=[
 ]
 requires-python = ">=3.6"
 dependencies = [
-    "networkx",
-    "matplotlib",
-    "tomli-w",
     "tomlkit",
 ]
 

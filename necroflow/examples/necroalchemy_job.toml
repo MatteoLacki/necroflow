@@ -1,0 +1,8 @@
+# Necroalchemy job TOML — new-style CLI format.
+# Run from the necroflow/ project root:
+#   make example
+
+".pipeline" = "examples/necroalchemy_factory.py:factory"
+
+word__grid = ["necroflow", "snakemake", "python"]
+n__grid    = [2, 5]

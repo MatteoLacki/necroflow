@@ -146,7 +146,7 @@ def test_write_dependencies_creates_file(tmp_path):
     txt.path.parent.mkdir(parents=True, exist_ok=True)
     txt.path.touch()
     write_dependencies(txt)
-    assert (txt.path.parent / "dependencies.toml").exists()
+    assert (txt.path.parent / ".rip" / "dependencies.toml").exists()
 
 
 def test_write_dependencies_content(tmp_path):
@@ -155,7 +155,7 @@ def test_write_dependencies_content(tmp_path):
     txt.path.parent.mkdir(parents=True, exist_ok=True)
     txt.path.touch()
     write_dependencies(txt)
-    content = (txt.path.parent / "dependencies.toml").read_text()
+    content = (txt.path.parent / ".rip" / "dependencies.toml").read_text()
     assert "make_txt" in content
     assert "hi" in content
 

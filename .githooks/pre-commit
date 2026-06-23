@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)/necroflow"
+
+if [ ! -f .venv/bin/pytest ]; then
+    echo "[pre-commit] .venv not found — run 'make venv' first" >&2
+    exit 1
+fi
+
+echo "[pre-commit] running pytest..."
+.venv/bin/pytest -q

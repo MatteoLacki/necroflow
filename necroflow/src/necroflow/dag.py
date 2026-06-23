@@ -1,73 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-import inspect
 from collections import namedtuple
-from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import tomlkit
 
-
-class NodeState(Enum):
-    MISSING = "missing"        # in required subgraph, no output — must run
-    STALE = "stale"            # in required subgraph, output exists but a parent is newer — must run
-    UP_TO_DATE = "up_to_date"  # in required subgraph, output valid — skip
-    ORPHAN = "orphan"          # NOT in required subgraph, output exists
-    READY = "ready"            # Missing/Stale with all parents UpToDate — submit now
-    RUNNING = "running"        # submitted to thread pool
-    FAILED = "failed"          # command returned non-zero exit code
-    INTERRUPTED = "interrupted"  # killed by signal, or left RUNNING when necroflow crashed
-
-
-class NodeTypeMeta(type):
-    """Metaclass so that Fastq("output_name") returns a Node, not a Fastq instance."""
-
-    def __call__(cls, output_name: str | None = None) -> Node:
-        return Node(output_name=output_name, node_type=cls)
-
-    def __repr__(cls) -> str:
-        return cls.__name__
-
-
-class NodeType(metaclass=NodeTypeMeta):
-    """Base class for node types. Subclass to define types.
-
-    class Fastq(NodeType): ...
-    class SortedBam(Bam): name = "sorted.bam"  # filename within the rule output dir
-
-    Fastq("label")  # creates Node(node_type=Fastq, output_name="label")
-    """
-
-    name: str | None = None
-
-
-
-def _is_nodetype(ann) -> bool:
-    return inspect.isclass(ann) and issubclass(ann, NodeType)
-
-
-@dataclass
-class Node:
-    output_name: str | None = None
-    node_type: type[NodeType] | None = None
-    parents: list[Node] = field(default_factory=list)
-    config: dict[str, Any] = field(default_factory=dict)
-    rule: Any | None = None
-    command: str | list[str] | None = None
-    path: Path | None = None
-    output_nodes: dict[str, Node] = field(default_factory=dict)
-    state: NodeState | None = None
-    info: str | None = None
-    pipeline_label: str | None = None
-
-    def __post_init__(self):
-        if self.info is None and self.node_type is not None:
-            doc = self.node_type.__doc__
-            if doc:
-                self.info = doc.strip()
+from necroflow.nodes import Node, NodeState, NodeType, NodeTypeMeta, _is_nodetype
 
 
 def _call_fingerprint(node: Node) -> tuple:
@@ -120,8 +60,9 @@ def write_dependencies(node: Node) -> None:
         "hash": node.path.parent.name,
         "config": _accumulated_config(node),
     }
-    node.path.parent.mkdir(parents=True, exist_ok=True)
-    (node.path.parent / "dependencies.toml").write_text(tomlkit.dumps(data))
+    rip = node.path.parent / ".rip"
+    rip.mkdir(parents=True, exist_ok=True)
+    (rip / "dependencies.toml").write_text(tomlkit.dumps(data))
 
 
 def check_cache(node: Node) -> bool:
@@ -129,7 +70,7 @@ def check_cache(node: Node) -> bool:
     return (
         node.path is not None
         and node.path.exists()
-        and (node.path.parent / "dependencies.toml").exists()
+        and (node.path.parent / ".rip" / "dependencies.toml").exists()
     )
 
 

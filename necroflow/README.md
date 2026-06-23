@@ -101,7 +101,6 @@ from necroflow import resolve_command
 P = rna_pipeline(config, R)
 print(P)                    # layered ASCII DAG to stdout
 P.save("pipeline.txt")      # same render to a file
-P.plot()                    # matplotlib figure
 
 dag.save("dag.txt")         # works on DAG too
 
@@ -116,7 +115,7 @@ Each output lives at `outdir/{rule}/{hash8}/{filename}`. The hash captures the e
 
 - Re-running with the same inputs is a no-op (cache hit).
 - Changing any upstream parameter produces a new path — old results are never overwritten.
-- A `dependencies.toml` next to each output records the full accumulated config for provenance.
+- A `.rip/dependencies.toml` inside each output folder records the full accumulated config for provenance.
 
 ## Parallelism and scheduling
 
@@ -170,7 +169,7 @@ After each successful job, necroflow verifies that the declared output file exis
 
 Run state is persisted to `outdir/.rip/state.db` (SQLite) between invocations. A node whose output exists on disk but whose previous run was interrupted by a signal or left in an unknown state is automatically re-executed next time.
 
-Each job's stdout/stderr is captured to `outdir/{rule}/{hash}/{job.log}`. On failure the log is printed to the terminal.
+Each job's stdout/stderr is captured to `outdir/{rule}/{hash}/.rip/job.log`. On failure the log is printed to the terminal.
 
 ## Multi-output rules
 
@@ -197,26 +196,43 @@ dag.execute(autoclean=True)
 Or via CLI:
 
 ```bash
-necroflow --pipeline factory.py:factory --config exp.toml --outdir /results --autoclean
+necroflow --outdir /results --autoclean job.toml   # job.toml contains ".pipeline" key
 ```
 
 ## Command-line interface
 
-necroflow ships a `necroflow` command that runs pipelines from TOML configs.
+necroflow ships a `necroflow` command. Each positional argument is a **job TOML** — a self-contained file that specifies the pipeline factory, optional requested outputs, and user config params.
 
 ```bash
-necroflow \
-  --pipeline path/to/factory.py:function_name \
-  --config   experiment.toml \
-  --outdir   /results \
-  [--threads 16] [--keep-going] [--autoclean]
+necroflow --outdir /results [--threads 16] [--keep-going] [--autoclean] [--dry-run] JOB.toml [JOB2.toml ...]
 ```
 
-`--pipeline` points to a Python file and names a factory function inside it.
-The function receives a plain `dict` (the parsed config) and must return a `Pipeline`.
+### Job TOML format
 
-`--config` / `-c` may be repeated; all configs feed into the same DAG so shared
-upstream nodes are deduplicated across configs automatically.
+```toml
+# required — path resolved from the directory where necroflow is invoked
+".pipeline" = "path/to/factory.py:function_name"
+
+# optional — pipeline_label names to request (defaults to all sinks)
+".requests" = ["counts", "qc"]
+
+# user config — passed as a plain dict to the factory
+ref    = "hg38"
+sample = "NA12878"
+```
+
+Keys starting with `.` are necroflow metadata — stripped before the dict reaches the factory. They never appear in node configs or affect output hashes. User config can freely use any name, including `pipeline` or `request`.
+
+The factory function receives only user config:
+
+```python
+# factory.py
+def factory(cfg: dict) -> Pipeline:
+    P = Pipeline()
+    P.bam = R.align(ref=cfg["ref"], sample=cfg["sample"])
+    P.counts = R.count(P.bam)
+    return P
+```
 
 ### Parameter grids
 
@@ -225,23 +241,14 @@ combinations. The resulting output subfolders use the same naming scheme as
 [snakemakeconfigs](https://github.com/MatteoLacki/snakemakeconfigs).
 
 ```toml
-# experiment.toml
-ref__grid    = ["hg38", "mm10"]
+".pipeline"   = "factory.py:factory"
+ref__grid     = ["hg38", "mm10"]
 aligner__grid = ["bwa", "bowtie2"]
 ```
 
 This produces four pipelines: `experiment__ref+hg38__aligner+bwa`,
-`experiment__ref+hg38__aligner+bowtie2`, etc.
-
-The factory function:
-
-```python
-# factory.py
-from my_pipeline import rna_pipeline   # imported from the same directory
-
-def factory(cfg: dict):
-    return rna_pipeline(ref=cfg["ref"], aligner=cfg["aligner"])
-```
+`experiment__ref+hg38__aligner+bowtie2`, etc. Grid expansion also applies to
+`pipeline` itself, so a single job TOML can fan out across different factory functions.
 
 ### Linked outputs
 
@@ -251,14 +258,13 @@ After every run the CLI creates one subfolder per grid combo under `outdir/`:
 /results/
   {rule}/{hash}/{file}           ← real outputs (content-addressed)
   experiment__ref+hg38__aligner+bwa/
-    {rule}/{hash}/{file}         ← symlinks into the hash tree
-    manifest.toml                ← sink output paths for this combo
+    {rule}/{hash}/{file}         ← symlinks to requested outputs only
+    manifest.toml                ← requested output paths for this combo
   experiment__ref+hg38__aligner+bowtie2/
     ...
 ```
 
-The symlink tree mirrors the hash structure; `manifest.toml` lists only the sink
-(requested) outputs, keyed by the Pipeline attribute name assigned in the factory:
+Only the **requested** outputs (defaults to pipeline sinks) get a symlink — intermediate ancestors are excluded. `manifest.toml` lists the same outputs keyed by the Pipeline attribute name assigned in the factory:
 
 ```toml
 [outputs]

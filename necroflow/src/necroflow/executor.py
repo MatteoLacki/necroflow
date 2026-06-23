@@ -36,23 +36,54 @@ def fifo_scheduler(ready: list, remaining: list) -> list:
 
 def connected_component_scheduler(ready: list, remaining: list) -> list:
     """Prioritise nodes from the smallest connected component of remaining work."""
-    import networkx as nx
-
     remaining_ids = {id(n) for n in remaining}
-    G = nx.Graph()
+
+    # build undirected adjacency within remaining (parent↔child edges)
+    adj: dict[int, list] = {id(n): [] for n in remaining}
     for n in remaining:
-        G.add_node(id(n))
         for p in n.parents:
             if id(p) in remaining_ids:
-                G.add_edge(id(n), id(p))
+                adj[id(n)].append(p)
+                adj[id(p)].append(n)
 
-    node_to_component_size: dict[int, int] = {}
-    for component in nx.connected_components(G):
-        size = len(component)
-        for nid in component:
-            node_to_component_size[nid] = size
+    visited: set[int] = set()
+    node_to_size: dict[int, int] = {}
+    for n in remaining:
+        if id(n) in visited:
+            continue
+        frontier = [n]
+        members: list[int] = []
+        while frontier:
+            cur = frontier.pop()
+            if id(cur) in visited:
+                continue
+            visited.add(id(cur))
+            members.append(id(cur))
+            for nb in adj[id(cur)]:
+                if id(nb) not in visited:
+                    frontier.append(nb)
+        size = len(members)
+        for nid in members:
+            node_to_size[nid] = size
 
-    return sorted(ready, key=lambda n: node_to_component_size.get(id(n), 0))
+    return sorted(ready, key=lambda n: node_to_size.get(id(n), 0))
+
+
+def _cleanup_parents(node, children: dict, final_ids: set, active_id_set: set) -> int:
+    """Delete output of each parent whose all children are now UP_TO_DATE (intermediates only)."""
+    n_cleaned = 0
+    for parent in node.parents:
+        if id(parent) not in active_id_set or id(parent) in final_ids:
+            continue
+        if all(c.state == NodeState.UP_TO_DATE for c in children[id(parent)]):
+            if parent.path is not None and parent.path.exists():
+                if parent.path.is_dir():
+                    shutil.rmtree(parent.path)
+                else:
+                    parent.path.unlink()
+                _logger.cleaned(parent)
+                n_cleaned += 1
+    return n_cleaned
 
 
 def execute(
@@ -62,6 +93,7 @@ def execute(
     scheduler: Scheduler | None = None,
     keep_going: bool = False,
     autoclean: bool = False,
+    dry_run: bool = False,
 ) -> None:
     """Run required nodes in the pipeline, respecting the thread budget.
 
@@ -96,8 +128,16 @@ def execute(
     # only operate on nodes in the required subgraph
     active = [n for n in nodes if n.state is not None and n.state != NodeState.ORPHAN]
 
+    active_id_set = {id(n) for n in active}
+    children: dict[int, list] = {id(n): [] for n in active}
+    for n in active:
+        for p in n.parents:
+            if id(p) in active_id_set:
+                children[id(p)].append(n)
+    final_ids = {nid for nid, kids in children.items() if not kids}
+
     n_cleaned = 0
-    if autoclean:
+    if autoclean and not dry_run:
         for n in nodes:
             if n.state == NodeState.ORPHAN and n.path is not None and n.path.exists():
                 if n.path.is_dir():
@@ -114,6 +154,16 @@ def execute(
     for n in active:
         if n.state == NodeState.UP_TO_DATE and _node_key(n) in compromised:
             n.state = NodeState.STALE
+
+    if dry_run:
+        db.close()
+        n_would_run = sum(1 for n in active if n.state in (NodeState.MISSING, NodeState.STALE))
+        n_up_to_date = sum(1 for n in active if n.state == NodeState.UP_TO_DATE)
+        for n in active:
+            if n.state in (NodeState.MISSING, NodeState.STALE):
+                _logger.dry_run_node(n)
+        _logger.dry_run_summary(n_would_run, n_up_to_date)
+        return
 
     running: dict = {}  # future -> (node, start_time, threads_used)
     used_threads = 0
@@ -146,7 +196,7 @@ def execute(
                         continue
                     t = _node_threads(node)
                     if used_threads + t <= total_threads or used_threads == 0:
-                        log_path = node.path.parent / "job.log"
+                        log_path = node.path.parent / ".rip" / "job.log"
                         db.mark_running(_node_key(node))
                         node.state = NodeState.RUNNING
                         _logger.job_start(node)
@@ -176,12 +226,16 @@ def execute(
                             if conode is not node and id(conode) in active_ids and conode.state in _needs_run:
                                 db.mark_done(_node_key(conode), "up_to_date")
                                 conode.state = NodeState.UP_TO_DATE
+                                if autoclean:
+                                    n_cleaned += _cleanup_parents(conode, children, final_ids, active_id_set)
                         db.mark_done(_node_key(node), "up_to_date")
                         node.state = NodeState.UP_TO_DATE
                         _logger.job_done(node, elapsed)
                         n_run += 1
+                        if autoclean:
+                            n_cleaned += _cleanup_parents(node, children, final_ids, active_id_set)
                     except Exception as exc:
-                        log_path = node.path.parent / "job.log"
+                        log_path = node.path.parent / ".rip" / "job.log"
                         if isinstance(exc, subprocess.CalledProcessError):
                             rc = exc.returncode
                             if rc < 0:
@@ -221,6 +275,7 @@ def _node_threads(node) -> int:
 def _run_node(node, log_path) -> None:
     cmd = resolve_command(node)
     node.path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "w") as log:
         if isinstance(cmd, list):
             subprocess.run(cmd, check=True, stdout=log, stderr=log)
