@@ -13,6 +13,7 @@ class D(NodeType): name = "d.txt"
 R = Rules()
 R.register("make_a",       Inputs(x=str), Outputs(a=A),        "touch {a}")
 R.register("make_ab",      Inputs(x=str), Outputs(a=A, b=B),   "touch {a} {b}")
+R.register("make_only_a",  Inputs(x=str), Outputs(a=A, b=B),   "touch {a}")
 R.register("make_b",       Inputs(a=A),   Outputs(b=B),        "touch {b}")
 R.register("make_c",       Inputs(a=A),   Outputs(c=C),        "touch {c}")
 R.register("fail_a",       Inputs(x=str), Outputs(a=A),        "exit 1")
@@ -64,6 +65,18 @@ def test_execute_failure_raises(tmp_path):
 def test_missing_output_raises(tmp_path):
     P = Pipeline()
     P.a = R.no_output_a(x="x")
+    with pytest.raises(RuntimeError, match="output missing"):
+        execute(P, tmp_path)
+
+
+def test_missing_cooutput_raises(tmp_path):
+    """A successful multi-output command must fail if any declared co-output is absent.
+
+    This guards against marking skipped sibling outputs UP_TO_DATE merely because
+    the representative co-output was created.
+    """
+    P = Pipeline()
+    P.a, P.b = R.make_only_a(x="x")
     with pytest.raises(RuntimeError, match="output missing"):
         execute(P, tmp_path)
 

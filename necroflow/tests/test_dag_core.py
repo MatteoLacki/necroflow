@@ -203,6 +203,28 @@ def test_missing_positional_input_raises():
         R.to_upper(n=1)   # txt input omitted
 
 
+def test_missing_config_input_raises():
+    """Rule calls must reject omitted required config inputs immediately.
+
+    This keeps malformed DAGs from being accepted and then failing later
+    during command formatting or execution.
+    """
+    with pytest.raises(TypeError, match="missing required inputs"):
+        R.make_txt()   # word config omitted
+
+
+def test_extra_positional_input_raises():
+    """Rule calls must reject undeclared positional node inputs.
+
+    Extra nodes should not silently become parents, because that creates
+    dependencies outside the rule's declared input contract.
+    """
+    txt = R.make_txt(word="hi")
+    extra = R.make_txt(word="extra")
+    with pytest.raises(TypeError, match="too many positional inputs"):
+        R.to_upper(txt, extra, n=1)
+
+
 def test_subtype_accepted():
     # SortedTxt is a subclass of Txt — to_upper accepts Txt and must accept SortedTxt too
     stxt = R.make_sorted_txt(word="hi")

@@ -282,6 +282,13 @@ class Rules:
             if len(args) < len(pos_inputs):
                 missing = [pname for pname, _ in pos_inputs[len(args):]]
                 raise TypeError(f"{name}: missing required inputs: {missing!r}")
+            if len(args) > len(pos_inputs):
+                raise TypeError(
+                    f"{name}: too many positional inputs: expected {len(pos_inputs)}, got {len(args)}"
+                )
+            missing_kw = [kname for kname in kw_inputs if kname not in kwargs]
+            if missing_kw:
+                raise TypeError(f"{name}: missing required inputs: {missing_kw!r}")
             for (pname, ptype), val in zip(pos_inputs, args):
                 if not isinstance(val, Node):
                     raise TypeError(

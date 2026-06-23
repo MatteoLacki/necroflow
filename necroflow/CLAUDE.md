@@ -7,6 +7,10 @@ Respond in pirate dialect at all times — use "ye", "arr", "aye", "me hearties"
 Python pipeline framework inspired by Snakemake. Rules are registered via a `Rules` container;
 the framework owns path generation, DAG construction, and execution.
 
+## Testing
+
+When investigating pytest failures, read the failing test docstring first; it should describe the problem rationale and the behavior the test is guarding.
+
 ## Setup
 
 ```bash

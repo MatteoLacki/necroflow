@@ -166,8 +166,10 @@ def execute(
                     elapsed = time.monotonic() - start
                     try:
                         f.result()
-                        if not node.path.exists():
-                            raise RuntimeError(f"command succeeded but output missing: {node.path}")
+                        # validate all active co-outputs were produced
+                        for conode in node.output_nodes.values():
+                            if id(conode) in active_ids and not conode.path.exists():
+                                raise RuntimeError(f"command succeeded but output missing: {conode.path}")
                         write_dependencies(node)
                         # mark co-outputs that were skipped in the scheduler
                         for conode in node.output_nodes.values():
