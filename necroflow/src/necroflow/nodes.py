@@ -32,10 +32,10 @@ class NodeType(metaclass=NodeTypeMeta):
     """Base class for node types. Subclass to define types.
 
     class Fastq(NodeType): ...
-    class SortedBam(Bam): name = "sorted.bam"
+    class SortedBam(Bam): filename = "sorted.bam"
     """
 
-    name: str | None = None
+    filename: str | None = None
 
 
 @dataclass

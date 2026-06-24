@@ -21,39 +21,39 @@ from necroflow import (
 
 class Fastq(NodeType):
     """Raw sequencing reads (FASTQ format)."""
-    name = "reads.fastq.gz"
+    filename = "reads.fastq.gz"
 
 class Bam(NodeType):
     """Aligned reads in BAM format."""
-    name = "aligned.bam"
+    filename = "aligned.bam"
 
 class SortedBam(Bam):
     """Coordinate-sorted BAM; required before quantification or variant calling."""
-    name = "sorted.bam"
+    filename = "sorted.bam"
 
 class Log(NodeType):
     """Aligner log capturing mapping statistics."""
-    name = "align.log"
+    filename = "align.log"
 
 class Counts(NodeType):
     """Per-gene read counts produced by featureCounts."""
-    name = "counts.txt"
+    filename = "counts.txt"
 
 class QcReport(NodeType):
     """Alignment QC summary from featureCounts."""
-    name = "qc.txt"
+    filename = "qc.txt"
 
 class Vcf(NodeType):
     """Raw variant calls in VCF format."""
-    name = "variants.vcf.gz"
+    filename = "variants.vcf.gz"
 
 class AnnotatedVcf(NodeType):
     """Variant calls enriched with database annotations."""
-    name = "annotated.vcf.gz"
+    filename = "annotated.vcf.gz"
 
 class MergedVcf(NodeType):
     """SNP and indel calls merged into a single VCF."""
-    name = "merged.vcf.gz"
+    filename = "merged.vcf.gz"
 
 
 # --- rules ---

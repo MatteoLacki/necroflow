@@ -10,36 +10,61 @@ import tomlkit
 from necroflow.nodes import Node, NodeState, NodeType, NodeTypeMeta, _is_nodetype
 
 
-def _call_fingerprint(node: Node) -> tuple:
-    """Fingerprint of the rule call that produced this node.
+def _type_name(ann) -> str:
+    return ann.__name__ if hasattr(ann, "__name__") else repr(ann)
 
-    Shared by all co-outputs of the same call — output_name excluded from the
-    node's own hash but included in parent references so downstream nodes that
+
+def _call_fingerprint(node: Node) -> str:
+    """16-char hex fingerprint of the rule call that produced this node.
+
+    Shared by all co-outputs of the same call — output_name is excluded from
+    this hash but included in parent references so downstream nodes that
     consume different co-outputs still get distinct hashes.
+
+    Constraints intentionally excluded: they describe execution resources
+    (threads, memory), not the computation itself. If the output already
+    exists on disk, the constraints used to produce it are irrelevant.
     """
-    return (
-        node.rule.__name__ if node.rule else None,
-        node.command,
-        tuple(sorted(node.config.items())),
-        tuple((_call_fingerprint(p), p.output_name) for p in node.parents),
-    )
-
-
-def _folder_hash(node: Node) -> str:
-    """8-char hash of the rule call — shared by all co-outputs. Names the output directory."""
-    return hashlib.sha256(repr(_call_fingerprint(node)).encode()).hexdigest()[:16]
+    h = hashlib.sha256()
+    h.update((node.rule.__name__ if node.rule else "").encode())
+    cmd = node.command
+    h.update((cmd if isinstance(cmd, str) else repr(cmd) if cmd else "").encode())
+    for k, v in sorted(node.config.items()):
+        h.update(f"{k}={v!r}".encode())
+    for p in node.parents:
+        h.update(_call_fingerprint(p).encode())
+        h.update((p.output_name or "").encode())
+    if node.rule:
+        for k, v in sorted(node.rule.inputs.specs.items()):
+            h.update(f"i:{k}={_type_name(v)}".encode())
+        for k, v in sorted(node.rule.outputs.specs.items()):
+            h.update(f"o:{k}={_type_name(v)}".encode())
+    return h.hexdigest()[:16]
 
 
 def _node_key(node: Node) -> str:
-    """Unique key for a node: relative path rule_name/folder_hash/filename.
+    """Unique key for a node: relative path rule_name/fingerprint/filename.
     Distinct for co-outputs because filename differs."""
     rule_name = node.rule.__name__ if node.rule else "unknown"
     filename = (
-        node.node_type.name
-        if node.node_type and node.node_type.name
+        node.node_type.filename
+        if node.node_type and node.node_type.filename
         else node.output_name or "output"
     )
-    return f"{rule_name}/{_folder_hash(node)}/{filename}"
+    return f"{rule_name}/{_call_fingerprint(node)}/{filename}"
+
+
+def _content_hash(path: Path) -> str:
+    """SHA-256 of a file's bytes, or of all non-.rip files in a directory."""
+    h = hashlib.sha256()
+    if path.is_file():
+        h.update(path.read_bytes())
+    else:
+        for f in sorted(path.rglob("*")):
+            if f.is_file() and ".rip" not in f.parts:
+                h.update(str(f.relative_to(path)).encode())
+                h.update(f.read_bytes())
+    return h.hexdigest()
 
 
 def _accumulated_config(node: Node) -> dict:
@@ -51,9 +76,10 @@ def _accumulated_config(node: Node) -> dict:
 
 
 def write_dependencies(node: Node) -> None:
-    """Write dependencies.toml into node.path.parent. Call after the job succeeds.
+    """Write dependencies.toml and per-output content hashes into node.path.parent.
 
-    Co-outputs share a directory, so calling this for any one of them is sufficient.
+    Call after the job succeeds. Co-outputs share a directory, so calling this for
+    any one of them writes metadata for all siblings via node.output_nodes.
     """
     data = {
         "rule": node.rule.__name__ if node.rule else "unknown",
@@ -63,15 +89,9 @@ def write_dependencies(node: Node) -> None:
     rip = node.path.parent / ".rip"
     rip.mkdir(parents=True, exist_ok=True)
     (rip / "dependencies.toml").write_text(tomlkit.dumps(data))
-
-
-def check_cache(node: Node) -> bool:
-    """True if node.path and dependencies.toml both exist (cache hit)."""
-    return (
-        node.path is not None
-        and node.path.exists()
-        and (node.path.parent / ".rip" / "dependencies.toml").exists()
-    )
+    for onode in node.output_nodes.values():
+        if onode.path is not None and onode.path.exists():
+            (rip / (onode.path.name + ".hash")).write_text(_content_hash(onode.path))
 
 
 def _output_mtime(path: Path) -> float:
@@ -112,10 +132,17 @@ def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
             continue
 
         node_mtime = _output_mtime(node.path)
-        stale = any(
-            p.path is not None and p.path.exists() and _output_mtime(p.path) > node_mtime
-            for p in node.parents
-        )
+        stale = False
+        for p in node.parents:
+            if p.path is None or not p.path.exists():
+                continue
+            if _output_mtime(p.path) <= node_mtime:
+                continue  # fast path: parent not newer
+            hash_file = p.path.parent / ".rip" / (p.path.name + ".hash")
+            if hash_file.exists() and _content_hash(p.path) == hash_file.read_text().strip():
+                continue  # parent re-ran but content unchanged
+            stale = True
+            break
         node.state = NodeState.STALE if stale else NodeState.UP_TO_DATE
 
     # propagate STALE transitively: if any parent is MISSING or STALE, this node is also STALE
@@ -163,11 +190,11 @@ def resolve_paths(nodes: list[Node], outdir: Path | str) -> None:
     for node in nodes:
         rule_name = node.rule.__name__ if node.rule else "unknown"
         filename = (
-            node.node_type.name
-            if node.node_type and node.node_type.name
+            node.node_type.filename
+            if node.node_type and node.node_type.filename
             else node.output_name or "output"
         )
-        node.path = outdir / rule_name / _folder_hash(node) / filename
+        node.path = outdir / rule_name / _call_fingerprint(node) / filename
 
 
 class Inputs:

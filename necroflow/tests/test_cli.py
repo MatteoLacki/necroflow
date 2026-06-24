@@ -9,8 +9,8 @@ from necroflow.cli import _create_link_outputs, main
 from necroflow.pipeline import _sinks
 
 
-class Out(NodeType): name = "out.txt"
-class Log(NodeType): name = "run.log"
+class Out(NodeType): filename = "out.txt"
+class Log(NodeType): filename = "run.log"
 
 
 R = Rules()
@@ -109,8 +109,8 @@ def test_manifest_only_sinks(tmp_path):
 
 FACTORY_SRC = textwrap.dedent("""\
     from necroflow import Pipeline, NodeType, Inputs, Outputs, Rules
-    class A(NodeType): name = "a.txt"
-    class B(NodeType): name = "b.txt"
+    class A(NodeType): filename = "a.txt"
+    class B(NodeType): filename = "b.txt"
     R = Rules()
     R.register("make_a", Inputs(v=str), Outputs(a=A), "touch {a}")
     R.register("make_b", Inputs(a=A),  Outputs(b=B), "touch {b}")

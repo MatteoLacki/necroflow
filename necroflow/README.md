@@ -28,13 +28,13 @@ from necroflow import NodeType, Inputs, Outputs, Constraints, Rules, Pipeline, D
 
 # 1. Define types
 class Fastq(NodeType):
-    name = "reads.fastq.gz"
+    filename = "reads.fastq.gz"
 
 class Bam(NodeType):
-    name = "aligned.bam"
+    filename = "aligned.bam"
 
 class Counts(NodeType):
-    name = "counts.txt"
+    filename = "counts.txt"
 
 # 2. Register rules
 R = Rules()
@@ -111,11 +111,15 @@ for node in P.nodes:
 
 ## Caching
 
-Each output lives at `outdir/{rule}/{hash8}/{filename}`. The hash captures the entire upstream config chain, so:
+Each output lives at `outdir/{rule}/{hash16}/{filename}`. The 16-character hash captures the entire upstream config chain, including rule name, command, config values, parent fingerprints, and declared `Inputs`/`Outputs` types (`Constraints` are excluded — execution resources don't affect output identity).
 
 - Re-running with the same inputs is a no-op (cache hit).
-- Changing any upstream parameter produces a new path — old results are never overwritten.
-- A `.rip/dependencies.toml` inside each output folder records the full accumulated config for provenance.
+- Changing any upstream parameter, command, or declared type produces a new path — old results are never overwritten.
+- A parent whose mtime is newer than a child triggers a content-hash check: if the parent's bytes are unchanged, the child is **not** re-run. Only a genuine content change marks children STALE.
+- Each output folder contains a `.rip/` subdirectory with:
+  - `dependencies.toml` — full accumulated config for provenance.
+  - `{filename}.hash` — SHA-256 content hash, used for STALE detection on the next run.
+  - `job.log` — captured stdout/stderr.
 
 ## Parallelism and scheduling
 
@@ -145,7 +149,7 @@ NodeTypes form an inheritance hierarchy — a rule accepting `Bam` also accepts 
 
 ```python
 class SortedBam(Bam):
-    name = "sorted.bam"   # filename within the rule output directory
+    filename = "sorted.bam"
 
 R.register("sort",
     Inputs(bam=Bam),
@@ -256,10 +260,10 @@ After every run the CLI creates one subfolder per grid combo under `outdir/`:
 
 ```
 /results/
-  {rule}/{hash}/{file}           ← real outputs (content-addressed)
+  {rule}/{hash16}/{file}           ← real outputs (content-addressed)
   experiment__ref+hg38__aligner+bwa/
-    {rule}/{hash}/{file}         ← symlinks to requested outputs only
-    manifest.toml                ← requested output paths for this combo
+    {rule}/{hash16}/{file}         ← symlinks to requested outputs only
+    manifest.toml                  ← requested output paths for this combo
   experiment__ref+hg38__aligner+bowtie2/
     ...
 ```

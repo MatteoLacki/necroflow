@@ -10,7 +10,6 @@ from necroflow.dag import (
     resolve_paths,
     resolve_command,
     write_dependencies,
-    check_cache,
     classify_nodes,
 )
 from necroflow.pipeline import Pipeline, DAG
@@ -28,7 +27,6 @@ __all__ = [
     "resolve_paths",
     "resolve_command",
     "write_dependencies",
-    "check_cache",
     "classify_nodes",
     "NodeState",
     "Pipeline",

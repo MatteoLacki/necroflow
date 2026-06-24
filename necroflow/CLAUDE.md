@@ -29,7 +29,7 @@ Each node carries a `state: NodeState | None` field set by `classify_nodes()`.
 | State | Meaning |
 |---|---|
 | `MISSING` | In required subgraph, no output — must run |
-| `STALE` | In required subgraph, output exists but a parent is newer — must run |
+| `STALE` | In required subgraph, output exists but a parent changed content — must run |
 | `UP_TO_DATE` | In required subgraph, output valid — skip |
 | `ORPHAN` | Outside required subgraph, output exists |
 | `READY` | MISSING/STALE with all parents UP_TO_DATE — submit now |
@@ -181,9 +181,9 @@ def basic_pipeline(config, R):
 
 #### `DAG` — multi-pipeline aggregator
 
-Stores nodes by `_node_key` (= `rule_name/folder_hash/filename`). Deduplicates shared upstream
+Stores nodes by `_node_key` (= `rule_name/fingerprint/filename`). Deduplicates shared upstream
 computations across pipelines automatically. Co-outputs of the same rule call share a directory
-(`folder_hash`) but have distinct keys (different filename). Tracks a required set (target nodes).
+(same fingerprint) but have distinct keys (different filename). Tracks a required set (target nodes).
 
 ```python
 dag = DAG()
@@ -213,15 +213,15 @@ Only edges between adjacent layers are drawn; long-range edges are omitted (know
 
 ```python
 P.resolve_paths("/results")
-# sets node.path = /results/{rule_name}/{folder_hash}/{filename}
+# sets node.path = /results/{rule_name}/{fingerprint}/{filename}
 ```
 
 Two-level hashing:
 
-- **`_folder_hash(node)`** — 8-char hash of the rule call (rule name + command + config + parent fingerprints). Shared by all co-outputs of the same call. Names the output directory. Command string included so rule code changes invalidate the cache.
-- **`_node_key(node)`** — `rule_name/folder_hash/filename`. Unique per node including co-outputs. Used as the DAG dict key.
+- **`_call_fingerprint(node)`** — 16-char hex hash of the rule call (rule name + command + config + parent fingerprints + Inputs/Outputs types). Shared by all co-outputs of the same call. Names the output directory. Constraints intentionally excluded: they describe execution resources, not the computation itself.
+- **`_node_key(node)`** — `rule_name/fingerprint/filename`. Unique per node including co-outputs. Used as the DAG dict key.
 
-Deterministic: same DAG + same root inputs → same paths. Different inputs → different folder_hash → different directory → cache miss.
+Deterministic: same DAG + same root inputs → same paths. Different inputs → different fingerprint → different directory → cache miss.
 
 ```python
 node.path.exists()  # True → already computed for these inputs (cache hit)
@@ -247,8 +247,8 @@ resolve_command(bam_node)
 ```
 src/necroflow/
   dag.py        — Node, NodeState, NodeType, Inputs, Outputs, Constraints, Rules,
-                  resolve_paths, resolve_command, write_dependencies, check_cache,
-                  classify_nodes, _call_fingerprint, _folder_hash, _node_key,
+                  resolve_paths, resolve_command, write_dependencies,
+                  classify_nodes, _call_fingerprint, _content_hash, _node_key,
                   _output_mtime, _accumulated_config
   pipeline.py   — _GraphBase (incl. save()), Pipeline, DAG, _sinks, _label, _render_connector
   executor.py   — execute (accepts any _GraphBase), _run_node, _node_threads,
@@ -274,14 +274,20 @@ tests/
   test_state_db.py       — StateDB unit tests + crash/fail/interrupt/retry integration tests
 ```
 
-### `dependencies.toml` — per-output provenance (`src/necroflow/dag.py`)
+### `.rip/` metadata — per-output provenance and content hashes (`src/necroflow/dag.py`)
 
-Each output folder gets a `dependencies.toml` recording the flat accumulated config from all
-ancestors. The filesystem is the database; no SQLite/LMDB needed.
+Each output folder (`outdir/{rule}/{fingerprint}/`) contains a `.rip/` subdirectory written
+after each successful job:
+
+- **`dependencies.toml`** — flat accumulated config from all ancestors; the full provenance record.
+- **`{filename}.hash`** — SHA-256 content hash of each co-output file/directory (excluding `.rip/` itself).
+- **`job.log`** — captured stdout/stderr of the job.
+- **`state.db`** — SQLite run-state persistence (at `outdir/.rip/state.db`, not per-output).
 
 ```toml
+# .rip/dependencies.toml
 rule = "sort_bam"
-hash = "4fb08953"
+hash = "4fb08953b0120f5b"
 
 [config]
 path = "/data/sample.fastq.gz"
@@ -289,12 +295,23 @@ ref = "hg38"
 ```
 
 ```python
-check_cache(node)         # True if node.path + dependencies.toml both exist
-write_dependencies(node)  # write after job succeeds
+write_dependencies(node)  # writes dependencies.toml + {filename}.hash for all co-outputs
 ```
 
 `_accumulated_config(node)` traverses strictly upward (ancestors only); assumes config key names
 are unique across the pipeline.
+
+#### STALE detection (`classify_nodes`)
+
+STALE check uses mtime as a fast path, then falls back to content hash:
+
+1. If a parent's mtime ≤ this node's mtime → skip (not newer).
+2. If a parent's mtime > this node's mtime → read `.rip/{filename}.hash`.
+   - If stored hash matches current content → parent re-ran but produced identical output → skip.
+   - Otherwise → mark STALE.
+
+This means a parent that re-ran without changing its output (e.g. a re-linked symlink or a
+recomputed-but-identical file) does not invalidate its children.
 
 ### Parent normalisation in executor (`src/necroflow/executor.py`)
 

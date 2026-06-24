@@ -5,11 +5,11 @@ from necroflow import NodeType, Inputs, Outputs, Rules, Pipeline, DAG
 from necroflow.pipeline import _sinks
 
 
-class A(NodeType): name = "a.txt"
-class B(NodeType): name = "b.txt"
-class C(NodeType): name = "c.txt"
-class D(NodeType): name = "d.txt"
-class E(NodeType): name = "e.txt"
+class A(NodeType): filename = "a.txt"
+class B(NodeType): filename = "b.txt"
+class C(NodeType): filename = "c.txt"
+class D(NodeType): filename = "d.txt"
+class E(NodeType): filename = "e.txt"
 
 
 R = Rules()

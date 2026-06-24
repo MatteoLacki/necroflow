@@ -12,16 +12,16 @@ from pathlib import Path
 from necroflow import DAG, Inputs, Outputs, NodeType, Rules, fifo_scheduler
 
 class Text(NodeType):
-    name = "text.txt"
+    filename = "text.txt"
 
 class Upper(NodeType):
-    name = "upper.txt"
+    filename = "upper.txt"
 
 class Lower(NodeType):
-    name = "lower.txt"
+    filename = "lower.txt"
 
 class Merged(NodeType):
-    name = "merged.txt"
+    filename = "merged.txt"
 
 R = Rules()
 R.register("make_text",  Inputs(word=str),              Outputs(text=Text),     "echo {word} > {text}")

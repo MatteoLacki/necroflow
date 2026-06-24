@@ -4,24 +4,24 @@ import pytest
 from pathlib import Path
 from necroflow import NodeType, Inputs, Outputs, Rules, Pipeline
 from necroflow.dag import (
-    _folder_hash, _node_key, _accumulated_config,
-    resolve_paths, resolve_command, write_dependencies, check_cache,
+    _call_fingerprint, _node_key, _accumulated_config,
+    resolve_paths, resolve_command, write_dependencies,
 )
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
 class Txt(NodeType):
-    name = "out.txt"
+    filename = "out.txt"
 
 class Upper(NodeType):
-    name = "upper.txt"
+    filename = "upper.txt"
 
 class Log(NodeType):
-    name = "log.txt"
+    filename = "log.txt"
 
 class SortedTxt(Txt):
-    name = "sorted.txt"
+    filename = "sorted.txt"
 
 
 R = Rules()
@@ -36,7 +36,7 @@ R.register("sort_txt",       Inputs(txt=SortedTxt),  Outputs(sorted_txt=SortedTx
 def test_resolve_paths_structure(tmp_path):
     txt = R.make_txt(word="hi")
     resolve_paths([txt], tmp_path)
-    assert txt.path == tmp_path / "make_txt" / _folder_hash(txt) / "out.txt"
+    assert txt.path == tmp_path / "make_txt" / _call_fingerprint(txt) / "out.txt"
 
 
 def test_resolve_paths_cooutputs_share_dir(tmp_path):
@@ -53,26 +53,60 @@ def test_resolve_paths_hash_is_16_chars(tmp_path):
     assert len(txt.path.parent.name) == 16
 
 
-# ── hashing ───────────────────────────────────────────────────────────────────
+# ── fingerprinting ────────────────────────────────────────────────────────────
 
-def test_folder_hash_stable():
+def test_fingerprint_stable():
     txt1 = R.make_txt(word="hi")
     txt2 = R.make_txt(word="hi")
-    assert _folder_hash(txt1) == _folder_hash(txt2)
+    assert _call_fingerprint(txt1) == _call_fingerprint(txt2)
 
 
-def test_folder_hash_differs_on_config():
+def test_fingerprint_differs_on_config():
     txt_a = R.make_txt(word="hello")
     txt_b = R.make_txt(word="world")
-    assert _folder_hash(txt_a) != _folder_hash(txt_b)
+    assert _call_fingerprint(txt_a) != _call_fingerprint(txt_b)
 
 
-def test_folder_hash_differs_on_parent():
+def test_fingerprint_differs_on_parent():
     txt_a = R.make_txt(word="hello")
     txt_b = R.make_txt(word="world")
     upper_a, _ = R.to_upper(txt_a, n=1)
     upper_b, _ = R.to_upper(txt_b, n=1)
-    assert _folder_hash(upper_a) != _folder_hash(upper_b)
+    assert _call_fingerprint(upper_a) != _call_fingerprint(upper_b)
+
+
+def test_fingerprint_changes_on_inputs_type_change():
+    """Changing the declared Inputs NodeType must change the fingerprint."""
+    class FastqA(NodeType): pass
+    class FastqB(NodeType): pass
+
+    Ra = Rules()
+    Ra.register("raw", Inputs(path=str), Outputs(fastq=FastqA), "touch {fastq}")
+    Ra.register("align", Inputs(fastq=FastqA, ref=str), Outputs(txt=Txt), "touch {txt}")
+
+    Rb = Rules()
+    Rb.register("raw", Inputs(path=str), Outputs(fastq=FastqB), "touch {fastq}")
+    Rb.register("align", Inputs(fastq=FastqB, ref=str), Outputs(txt=Txt), "touch {txt}")
+
+    bam_a = Ra.align(Ra.raw(path="/d/s.fq"), ref="hg38")
+    bam_b = Rb.align(Rb.raw(path="/d/s.fq"), ref="hg38")
+    assert _call_fingerprint(bam_a) != _call_fingerprint(bam_b)
+
+
+def test_fingerprint_changes_on_outputs_type_change():
+    """Changing the declared Outputs NodeType must change the fingerprint."""
+    class BamA(NodeType): filename = "aligned.bam"
+    class BamB(NodeType): filename = "aligned.bam"
+
+    Ra = Rules()
+    Ra.register("align", Inputs(path=str), Outputs(bam=BamA), "touch {bam}")
+
+    Rb = Rules()
+    Rb.register("align", Inputs(path=str), Outputs(bam=BamB), "touch {bam}")
+
+    bam_a = Ra.align(path="/d/s.fq")
+    bam_b = Rb.align(path="/d/s.fq")
+    assert _call_fingerprint(bam_a) != _call_fingerprint(bam_b)
 
 
 def test_node_key_unique_for_cooutputs():
@@ -158,29 +192,6 @@ def test_write_dependencies_content(tmp_path):
     content = (txt.path.parent / ".rip" / "dependencies.toml").read_text()
     assert "make_txt" in content
     assert "hi" in content
-
-
-def test_check_cache_true(tmp_path):
-    txt = R.make_txt(word="hi")
-    resolve_paths([txt], tmp_path)
-    txt.path.parent.mkdir(parents=True, exist_ok=True)
-    txt.path.touch()
-    write_dependencies(txt)
-    assert check_cache(txt) is True
-
-
-def test_check_cache_false_missing_deps(tmp_path):
-    txt = R.make_txt(word="hi")
-    resolve_paths([txt], tmp_path)
-    txt.path.parent.mkdir(parents=True, exist_ok=True)
-    txt.path.touch()
-    assert check_cache(txt) is False
-
-
-def test_check_cache_false_missing_output(tmp_path):
-    txt = R.make_txt(word="hi")
-    resolve_paths([txt], tmp_path)
-    assert check_cache(txt) is False
 
 
 # ── Inputs/Outputs validation ─────────────────────────────────────────────────

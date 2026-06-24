@@ -4,10 +4,10 @@ from necroflow import NodeType, Inputs, Outputs, Constraints, Rules, Pipeline, D
 from necroflow import fifo_scheduler, connected_component_scheduler
 
 
-class A(NodeType): name = "a.txt"
-class B(NodeType): name = "b.txt"
-class C(NodeType): name = "c.txt"
-class D(NodeType): name = "d.txt"
+class A(NodeType): filename = "a.txt"
+class B(NodeType): filename = "b.txt"
+class C(NodeType): filename = "c.txt"
+class D(NodeType): filename = "d.txt"
 
 
 R = Rules()
@@ -238,7 +238,7 @@ def test_dry_run_shows_stale(tmp_path, caplog):
     P.b = R.make_b(P.a)
     execute(P, tmp_path)
     time.sleep(0.01)
-    P.a.path.touch()
+    P.a.path.write_bytes(b"updated")  # content change → different hash → STALE
     with caplog.at_level(logging.INFO, logger="necroflow"):
         execute(P, tmp_path, dry_run=True)
     assert "STALE" in caplog.text

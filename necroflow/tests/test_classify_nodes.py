@@ -5,7 +5,7 @@ from pathlib import Path
 from necroflow import (
     Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState, classify_nodes,
 )
-from necroflow.dag import _folder_hash, _node_key
+from necroflow.dag import _call_fingerprint, _node_key
 
 
 class Fastq(NodeType): pass
@@ -38,12 +38,12 @@ def test_cooutputs_distinct_node_keys():
     assert _node_key(P.bam) != _node_key(P.log)
 
 
-def test_cooutputs_share_folder_hash():
+def test_cooutputs_share_fingerprint():
     P = make_pipeline()
-    assert _folder_hash(P.bam) == _folder_hash(P.log)
+    assert _call_fingerprint(P.bam) == _call_fingerprint(P.log)
 
 
-def test_command_change_changes_folder_hash():
+def test_command_change_changes_fingerprint():
     R2 = Rules()
     R2.register("raw_fastq", Inputs(path=str), Outputs(fastq=Fastq), "touch {fastq}")
     R2.register("align", Inputs(fastq=Fastq, ref=str), Outputs(bam=Bam),
@@ -56,7 +56,7 @@ def test_command_change_changes_folder_hash():
     P2.bam = R2.align(P2.fastq, ref="hg38")
     P2.sorted = R2.sort_bam(P2.bam)
 
-    assert _folder_hash(P1.bam) != _folder_hash(P2.bam)
+    assert _call_fingerprint(P1.bam) != _call_fingerprint(P2.bam)
 
 
 def test_dag_contains_all_cooutputs(tmp_path):
@@ -103,7 +103,7 @@ def test_stale_direct(tmp_path):
 
     raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
     time.sleep(0.05)
-    raw_node.path.touch()
+    raw_node.path.write_bytes(b"updated content")  # content change → different hash
 
     classify_nodes(dag.nodes, dag.required_nodes)
     align_bam = next(n for n in dag.nodes if n.rule.__name__ == "align" and n.output_name == "bam")
@@ -119,7 +119,7 @@ def test_stale_transitive(tmp_path):
 
     raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
     time.sleep(0.05)
-    raw_node.path.touch()
+    raw_node.path.write_bytes(b"updated content")  # content change → different hash
 
     classify_nodes(dag.nodes, dag.required_nodes)
     sort_node = next(n for n in dag.nodes if n.rule.__name__ == "sort_bam")
@@ -154,7 +154,7 @@ def test_reruns_stale_nodes(tmp_path):
 
     raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
     time.sleep(0.05)
-    raw_node.path.touch()
+    raw_node.path.write_bytes(b"updated content")  # content change → different hash
 
     dag.execute()
 
@@ -176,3 +176,20 @@ def test_skips_up_to_date_on_rerun(tmp_path, capsys):
     dag.execute()
     mtimes_after = {n.output_name: n.path.stat().st_mtime for n in dag.required_nodes}
     assert mtimes_before == mtimes_after
+
+
+def test_content_unchanged_parent_not_stale(tmp_path):
+    """Touch parent (mtime changes, content same) — child must stay UP_TO_DATE."""
+    P = make_pipeline()
+    dag = DAG(outdir=tmp_path)
+    dag.add(P, request=[P.sorted])
+    dag.execute()
+    dag.resolve_paths(tmp_path)
+
+    raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
+    time.sleep(0.05)
+    raw_node.path.touch()  # mtime newer but content unchanged
+
+    classify_nodes(dag.nodes, dag.required_nodes)
+    align_bam = next(n for n in dag.nodes if n.rule.__name__ == "align" and n.output_name == "bam")
+    assert align_bam.state == NodeState.UP_TO_DATE

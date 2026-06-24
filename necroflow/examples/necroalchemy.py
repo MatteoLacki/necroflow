@@ -36,71 +36,71 @@ from necroflow import Constraints, DAG, Inputs, NodeType, Outputs, Pipeline, Rul
 
 class Seed(NodeType):
     """The input word written to disk — starting point for all transforms."""
-    name = "seed.txt"
+    filename = "seed.txt"
 
 class Upper(NodeType):
     """The seed word converted to uppercase."""
-    name = "upper.txt"
+    filename = "upper.txt"
 
 class Lower(NodeType):
     """The seed word converted to lowercase."""
-    name = "lower.txt"
+    filename = "lower.txt"
 
 class Reversed(NodeType):
     """The seed word with characters in reverse order."""
-    name = "rev.txt"
+    filename = "rev.txt"
 
 class Rot13(NodeType):
     """ROT13 cipher applied to the uppercased seed."""
-    name = "rot13.txt"
+    filename = "rot13.txt"
 
 class Repeated(NodeType):
     """The lowercased word repeated n times, one per line."""
-    name = "rep.txt"
+    filename = "rep.txt"
 
 class Merged(NodeType):
     """Uppercase and lowercase variants pasted side by side."""
-    name = "merged.txt"
+    filename = "merged.txt"
 
 class SortedChars(NodeType):
     """Individual characters of the seed, sorted alphabetically."""
-    name = "sorted.txt"
+    filename = "sorted.txt"
 
 class UniqueChars(NodeType):
     """Deduplicated character set derived from the sorted character list."""
-    name = "unique.txt"
+    filename = "unique.txt"
 
 class Combined(NodeType):
     """All four transform outputs concatenated into one blob."""
-    name = "combined.txt"
+    filename = "combined.txt"
 
 class Stats(NodeType):
     """Byte count of the combined blob."""
-    name = "stats.txt"
+    filename = "stats.txt"
 
 class Audit(NodeType):
     """Unique-character count of the combined blob."""
-    name = "audit.txt"
+    filename = "audit.txt"
 
 class UpperRot(NodeType):
     """ROT13 output re-uppercased for maximum shouting energy."""
-    name = "upper_rot.txt"
+    filename = "upper_rot.txt"
 
 class SortedCombined(NodeType):
     """Combined blob with lines sorted lexicographically."""
-    name = "sorted_combined.txt"
+    filename = "sorted_combined.txt"
 
 class LineCounts(NodeType):
     """Total line count of the combined blob."""
-    name = "lines.txt"
+    filename = "lines.txt"
 
 class FinalMix(NodeType):
     """Shouted ROT13 and sorted blob concatenated."""
-    name = "final_mix.txt"
+    filename = "final_mix.txt"
 
 class GrandSummary(NodeType):
     """Final assembly of stats, line counts, and the final mix."""
-    name = "summary.txt"
+    filename = "summary.txt"
 
 # ── rules (16 rules → 17 nodes) ───────────────────────────────────────────────
 # Each command sleeps 1-3 s so the scheduler and parallelism are visible.
