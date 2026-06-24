@@ -2,7 +2,7 @@
 
 <p align="center"><img src="images/logo.png" width="200" alt="necroflow logo"></p>
 
-[![CI](https://github.com/MatteoLacki/necroflow/actions/workflows/ci.yml/badge.svg)](https://github.com/MatteoLacki/necroflow/actions/workflows/ci.yml)
+[![CI](https://github.com/MatteoLacki/necroflow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MatteoLacki/necroflow/actions/workflows/ci.yml)
 
 Python pipeline framework inspired by Snakemake. Define rules, wire them into pipelines, run with automatic parallelism and caching.
 
