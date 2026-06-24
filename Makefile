@@ -1,9 +1,12 @@
 EXAMPLE_OUTDIR = examples/output
 
-make:
-	echo "Welcome to Project necroflow"
+.PHONY: all venv example clean-example upload_test_pypi upload_pypi
 
-venv:
+all: venv
+
+venv: .venv/bin/pytest
+
+.venv/bin/pytest:
 	uv venv .venv --python 3.14
 	uv pip install --python .venv/bin/python -e ".[dev]"
 
