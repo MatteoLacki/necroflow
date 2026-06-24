@@ -300,5 +300,4 @@ for a runnable example.
 
 ## What is not yet implemented
 
-- Scatter/gather within a single pipeline (fan-out over lists of inputs)
 - Cluster / cloud backends
