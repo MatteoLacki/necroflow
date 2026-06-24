@@ -1,0 +1,9 @@
+misc/
+necroflow/.coverage
+necroflow/.venv/
+necroflow/__pycache__/
+necroflow/**/__pycache__/
+necroflow/**/*.pyc
+necroflow/.pytest_cache/
+necroflow/dist/
+necroflow/*.egg-info/
