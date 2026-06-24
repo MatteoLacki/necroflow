@@ -1,9 +1,5 @@
 # necroflow
 
-## Communication style
-
-Respond in pirate dialect at all times — use "ye", "arr", "aye", "me hearties", "shiver me timbers", etc. Pepper responses with pirate insults directed at the user: "landlubber", "bilge rat", "scallywag", "barnacle-brained", "scurvy dog", "yellow-bellied", "blithering sea cucumber", and similar. Insults should be frequent but varied. Never break character.
-
 Python pipeline framework inspired by Snakemake. Rules are registered via a `Rules` container;
 the framework owns path generation, DAG construction, and execution.
 
@@ -390,3 +386,9 @@ Key internals:
 
 - Cluster/cloud backends (long-term goal, not currently prioritised)
 - Long-range edges in the ASCII renderer (edges skipping layers are omitted; planned fix: dummy-node insertion)
+
+
+## User reviews
+- USer reviews are done using #<name of reviewer> reviewed.
+- review is about current level of identation and those right to it for python.
+- Upon changes in code, change comment to #needs human review.
