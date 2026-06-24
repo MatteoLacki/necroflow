@@ -6,6 +6,8 @@
 
 Python pipeline framework inspired by Snakemake. Define rules, wire them into pipelines, run with automatic parallelism and caching.
 
+A local browser GUI for visualising pipelines and launching runs is available at [necroflow_gui](https://github.com/MatteoLacki/necroflow_gui).
+
 ## Core ideas
 
 - **Rules** describe how to produce outputs from inputs — shell command templates with typed I/O.
