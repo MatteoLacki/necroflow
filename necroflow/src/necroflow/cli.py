@@ -11,7 +11,7 @@ from typing import Callable
 import tomlkit
 
 from necroflow import DAG
-from necroflow.dag import resolve_paths
+from necroflow.dag import parse_resource, resolve_paths
 from necroflow.grid import iter_configs
 from necroflow.pipeline import _sinks
 
@@ -113,11 +113,19 @@ def main(argv=None) -> None:
         help="Output directory.",
     )
     parser.add_argument(
-        "--threads", "-t",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Maximum parallel threads (default: cpu count).",
+        "-c",
+        dest="cores",
+        default="all",
+        metavar="N|all",
+        help="Thread cap: integer or 'all' (default: all available CPUs). E.g. -c16 or -call.",
+    )
+    parser.add_argument(
+        "--constraint",
+        action="append",
+        default=[],
+        dest="constraints",
+        metavar="KEY=VALUE",
+        help="Resource cap, e.g. --constraint ram=300Mi. Repeatable. Overrides -c for threads.",
     )
     parser.add_argument(
         "--keep-going", "-k",
@@ -160,8 +168,16 @@ def main(argv=None) -> None:
             dag.add(P, request=request)
             combos.append((label, P, request))
 
+    cores = args.cores.strip()
+    resource_caps = {"threads": os.cpu_count() or 1 if cores.lower() == "all" else int(cores)}
+    for kv in args.constraints:
+        if "=" not in kv:
+            raise SystemExit(f"error: --constraint expects KEY=VALUE, got {kv!r}")
+        k, v = kv.split("=", 1)
+        resource_caps[k.strip()] = parse_resource(v.strip())
+
     dag.execute(
-        total_threads=args.threads,
+        resource_caps=resource_caps,
         keep_going=args.keep_going,
         autoclean=args.autoclean,
         dry_run=args.dry_run,

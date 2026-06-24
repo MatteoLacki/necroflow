@@ -123,21 +123,32 @@ Each output lives at `outdir/{rule}/{hash16}/{filename}`. The 16-character hash 
 
 ## Parallelism and scheduling
 
-`execute()` runs nodes in parallel up to the available CPU count (or `total_threads=N`). Thread budgets from `Constraints(threads=N)` are respected.
+`execute()` runs nodes in parallel subject to resource caps. By default the thread cap is all available CPUs. Declare per-job requirements with `Constraints`; set global caps via `resource_caps` (Python API) or CLI flags.
+
+```python
+R.register("align",
+    Inputs(fastq=Fastq, ref=str),
+    Outputs(bam=Bam),
+    "bwa mem {ref} {fastq} > {bam}",
+    Constraints(threads=4, ram="8Gi"))
+
+dag.execute(resource_caps={"threads": 16, "ram": parse_resource("64Gi")})
+```
+
+Resource values accept SI (`K M G T P` = powers of 1000) and binary (`Ki Mi Gi Ti Pi` = powers of 1024) suffixes — e.g. `"8Gi"` is 8 GiB, `"8G"` is 8 GB. A job whose requirement exceeds the cap still runs solo when nothing else is running.
 
 By default the scheduler prioritises nodes from the **smallest connected component** of remaining work — this tends to finish whole samples before starting new ones, keeping memory pressure low.
 
 ```python
 from necroflow import fifo_scheduler
 
-dag.execute(total_threads=16, scheduler=fifo_scheduler)  # topological order instead
+dag.execute(resource_caps={"threads": 16}, scheduler=fifo_scheduler)  # topological order instead
 ```
 
 Custom schedulers:
 
 ```python
 def my_scheduler(ready, remaining):
-    # return ready nodes in desired priority order
     return sorted(ready, key=lambda n: n.rule.constraints.get("threads", 1), reverse=True)
 
 dag.execute(scheduler=my_scheduler)
@@ -208,7 +219,20 @@ necroflow --outdir /results --autoclean job.toml   # job.toml contains ".pipelin
 necroflow ships a `necroflow` command. Each positional argument is a **job TOML** — a self-contained file that specifies the pipeline factory, optional requested outputs, and user config params.
 
 ```bash
-necroflow --outdir /results [--threads 16] [--keep-going] [--autoclean] [--dry-run] JOB.toml [JOB2.toml ...]
+necroflow --outdir /results [-c N|all] [--constraint KEY=VALUE ...] \
+          [--keep-going] [--autoclean] [--dry-run] JOB.toml [JOB2.toml ...]
+```
+
+| Flag | Meaning |
+|---|---|
+| `-c N` / `-call` | Thread cap — integer or `all` (default: all CPUs). |
+| `--constraint KEY=VALUE` | Additional resource cap. Repeatable. Accepts SI/binary suffixes. |
+| `--keep-going` / `-k` | Continue past failures; collect all errors at the end. |
+| `--autoclean` | Delete orphan and intermediate outputs. |
+| `--dry-run` / `-n` | Show what would run without executing. |
+
+```bash
+necroflow --outdir /results -c8 --constraint ram=64Gi job.toml
 ```
 
 ### Job TOML format
@@ -226,17 +250,6 @@ sample = "NA12878"
 ```
 
 Keys starting with `.` are necroflow metadata — stripped before the dict reaches the factory. They never appear in node configs or affect output hashes. User config can freely use any name, including `pipeline` or `request`.
-
-The factory function receives only user config:
-
-```python
-# factory.py
-def factory(cfg: dict) -> Pipeline:
-    P = Pipeline()
-    P.bam = R.align(ref=cfg["ref"], sample=cfg["sample"])
-    P.counts = R.count(P.bam)
-    return P
-```
 
 ### Parameter grids
 

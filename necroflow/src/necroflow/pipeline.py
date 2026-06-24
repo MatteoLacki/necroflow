@@ -264,6 +264,6 @@ class DAG(_GraphBase):
     def _node_color(self, nid: int) -> str:
         return "orange" if nid in {id(n) for n in self.required_nodes} else "steelblue"
 
-    def execute(self, total_threads=None, scheduler=None, keep_going=False, autoclean=False, dry_run=False) -> None:
+    def execute(self, resource_caps=None, scheduler=None, keep_going=False, autoclean=False, dry_run=False) -> None:
         from necroflow.executor import execute
-        execute(self, self.outdir, total_threads, scheduler, keep_going, autoclean, dry_run)
+        execute(self, self.outdir, resource_caps, scheduler, keep_going, autoclean, dry_run)

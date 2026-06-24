@@ -11,6 +11,7 @@ from necroflow.dag import (
     NodeState,
     _node_key,
     classify_nodes,
+    parse_resource,
     resolve_command,
     write_dependencies,
 )
@@ -89,17 +90,21 @@ def _cleanup_parents(node, children: dict, final_ids: set, active_id_set: set) -
 def execute(
     pipeline: _GraphBase,
     outdir,
-    total_threads: int | None = None,
+    resource_caps: dict[str, int] | None = None,
     scheduler: Scheduler | None = None,
     keep_going: bool = False,
     autoclean: bool = False,
     dry_run: bool = False,
 ) -> None:
-    """Run required nodes in the pipeline, respecting the thread budget.
+    """Run required nodes in the pipeline, respecting declared resource caps.
 
     Classifies each node as Missing/Stale/UpToDate/Orphan before execution.
     Skips UpToDate and Orphan nodes. Writes dependencies.toml after each
     successful job.
+
+    resource_caps: {resource: int} upper bounds (e.g. {"threads": 8, "ram": 4*2**30}).
+    Defaults to {"threads": os.cpu_count()}. Resources not in caps are unconstrained.
+    A job whose requirements exceed a cap still runs solo when nothing else is running.
 
     keep_going=False (default): raise on the first failure.
     keep_going=True: continue running independent nodes; raise ExceptionGroup
@@ -108,7 +113,9 @@ def execute(
     _logger.setup()
     if scheduler is None:
         scheduler = connected_component_scheduler
-    total_threads = total_threads or os.cpu_count() or 1
+    caps: dict[str, int] = {"threads": os.cpu_count() or 1}
+    if resource_caps:
+        caps.update(resource_caps)
     pipeline.resolve_paths(outdir)
     nodes = list(pipeline.nodes)
 
@@ -165,8 +172,8 @@ def execute(
         _logger.dry_run_summary(n_would_run, n_up_to_date)
         return
 
-    running: dict = {}  # future -> (node, start_time, threads_used)
-    used_threads = 0
+    running: dict = {}  # future -> (node, start_time, job_resources)
+    running_resources: dict[str, int] = {}
     errors: list = []  # exceptions collected in keep_going mode
     n_run = n_skipped = n_failed = 0
 
@@ -194,16 +201,23 @@ def execute(
                     coouts = [c for c in node.output_nodes.values() if id(c) in active_ids and c is not node]
                     if any(c.state in (NodeState.RUNNING, NodeState.UP_TO_DATE) for c in coouts):
                         continue
-                    t = _node_threads(node)
-                    if used_threads + t <= total_threads or used_threads == 0:
+                    job_res = _node_resources(node)
+                    # run if all capped resources have room, or nothing else is running (solo fallback)
+                    can_run = (not running) or all(
+                        running_resources.get(r, 0) + v <= caps[r]
+                        for r, v in job_res.items()
+                        if r in caps
+                    )
+                    if can_run:
                         log_path = node.path.parent / ".rip" / "job.log"
                         db.mark_running(_node_key(node))
                         node.state = NodeState.RUNNING
                         _logger.job_start(node)
                         start = time.monotonic()
                         future = pool.submit(_run_node, node, log_path)
-                        running[future] = (node, start, t)
-                        used_threads += t
+                        running[future] = (node, start, job_res)
+                        for r, v in job_res.items():
+                            running_resources[r] = running_resources.get(r, 0) + v
 
                 if not running:
                     break
@@ -212,7 +226,7 @@ def execute(
                     running, return_when=concurrent.futures.FIRST_COMPLETED
                 )
                 for f in done_fs:
-                    node, start, t = running.pop(f)
+                    node, start, job_res = running.pop(f)
                     elapsed = time.monotonic() - start
                     try:
                         f.result()
@@ -254,7 +268,8 @@ def execute(
                         if not keep_going:
                             raise
                         errors.append(exc)
-                    used_threads -= t
+                    for r, v in job_res.items():
+                        running_resources[r] -= v
     finally:
         db.close()
         _logger.summary(n_run, n_skipped, n_failed, n_cleaned)
@@ -266,10 +281,12 @@ def execute(
         )
 
 
-def _node_threads(node) -> int:
-    if node.rule and node.rule.constraints:
-        return node.rule.constraints.get("threads", 1)
-    return 1
+def _node_resources(node) -> dict[str, int]:
+    """Parse all constraint values for a node. threads defaults to 1 if not declared."""
+    raw = node.rule.constraints if node.rule and node.rule.constraints else {}
+    result = {k: parse_resource(v) for k, v in raw.items()}
+    result.setdefault("threads", 1)
+    return result
 
 
 def _run_node(node, log_path) -> None:

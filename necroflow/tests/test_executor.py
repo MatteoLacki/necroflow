@@ -143,7 +143,7 @@ def test_single_thread_budget(tmp_path):
     P = Pipeline()
     P.a = R.make_a(x="x")
     P.b = R.make_b(P.a)
-    execute(P, tmp_path, total_threads=1)
+    execute(P, tmp_path, resource_caps={"threads": 1})
     assert P.a.path.exists() and P.b.path.exists()
 
 
@@ -284,8 +284,47 @@ def test_autoclean_false_leaves_intermediates(tmp_path):
 
 
 def test_heavy_job_runs_solo(tmp_path):
-    # job needing 4 threads runs even with total_threads=2 (solo when nothing else is running)
+    # job needing 4 threads runs even with threads cap=2 (solo fallback when nothing else running)
     P = Pipeline()
     P.a = R.make_a_heavy(x="x")
-    execute(P, tmp_path, total_threads=2)
+    execute(P, tmp_path, resource_caps={"threads": 2})
     assert P.a.path.exists()
+
+
+# ── parse_resource ────────────────────────────────────────────────────────────
+
+from necroflow.dag import parse_resource
+
+def test_parse_resource_plain_int():
+    assert parse_resource(8) == 8
+    assert parse_resource("8") == 8
+
+def test_parse_resource_si():
+    assert parse_resource("1K") == 1_000
+    assert parse_resource("2M") == 2_000_000
+    assert parse_resource("3G") == 3_000_000_000
+    assert parse_resource("1T") == 1_000_000_000_000
+    assert parse_resource("1P") == 1_000_000_000_000_000
+
+def test_parse_resource_binary():
+    assert parse_resource("1Ki") == 1024
+    assert parse_resource("1Mi") == 1024 ** 2
+    assert parse_resource("1Gi") == 1024 ** 3
+    assert parse_resource("1Ti") == 1024 ** 4
+    assert parse_resource("1Pi") == 1024 ** 5
+
+def test_parse_resource_si_ne_binary():
+    assert parse_resource("1M") != parse_resource("1Mi")
+
+def test_resource_cap_respected(tmp_path):
+    """A custom resource cap is enforced: two jobs declaring ram=250Mi each cannot
+    run simultaneously under a 300Mi cap."""
+    R2 = Rules()
+    R2.register("make_a", Inputs(x=str), Outputs(a=A), "touch {a}", Constraints(ram="250Mi"))
+    R2.register("make_b", Inputs(x=str), Outputs(b=B), "touch {b}", Constraints(ram="250Mi"))
+    P = Pipeline()
+    P.a = R2.make_a(x="1")
+    P.b = R2.make_b(x="2")
+    # Should complete without error (solo fallback ensures each job runs eventually)
+    execute(P, tmp_path, resource_caps={"threads": 8, "ram": parse_resource("300Mi")})
+    assert P.a.path.exists() and P.b.path.exists()

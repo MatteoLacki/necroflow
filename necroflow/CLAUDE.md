@@ -51,14 +51,15 @@ Requires `resolve_paths()` to have been called first.
 ### Executor (`src/necroflow/executor.py`)
 
 ```python
-execute(graph, outdir, total_threads=None, scheduler=None, keep_going=False, autoclean=False)
+execute(graph, outdir, resource_caps=None, scheduler=None, keep_going=False, autoclean=False)
 ```
 
 Accepts any `_GraphBase` (Pipeline or DAG). Calls `graph.resolve_paths(outdir)` and `classify_nodes()` internally, then runs only the required subgraph:
 
 - Parallel execution via `concurrent.futures.ThreadPoolExecutor`
-- Thread budget: sum of `constraints.threads` across running jobs ≤ `total_threads` (default `os.cpu_count()`)
-- A job whose thread requirement exceeds the budget runs solo when nothing else is running
+- `resource_caps`: `{resource: int}` upper bounds; defaults to `{"threads": os.cpu_count()}`. Resources absent from `resource_caps` are unconstrained.
+- `threads` in `Constraints` defaults to 1 if not declared — so unconstrained jobs still count against the thread cap.
+- A job whose requirements exceed a cap still runs solo when nothing else is running.
 - UP_TO_DATE and ORPHAN nodes skipped; state transitions MISSING/STALE → READY → RUNNING → UP_TO_DATE/FAILED
 - **Co-outputs** (same rule call, same hash dir) are submitted once; all siblings are marked UP_TO_DATE when the representative node completes
 - After a successful job, `node.path.exists()` is checked — `RuntimeError` if the command exited 0 but the declared output is absent
@@ -69,12 +70,13 @@ Accepts any `_GraphBase` (Pipeline or DAG). Calls `graph.resolve_paths(outdir)` 
 - `autoclean=True`: (1) delete ORPHAN outputs before execution; (2) during execution, delete each intermediate node's output as soon as all its children are UP_TO_DATE (frees disk space progressively)
 
 ```python
-execute(P, "/results")                          # single pipeline, all CPUs
-execute(P, "/results", total_threads=8)
-dag.execute()                                   # DAG uses dag.outdir
+execute(P, "/results")                                          # single pipeline, all CPUs
+execute(P, "/results", resource_caps={"threads": 8})
+execute(P, "/results", resource_caps={"threads": 8, "ram": 64 * 2**30})
+dag.execute()                                                   # DAG uses dag.outdir
 dag.execute(scheduler=fifo_scheduler)
-dag.execute(keep_going=True)                    # continue past failures
-dag.execute(autoclean=True)                     # delete orphans + intermediates when done
+dag.execute(keep_going=True)                                    # continue past failures
+dag.execute(autoclean=True)                                     # delete orphans + intermediates when done
 ```
 
 #### Scheduler protocol
@@ -247,7 +249,7 @@ resolve_command(bam_node)
 ```
 src/necroflow/
   dag.py        — Node, NodeState, NodeType, Inputs, Outputs, Constraints, Rules,
-                  resolve_paths, resolve_command, write_dependencies,
+                  parse_resource, resolve_paths, resolve_command, write_dependencies,
                   classify_nodes, _call_fingerprint, _content_hash, _node_key,
                   _output_mtime, _accumulated_config
   pipeline.py   — _GraphBase (incl. save()), Pipeline, DAG, _sinks, _label, _render_connector
