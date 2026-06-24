@@ -1,5 +1,4 @@
 [![CI](https://github.com/MatteoLacki/necroflow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MatteoLacki/necroflow/actions/workflows/ci.yml)
-[![Coverage](https://codecov.io/gh/MatteoLacki/necroflow/branch/main/graph/badge.svg)](https://codecov.io/gh/MatteoLacki/necroflow)
 [![PyPI](https://img.shields.io/pypi/v/necroflow)](https://pypi.org/project/necroflow/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
