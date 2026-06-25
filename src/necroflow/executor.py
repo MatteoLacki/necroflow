@@ -8,7 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from necroflow.dag import (
     NodeState,
@@ -16,60 +16,12 @@ from necroflow.dag import (
     resolve_command,
     write_dependencies,
 )
+from necroflow.schedulers import Scheduler, connected_component_scheduler, fifo_scheduler
 from necroflow import logger as _logger
 
 if TYPE_CHECKING:
     from necroflow.dag import Node
     from necroflow.pipeline import _GraphBase
-
-# Scheduler protocol:
-#   scheduler(ready, remaining) -> list[Node]
-# ready     -- nodes whose parents are all done, not yet running
-# remaining -- all not-yet-done, not-yet-running nodes (superset of ready)
-# Returns ready nodes in priority order; executor submits from the front.
-Scheduler = Callable[["list[Node]", "list[Node]"], "list[Node]"]
-
-
-def fifo_scheduler(ready: list, remaining: list) -> list:
-    """Submit ready nodes in topological (registration) order."""
-    return ready
-
-
-def iter_connected_components(nodes: list):
-    """Yield each connected component of nodes as a list (undirected parent↔child edges)."""
-    node_keys = {n.key for n in nodes}
-    adj: dict[str, list] = {n.key: [] for n in nodes}
-    for n in nodes:
-        for p in n.parents:
-            if p.key in node_keys:
-                adj[n.key].append(p)
-                adj[p.key].append(n)
-
-    visited: set[str] = set()
-    key_to_node = {n.key: n for n in nodes}
-    for n in nodes:
-        if n.key in visited:
-            continue
-        frontier = [n]
-        component = []
-        while frontier:
-            cur = frontier.pop()
-            if cur.key in visited:
-                continue
-            visited.add(cur.key)
-            component.append(key_to_node[cur.key])
-            frontier.extend(nb for nb in adj[cur.key] if nb.key not in visited)
-        yield component
-
-
-def connected_component_scheduler(ready: list, remaining: list) -> list:
-    """Prioritise nodes from the smallest connected component of remaining work."""
-    node_to_size: dict[str, int] = {}
-    for component in iter_connected_components(remaining):
-        size = len(component)
-        for n in component:
-            node_to_size[n.key] = size
-    return sorted(ready, key=lambda n: node_to_size.get(n.key, 0))
 
 
 @contextmanager

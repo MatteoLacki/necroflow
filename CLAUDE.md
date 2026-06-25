@@ -104,11 +104,11 @@ Fastq("label")  # → Node(output_name="label", node_type=Fastq)
 
 `node.node_type` is the class itself. Subtype checks use `issubclass`.
 
-### Node (`src/necroflow/dag.py`)
+### Node (`src/necroflow/nodes.py`)
 
 Dataclass representing a pipeline value. Fields:
 
-- `.rule` — wrapper callable that produced it (carries `.constraints`, `.inputs`, `.outputs`, `.command`)
+- `.rule` — `Rule` object that produced it (carries `.constraints`, `.inputs`, `.outputs`, `.command`, `.resources`)
 - `.parents` — list of input `Node`s
 - `.config` — dict of keyword args passed at call time
 - `.output_name` — string label set from `Outputs` kwargs
@@ -119,7 +119,14 @@ Dataclass representing a pipeline value. Fields:
 - `.path` — `pathlib.Path` set by `resolve_paths()`
 - `.state` — `NodeState | None` set by `classify_nodes()`
 
-### `Inputs`, `Outputs`, `Constraints` (`src/necroflow/dag.py`)
+State file methods (path must be set before calling):
+
+- `.state_file` — `Path` to `node.path.parent / ".rip" / "state"`
+- `.is_compromised` — True if state file contains `running`, `failed`, or `interrupted`
+- `.mark_running()` — write `"running"` to state file (creates `.rip/` dir if needed)
+- `.mark_done(state)` — overwrite state file with `"up_to_date"` / `"failed"` / `"interrupted"`
+
+### `Inputs`, `Outputs`, `Constraints`, `Rule` (`src/necroflow/rules.py`)
 
 Helper classes for rule registration:
 
@@ -129,7 +136,7 @@ Outputs(bam=Bam, log=Log)         # named outputs; kwargs become output_name on 
 Constraints(threads=4, memory="8G")  # scheduler resources
 ```
 
-### `Rules` container (`src/necroflow/dag.py`)
+### `Rules` container (`src/necroflow/rules.py`)
 
 Holds registered rules. Names must be unique. Each registered rule becomes a callable attribute.
 
@@ -179,7 +186,7 @@ def basic_pipeline(config, R):
 
 #### `DAG` — multi-pipeline aggregator
 
-Stores nodes by `_node_key` (= `rule_name/fingerprint/filename`). Deduplicates shared upstream
+Stores nodes by `node.key` (= `rule_name/fingerprint/filename`). Deduplicates shared upstream
 computations across pipelines automatically. Co-outputs of the same rule call share a directory
 (same fingerprint) but have distinct keys (different filename). Tracks a required set (target nodes).
 
@@ -216,8 +223,8 @@ P.resolve_paths("/results")
 
 Two-level hashing:
 
-- **`_call_fingerprint(node)`** — 16-char hex hash of the rule call (rule name + command + config + parent fingerprints + Inputs/Outputs types). Shared by all co-outputs of the same call. Names the output directory. Constraints intentionally excluded: they describe execution resources, not the computation itself.
-- **`_node_key(node)`** — `rule_name/fingerprint/filename`. Unique per node including co-outputs. Used as the DAG dict key.
+- **`node.fingerprint`** — 16-char hex hash of the rule call (rule name + command + config + parent fingerprints + Inputs/Outputs types). Shared by all co-outputs of the same call. Names the output directory. Constraints intentionally excluded: they describe execution resources, not the computation itself.
+- **`node.key`** — `rule_name/fingerprint/filename`. Unique per node including co-outputs. Used as the DAG dict key.
 
 Deterministic: same DAG + same root inputs → same paths. Different inputs → different fingerprint → different directory → cache miss.
 
@@ -244,15 +251,20 @@ resolve_command(bam_node)
 
 ```
 src/necroflow/
-  dag.py        — Node, NodeState, NodeType, Inputs, Outputs, Constraints, Rules,
-                  parse_resource, resolve_paths, resolve_command, write_dependencies,
-                  classify_nodes, _call_fingerprint, _content_hash, _node_key,
-                  _output_mtime, _accumulated_config
-  pipeline.py   — _GraphBase (incl. save()), Pipeline, DAG, _sinks, _label, _render_connector
-  executor.py   — execute (accepts any _GraphBase), _run_node, _node_threads,
-                  fifo_scheduler, connected_component_scheduler, iter_connected_components;
-                  _acquire_lock, _mark_running, _mark_done, _is_compromised (per-node state files);
-                  parent-normalisation step before classify_nodes (see note below)
+  nodes.py      — Node (dataclass), NodeState, NodeType/NodeTypeMeta, _topo_sort, _is_nodetype,
+                  iter_connected_components;
+                  Node.state_file, .is_compromised, .mark_running(), .mark_done() (per-node state)
+  rules.py      — Inputs, Outputs, Constraints, Rule (with .resources property), Rules;
+                  parse_resource + SI/binary suffix tables
+  schedulers.py — Scheduler type alias, fifo_scheduler, connected_component_scheduler
+  dag.py        — resolve_paths, resolve_command, write_dependencies, classify_nodes,
+                  _content_hash, _output_mtime, _accumulated_config;
+                  re-exports parse_resource from rules.py
+  pipeline.py   — _GraphBase (incl. save()), Pipeline, DAG (_sinks, _label, _render_connector);
+                  DAG.execute() forwards **kwargs to executor.execute()
+  executor.py   — execute (accepts any _GraphBase), _run_node;
+                  _acquire_lock (@contextmanager, fcntl.flock),
+                  _prepare_active, _promote_states, _on_job_done
   logger.py     — thread-safe logging: job_start/done/failed/error/output, summary
   grid.py       — TOML __grid expansion (vendored from snakemakeconfigs) + iter_configs()
   cli.py        — necroflow CLI entry point; _load_factory, _create_link_outputs

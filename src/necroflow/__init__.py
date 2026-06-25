@@ -9,7 +9,9 @@ from necroflow.dag import (
 )
 from necroflow.rules import Inputs, Outputs, Constraints, Rules
 from necroflow.pipeline import Pipeline, DAG
-from necroflow.executor import execute, fifo_scheduler, connected_component_scheduler
+from necroflow.executor import execute
+from necroflow.schedulers import fifo_scheduler, connected_component_scheduler
+from necroflow.nodes import iter_connected_components
 
 __all__ = [
     "Node",
@@ -29,4 +31,5 @@ __all__ = [
     "execute",
     "fifo_scheduler",
     "connected_component_scheduler",
+    "iter_connected_components",
 ]
