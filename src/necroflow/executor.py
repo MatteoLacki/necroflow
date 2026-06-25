@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Callable
 from necroflow.dag import (
     NodeState,
     classify_nodes,
-    parse_resource,
     resolve_command,
     write_dependencies,
 )
@@ -72,9 +71,6 @@ def connected_component_scheduler(ready: list, remaining: list) -> list:
     return sorted(ready, key=lambda n: node_to_size.get(n.key, 0))
 
 
-_COMPROMISED_STATES = {"running", "failed", "interrupted"}
-
-
 def _acquire_lock(outdir: Path):
     """Acquire an exclusive fcntl lock on outdir/.rip/necroflow.lock.
 
@@ -98,26 +94,6 @@ def _acquire_lock(outdir: Path):
             f"delete the stale lock manually: {lock_path}"
         )
     return fh
-
-
-def _state_file(node) -> Path:
-    return node.path.parent / ".rip" / "state"
-
-
-def _mark_running(node) -> None:
-    sf = _state_file(node)
-    sf.parent.mkdir(parents=True, exist_ok=True)
-    sf.write_text("running")
-
-
-def _mark_done(node, state: str) -> None:
-    _state_file(node).write_text(state)
-
-
-def _is_compromised(node) -> bool:
-    """True if node's last recorded state was running, failed, or interrupted."""
-    sf = _state_file(node)
-    return sf.exists() and sf.read_text().strip() in _COMPROMISED_STATES
 
 
 def _cleanup_parents(node, children: dict, final_keys: set, active_keys: set) -> int:
@@ -209,7 +185,7 @@ def execute(
 
         # reclassify UP_TO_DATE nodes that were compromised in a previous run
         for n in active:
-            if n.state == NodeState.UP_TO_DATE and _is_compromised(n):
+            if n.state == NodeState.UP_TO_DATE and n.is_compromised:
                 n.state = NodeState.STALE
 
         if dry_run:
@@ -250,7 +226,7 @@ def execute(
                         coouts = [c for c in node.output_nodes.values() if c.key in active_keys and c is not node]
                         if any(c.state in (NodeState.RUNNING, NodeState.UP_TO_DATE) for c in coouts):
                             continue
-                        job_res = _node_resources(node)
+                        job_res = node.rule.resources
                         # run if all capped resources have room, or nothing else is running (solo fallback)
                         can_run = (not running) or all(
                             running_resources.get(r, 0) + v <= caps[r]
@@ -259,7 +235,7 @@ def execute(
                         )
                         if can_run:
                             log_path = node.path.parent / ".rip" / "job.log"
-                            _mark_running(node)
+                            node.mark_running()
                             node.state = NodeState.RUNNING
                             _logger.job_start(node)
                             start = time.monotonic()
@@ -287,11 +263,11 @@ def execute(
                             # mark co-outputs that were skipped in the scheduler
                             for conode in node.output_nodes.values():
                                 if conode is not node and conode.key in active_keys and conode.state in _needs_run:
-                                    _mark_done(conode, "up_to_date")
+                                    conode.mark_done("up_to_date")
                                     conode.state = NodeState.UP_TO_DATE
                                     if autoclean:
                                         n_cleaned += _cleanup_parents(conode, children, final_keys, active_keys)
-                            _mark_done(node, "up_to_date")
+                            node.mark_done("up_to_date")
                             node.state = NodeState.UP_TO_DATE
                             _logger.job_done(node, elapsed)
                             n_run += 1
@@ -303,14 +279,14 @@ def execute(
                                 rc = exc.returncode
                                 if rc < 0:
                                     node.state = NodeState.INTERRUPTED
-                                    _mark_done(node, "interrupted")
+                                    node.mark_done("interrupted")
                                 else:
                                     node.state = NodeState.FAILED
-                                    _mark_done(node, "failed")
+                                    node.mark_done("failed")
                                 _logger.job_failed(node, elapsed, rc, log_path)
                             else:
                                 node.state = NodeState.FAILED
-                                _mark_done(node, "failed")
+                                node.mark_done("failed")
                                 _logger.job_error(node, elapsed, exc, log_path)
                             _logger.job_output(log_path)
                             n_failed += 1
@@ -330,13 +306,6 @@ def execute(
             errors,
         )
 
-
-def _node_resources(node) -> dict[str, int]:
-    """Parse all constraint values for a node. threads defaults to 1 if not declared."""
-    raw = node.rule.constraints if node.rule and node.rule.constraints else {}
-    result = {k: parse_resource(v) for k, v in raw.items()}
-    result.setdefault("threads", 1)
-    return result
 
 
 def _run_node(node, log_path) -> None:

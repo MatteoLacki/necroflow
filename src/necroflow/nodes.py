@@ -8,6 +8,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+_COMPROMISED_STATES = {"running", "failed", "interrupted"}
+
 
 class NodeState(Enum):
     MISSING = "missing"
@@ -104,6 +106,21 @@ class Node:
         )
         return f"{rule_name}/{self.fingerprint}/{filename}"
 
+
+    @property
+    def state_file(self) -> Path:
+        return self.path.parent / ".rip" / "state"
+
+    @property
+    def is_compromised(self) -> bool:
+        return self.state_file.exists() and self.state_file.read_text().strip() in _COMPROMISED_STATES
+
+    def mark_running(self) -> None:
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        self.state_file.write_text("running")
+
+    def mark_done(self, state: str) -> None:
+        self.state_file.write_text(state)
 
     @classmethod
     def make_outputs(cls, rule, parents: list[Node], config: dict, command, outputs_specs: dict) -> list[Node]:

@@ -7,7 +7,7 @@ from typing import Any
 import tomlkit
 
 from necroflow.nodes import Node, NodeState, NodeType, NodeTypeMeta, _is_nodetype, _topo_sort
-from necroflow.rules import Inputs, Outputs, Constraints, Rule, Rules
+from necroflow.rules import Inputs, Outputs, Constraints, Rule, Rules, parse_resource
 
 
 
@@ -139,27 +139,5 @@ def resolve_paths(nodes: list[Node], outdir: Path | str) -> None:
     for node in nodes:
         node.path = outdir / node.key
 
-
-_SI_SUFFIXES = {"K": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15}
-_BIN_SUFFIXES = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50}
-
-
-def parse_resource(s: str | int) -> int:
-    """Parse a resource value with optional unit suffix.
-
-    SI (1000-based):     K  M  G  T  P
-    Binary (1024-based): Ki Mi Gi Ti Pi
-    Plain integer string or int passed through as-is.
-    """
-    if isinstance(s, int):
-        return s
-    s = s.strip()
-    for suffix, mult in _BIN_SUFFIXES.items():  # binary first — longer suffixes
-        if s.endswith(suffix):
-            return int(s[: -len(suffix)]) * mult
-    for suffix, mult in _SI_SUFFIXES.items():
-        if s.endswith(suffix):
-            return int(s[: -len(suffix)]) * mult
-    return int(s)
 
 

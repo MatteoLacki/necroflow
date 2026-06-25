@@ -1,10 +1,9 @@
 import time
-from types import SimpleNamespace
 
 import pytest
 
 from necroflow import Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState
-from necroflow.executor import _mark_running, _mark_done, _is_compromised, _state_file
+from necroflow.nodes import Node
 
 
 class A(NodeType): pass
@@ -19,7 +18,9 @@ R.register("signal_c", Inputs(x=str), Outputs(c=C), "kill -TERM $$")
 
 
 def _node(tmp_path, key="rule/fp/out.txt"):
-    return SimpleNamespace(path=tmp_path / key)
+    n = Node()
+    n.path = tmp_path / key
+    return n
 
 
 def simple_dag(tmp_path):
@@ -34,34 +35,34 @@ def simple_dag(tmp_path):
 # --- unit tests for state file helpers ---
 
 def test_fresh_state_not_compromised(tmp_path):
-    assert not _is_compromised(_node(tmp_path))
+    assert not _node(tmp_path).is_compromised
 
 
 def test_mark_running_is_compromised(tmp_path):
     n = _node(tmp_path)
-    _mark_running(n)
-    assert _is_compromised(n)
+    n.mark_running()
+    assert n.is_compromised
 
 
 def test_mark_done_up_to_date_not_compromised(tmp_path):
     n = _node(tmp_path)
-    _mark_running(n)
-    _mark_done(n, "up_to_date")
-    assert not _is_compromised(n)
+    n.mark_running()
+    n.mark_done("up_to_date")
+    assert not n.is_compromised
 
 
 def test_mark_done_failed_is_compromised(tmp_path):
     n = _node(tmp_path)
-    _mark_running(n)
-    _mark_done(n, "failed")
-    assert _is_compromised(n)
+    n.mark_running()
+    n.mark_done("failed")
+    assert n.is_compromised
 
 
 def test_mark_done_interrupted_is_compromised(tmp_path):
     n = _node(tmp_path)
-    _mark_running(n)
-    _mark_done(n, "interrupted")
-    assert _is_compromised(n)
+    n.mark_running()
+    n.mark_done("interrupted")
+    assert n.is_compromised
 
 
 # --- integration: successful run writes up_to_date ---
@@ -72,7 +73,7 @@ def test_successful_run_not_compromised(tmp_path):
 
     dag.resolve_paths(tmp_path)
     for n in dag.nodes:
-        assert not _is_compromised(n)
+        assert not n.is_compromised
 
 
 # --- integration: simulated crash → nodes re-run ---
@@ -85,7 +86,7 @@ def test_simulated_crash_reruns_node(tmp_path):
     b_node = next(n for n in dag.nodes if n.rule.__name__ == "make_b")
 
     # simulate crash: overwrite state file directly
-    _state_file(b_node).write_text("running")
+    b_node.state_file.write_text("running")
 
     mtime_before = b_node.path.stat().st_mtime
     time.sleep(0.05)
@@ -106,7 +107,7 @@ def test_failed_node_state(tmp_path):
 
     c_node = next(n for n in dag.nodes if n.rule.__name__ == "fail_c")
     assert c_node.state == NodeState.FAILED
-    assert _is_compromised(c_node)
+    assert c_node.is_compromised
 
 
 # --- integration: interrupted node (signal) → INTERRUPTED state ---
@@ -122,7 +123,7 @@ def test_interrupted_node_state(tmp_path):
 
     c_node = next(n for n in dag.nodes if n.rule.__name__ == "signal_c")
     assert c_node.state == NodeState.INTERRUPTED
-    assert _is_compromised(c_node)
+    assert c_node.is_compromised
 
 
 # --- integration: retry after failure / interruption ---
