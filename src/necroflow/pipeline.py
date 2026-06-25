@@ -271,6 +271,6 @@ class DAG(_GraphBase):
         required_keys = {n.key for n in self.required_nodes}
         return "orange" if node.key in required_keys else "steelblue"
 
-    def execute(self, resource_caps=None, scheduler=None, keep_going=False, autoclean=False, dry_run=False) -> None:
+    def execute(self, **kwargs) -> None:
         from necroflow.executor import execute
-        execute(self, self.outdir, resource_caps, scheduler, keep_going, autoclean, dry_run)
+        execute(self, self.outdir, **kwargs)

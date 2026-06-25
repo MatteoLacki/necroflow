@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Callable
 
 from necroflow.dag import (
@@ -71,10 +72,10 @@ def connected_component_scheduler(ready: list, remaining: list) -> list:
     return sorted(ready, key=lambda n: node_to_size.get(n.key, 0))
 
 
+@contextmanager
 def _acquire_lock(outdir: Path):
-    """Acquire an exclusive fcntl lock on outdir/.rip/necroflow.lock.
+    """Context manager holding an exclusive fcntl lock on outdir/.rip/necroflow.lock.
 
-    Returns the open file handle — caller must close it to release the lock.
     Raises RuntimeError immediately if another necroflow instance holds the lock.
 
     Only one necroflow instance per outdir is supported. Running two instances
@@ -93,7 +94,10 @@ def _acquire_lock(outdir: Path):
             "Only one instance per outdir is supported. If no instance is running, "
             f"delete the stale lock manually: {lock_path}"
         )
-    return fh
+    try:
+        yield
+    finally:
+        fh.close()
 
 
 def _cleanup_parents(node, children: dict, final_keys: set, active_keys: set) -> int:
@@ -113,11 +117,86 @@ def _cleanup_parents(node, children: dict, final_keys: set, active_keys: set) ->
     return n_cleaned
 
 
+def _prepare_active(pipeline, outdir: Path, autoclean: bool, dry_run: bool):
+    """Resolve paths, classify nodes, clean orphans, reclassify compromised.
+
+    Returns (active, active_keys, n_cleaned):
+      active      — nodes in the required subgraph (state is not None and not ORPHAN)
+      active_keys — set of their keys
+      n_cleaned   — number of orphan outputs deleted (only non-zero when autoclean=True)
+    """
+    pipeline.resolve_paths(outdir)
+    nodes = list(pipeline.nodes)
+
+    # After DAG deduplication, unique nodes may hold parent references to
+    # superseded objects that are never classified.  Remap every parent pointer
+    # to the canonical node (same .key) so classify_nodes and the state
+    # machine operate on a consistent graph.
+    canonical = {n.key: n for n in nodes}
+    for n in nodes:
+        n.parents[:] = [canonical.get(p.key, p) for p in n.parents]
+
+    req = getattr(pipeline, "required_nodes", None)
+    classify_nodes(nodes, req if req is not None else nodes)
+
+    active = [n for n in nodes if n.state is not None and n.state != NodeState.ORPHAN]
+    active_keys = {n.key for n in active}
+
+    n_cleaned = 0
+    if autoclean and not dry_run:
+        for n in nodes:
+            if n.state == NodeState.ORPHAN and n.path is not None and n.path.exists():
+                if n.path.is_dir():
+                    shutil.rmtree(n.path)
+                else:
+                    n.path.unlink()
+                _logger.cleaned(n)
+                n_cleaned += 1
+
+    for n in active:
+        if n.state == NodeState.UP_TO_DATE and n.is_compromised:
+            n.state = NodeState.STALE
+
+    return active, active_keys, n_cleaned
+
+
+def _promote_states(active: list) -> None:
+    """Advance node states one step: MISSING/STALE → READY or FAILED."""
+    blocked = {NodeState.FAILED, NodeState.INTERRUPTED}
+    for n in active:
+        if n.state in (NodeState.MISSING, NodeState.STALE):
+            if any(p.state in blocked for p in n.parents):
+                n.state = NodeState.FAILED
+            elif all(p.state == NodeState.UP_TO_DATE for p in n.parents):
+                n.state = NodeState.READY
+
+
+def _on_job_done(node, active_keys: set, needs_run: set, autoclean: bool,
+                 children: dict, final_keys: set) -> int:
+    """Handle a successful job completion. Returns number of intermediate outputs cleaned."""
+    for conode in node.output_nodes.values():
+        if conode.key in active_keys and not conode.path.exists():
+            raise RuntimeError(f"command succeeded but output missing: {conode.path}")
+    write_dependencies(node)
+    n_cleaned = 0
+    for conode in node.output_nodes.values():
+        if conode is not node and conode.key in active_keys and conode.state in needs_run:
+            conode.mark_done("up_to_date")
+            conode.state = NodeState.UP_TO_DATE
+            if autoclean:
+                n_cleaned += _cleanup_parents(conode, children, final_keys, active_keys)
+    node.mark_done("up_to_date")
+    node.state = NodeState.UP_TO_DATE
+    if autoclean:
+        n_cleaned += _cleanup_parents(node, children, final_keys, active_keys)
+    return n_cleaned
+
+
 def execute(
     pipeline: _GraphBase,
     outdir,
     resource_caps: dict[str, int] | None = None,
-    scheduler: Scheduler | None = None,
+    scheduler: Scheduler = connected_component_scheduler,
     keep_going: bool = False,
     autoclean: bool = False,
     dry_run: bool = False,
@@ -137,56 +216,12 @@ def execute(
     at the end listing all failures.
     """
     _logger.setup()
-    if scheduler is None:
-        scheduler = connected_component_scheduler
     caps: dict[str, int] = {"threads": os.cpu_count() or 1}
     if resource_caps:
         caps.update(resource_caps)
     outdir = Path(outdir)
-    lock_fh = _acquire_lock(outdir)
-    try:
-        pipeline.resolve_paths(outdir)
-        nodes = list(pipeline.nodes)
-
-        # After DAG deduplication, unique nodes may hold parent references to
-        # superseded objects that are never classified.  Remap every parent pointer
-        # to the canonical node (same .key) so classify_nodes and the state
-        # machine operate on a consistent graph.
-        canonical = {n.key: n for n in nodes}
-        for n in nodes:
-            n.parents[:] = [canonical.get(p.key, p) for p in n.parents]
-
-        req = getattr(pipeline, "required_nodes", None)
-        if req is None:
-            req = nodes
-        classify_nodes(nodes, req)
-
-        # only operate on nodes in the required subgraph
-        active = [n for n in nodes if n.state is not None and n.state != NodeState.ORPHAN]
-
-        active_keys = {n.key for n in active}
-        children: dict[str, list] = {n.key: [] for n in active}
-        for n in active:
-            for p in n.parents:
-                if p.key in active_keys:
-                    children[p.key].append(n)
-        final_keys = {k for k, kids in children.items() if not kids}
-
-        n_cleaned = 0
-        if autoclean and not dry_run:
-            for n in nodes:
-                if n.state == NodeState.ORPHAN and n.path is not None and n.path.exists():
-                    if n.path.is_dir():
-                        shutil.rmtree(n.path)
-                    else:
-                        n.path.unlink()
-                    _logger.cleaned(n)
-                    n_cleaned += 1
-
-        # reclassify UP_TO_DATE nodes that were compromised in a previous run
-        for n in active:
-            if n.state == NodeState.UP_TO_DATE and n.is_compromised:
-                n.state = NodeState.STALE
+    with _acquire_lock(outdir):
+        active, active_keys, n_cleaned = _prepare_active(pipeline, outdir, autoclean, dry_run)
 
         if dry_run:
             n_would_run = sum(1 for n in active if n.state in (NodeState.MISSING, NodeState.STALE))
@@ -200,27 +235,28 @@ def execute(
         running: dict = {}  # future -> (node, start_time, job_resources)
         running_resources: dict[str, int] = {}
         errors: list = []  # exceptions collected in keep_going mode
-        n_run = n_skipped = n_failed = 0
-
+        n_run = n_failed = 0
         n_skipped = sum(1 for n in active if n.state == NodeState.UP_TO_DATE)
 
-        _blocked = {NodeState.FAILED, NodeState.INTERRUPTED}
-        _needs_run = {NodeState.MISSING, NodeState.STALE, NodeState.READY, NodeState.RUNNING}
+        needs_run = {NodeState.MISSING, NodeState.STALE, NodeState.READY, NodeState.RUNNING}
+
+        if autoclean:
+            children: dict[str, list] = {n.key: [] for n in active}
+            for n in active:
+                for p in n.parents:
+                    if p.key in active_keys:
+                        children[p.key].append(n)
+            final_keys = {k for k, kids in children.items() if not kids}
+        else:
+            children, final_keys = {}, set()
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(active) or 1) as pool:
-                while any(n.state in _needs_run for n in active):
-                    # promote Missing/Stale: blocked parent → FAILED; all parents UP_TO_DATE → READY
-                    for n in active:
-                        if n.state in (NodeState.MISSING, NodeState.STALE):
-                            if any(p.state in _blocked for p in n.parents):
-                                n.state = NodeState.FAILED
-                            elif all(p.state == NodeState.UP_TO_DATE for p in n.parents):
-                                n.state = NodeState.READY
+                while any(n.state in needs_run for n in active):
+                    _promote_states(active)
 
-                    active_keys = {n.key for n in active}
                     ready = [n for n in active if n.state == NodeState.READY]
-                    remaining = [n for n in active if n.state in _needs_run]
+                    remaining = [n for n in active if n.state in needs_run]
                     for node in scheduler(ready, remaining):
                         # skip co-outputs whose sibling is already running or done
                         coouts = [c for c in node.output_nodes.values() if c.key in active_keys and c is not node]
@@ -255,24 +291,9 @@ def execute(
                         elapsed = time.monotonic() - start
                         try:
                             f.result()
-                            # validate all active co-outputs were produced
-                            for conode in node.output_nodes.values():
-                                if conode.key in active_keys and not conode.path.exists():
-                                    raise RuntimeError(f"command succeeded but output missing: {conode.path}")
-                            write_dependencies(node)
-                            # mark co-outputs that were skipped in the scheduler
-                            for conode in node.output_nodes.values():
-                                if conode is not node and conode.key in active_keys and conode.state in _needs_run:
-                                    conode.mark_done("up_to_date")
-                                    conode.state = NodeState.UP_TO_DATE
-                                    if autoclean:
-                                        n_cleaned += _cleanup_parents(conode, children, final_keys, active_keys)
-                            node.mark_done("up_to_date")
-                            node.state = NodeState.UP_TO_DATE
+                            n_cleaned += _on_job_done(node, active_keys, needs_run, autoclean, children, final_keys)
                             _logger.job_done(node, elapsed)
                             n_run += 1
-                            if autoclean:
-                                n_cleaned += _cleanup_parents(node, children, final_keys, active_keys)
                         except Exception as exc:
                             log_path = node.path.parent / ".rip" / "job.log"
                             if isinstance(exc, subprocess.CalledProcessError):
@@ -297,8 +318,6 @@ def execute(
                             running_resources[r] -= v
         finally:
             _logger.summary(n_run, n_skipped, n_failed, n_cleaned)
-    finally:
-        lock_fh.close()
 
     if errors:
         raise ExceptionGroup(
