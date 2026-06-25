@@ -250,9 +250,9 @@ src/necroflow/
                   _output_mtime, _accumulated_config
   pipeline.py   — _GraphBase (incl. save()), Pipeline, DAG, _sinks, _label, _render_connector
   executor.py   — execute (accepts any _GraphBase), _run_node, _node_threads,
-                  fifo_scheduler, connected_component_scheduler;
+                  fifo_scheduler, connected_component_scheduler, iter_connected_components;
+                  _acquire_lock, _mark_running, _mark_done, _is_compromised (per-node state files);
                   parent-normalisation step before classify_nodes (see note below)
-  state_db.py   — StateDB: SQLite persistence of run state in outdir/.rip/state.db
   logger.py     — thread-safe logging: job_start/done/failed/error/output, summary
   grid.py       — TOML __grid expansion (vendored from snakemakeconfigs) + iter_configs()
   cli.py        — necroflow CLI entry point; _load_factory, _create_link_outputs
@@ -269,7 +269,7 @@ tests/
   test_classify_nodes.py — NodeState classification, co-output deduplication, stale propagation,
                            command-change cache invalidation
   test_keep_going.py     — keep_going=True: independent branches, failure propagation, ExceptionGroup
-  test_state_db.py       — StateDB unit tests + crash/fail/interrupt/retry integration tests
+  test_state.py          — per-node state file unit tests + crash/fail/interrupt/retry integration tests
 ```
 
 ### `.rip/` metadata — per-output provenance and content hashes (`src/necroflow/dag.py`)
@@ -280,7 +280,11 @@ after each successful job:
 - **`dependencies.toml`** — flat accumulated config from all ancestors; the full provenance record.
 - **`{filename}.hash`** — SHA-256 content hash of each co-output file/directory (excluding `.rip/` itself).
 - **`job.log`** — captured stdout/stderr of the job.
-- **`state.db`** — SQLite run-state persistence (at `outdir/.rip/state.db`, not per-output).
+- **`state`** — plain-text run state: `running` (written at job start), `up_to_date` / `failed` / `interrupted` (overwritten on completion). If the process is killed, `state` stays as `running`; the next run detects this and re-runs the node even if its output exists.
+
+### Concurrency (`src/necroflow/executor.py`)
+
+Only one necroflow instance may run against a given `outdir` at a time. `execute()` acquires an exclusive `fcntl.flock` on `outdir/.rip/necroflow.lock` at startup and releases it on exit. Running two instances against overlapping outdirs (e.g. `results` and `results/sub`) is unsupported — there is no OS primitive to detect this.
 
 ```toml
 # .rip/dependencies.toml

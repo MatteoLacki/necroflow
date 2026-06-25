@@ -1,7 +1,11 @@
-import sqlite3
 import time
+from types import SimpleNamespace
+
 import pytest
-from necroflow import Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState, StateDB
+
+from necroflow import Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState
+from necroflow.executor import _mark_running, _mark_done, _is_compromised, _state_file
+
 
 class A(NodeType): pass
 class B(NodeType): pass
@@ -14,7 +18,11 @@ R.register("fail_c", Inputs(x=str), Outputs(c=C), "exit 1")
 R.register("signal_c", Inputs(x=str), Outputs(c=C), "kill -TERM $$")
 
 
-def simple_dag(tmp_path, rule_b="make_b"):
+def _node(tmp_path, key="rule/fp/out.txt"):
+    return SimpleNamespace(path=tmp_path / key)
+
+
+def simple_dag(tmp_path):
     P = Pipeline()
     P.a = R.make_a(x="x")
     P.b = R.make_b(P.a)
@@ -23,80 +31,69 @@ def simple_dag(tmp_path, rule_b="make_b"):
     return dag, P
 
 
-# --- StateDB unit tests ---
+# --- unit tests for state file helpers ---
 
-def test_fresh_db_no_compromised(tmp_path):
-    db = StateDB(tmp_path)
-    assert db.compromised_keys() == set()
-    db.close()
+def test_fresh_state_not_compromised(tmp_path):
+    assert not _is_compromised(_node(tmp_path))
 
 
 def test_mark_running_is_compromised(tmp_path):
-    db = StateDB(tmp_path)
-    db.mark_running("align/abc/bam")
-    assert "align/abc/bam" in db.compromised_keys()
-    db.close()
+    n = _node(tmp_path)
+    _mark_running(n)
+    assert _is_compromised(n)
 
 
 def test_mark_done_up_to_date_not_compromised(tmp_path):
-    db = StateDB(tmp_path)
-    db.mark_running("align/abc/bam")
-    db.mark_done("align/abc/bam", "up_to_date")
-    assert db.compromised_keys() == set()
-    db.close()
+    n = _node(tmp_path)
+    _mark_running(n)
+    _mark_done(n, "up_to_date")
+    assert not _is_compromised(n)
 
 
 def test_mark_done_failed_is_compromised(tmp_path):
-    db = StateDB(tmp_path)
-    db.mark_done("align/abc/bam", "failed")
-    assert "align/abc/bam" in db.compromised_keys()
-    db.close()
+    n = _node(tmp_path)
+    _mark_running(n)
+    _mark_done(n, "failed")
+    assert _is_compromised(n)
 
 
 def test_mark_done_interrupted_is_compromised(tmp_path):
-    db = StateDB(tmp_path)
-    db.mark_done("align/abc/bam", "interrupted")
-    assert "align/abc/bam" in db.compromised_keys()
-    db.close()
+    n = _node(tmp_path)
+    _mark_running(n)
+    _mark_done(n, "interrupted")
+    assert _is_compromised(n)
 
 
-# --- Integration: successful run writes up_to_date ---
+# --- integration: successful run writes up_to_date ---
 
-def test_successful_run_persists_up_to_date(tmp_path):
+def test_successful_run_not_compromised(tmp_path):
     dag, P = simple_dag(tmp_path)
     dag.execute()
 
     dag.resolve_paths(tmp_path)
-    db = StateDB(tmp_path)
-    assert db.compromised_keys() == set()
-    db.close()
+    for n in dag.nodes:
+        assert not _is_compromised(n)
 
 
-# --- Integration: simulated crash → nodes re-run ---
+# --- integration: simulated crash → nodes re-run ---
 
 def test_simulated_crash_reruns_node(tmp_path):
     dag, P = simple_dag(tmp_path)
     dag.execute()
 
-    # simulate crash: manually set make_b's key to 'running' in DB
     dag.resolve_paths(tmp_path)
     b_node = next(n for n in dag.nodes if n.rule.__name__ == "make_b")
-    key = b_node.key
 
-    db = StateDB(tmp_path)
-    db.mark_running(key)
-    db.close()
+    # simulate crash: overwrite state file directly
+    _state_file(b_node).write_text("running")
 
-    # re-run: make_b output exists but is compromised → should re-run
-    import time
     mtime_before = b_node.path.stat().st_mtime
     time.sleep(0.05)
     dag.execute()
-    mtime_after = b_node.path.stat().st_mtime
-    assert mtime_after > mtime_before
+    assert b_node.path.stat().st_mtime > mtime_before
 
 
-# --- Integration: failed node → FAILED state + re-run next time ---
+# --- integration: failed node → FAILED state + re-run next time ---
 
 def test_failed_node_state(tmp_path):
     P = Pipeline()
@@ -109,13 +106,10 @@ def test_failed_node_state(tmp_path):
 
     c_node = next(n for n in dag.nodes if n.rule.__name__ == "fail_c")
     assert c_node.state == NodeState.FAILED
-
-    db = StateDB(tmp_path)
-    assert c_node.key in db.compromised_keys()
-    db.close()
+    assert _is_compromised(c_node)
 
 
-# --- Integration: interrupted node (signal) → INTERRUPTED state ---
+# --- integration: interrupted node (signal) → INTERRUPTED state ---
 
 def test_interrupted_node_state(tmp_path):
     P = Pipeline()
@@ -128,13 +122,10 @@ def test_interrupted_node_state(tmp_path):
 
     c_node = next(n for n in dag.nodes if n.rule.__name__ == "signal_c")
     assert c_node.state == NodeState.INTERRUPTED
-
-    db = StateDB(tmp_path)
-    assert c_node.key in db.compromised_keys()
-    db.close()
+    assert _is_compromised(c_node)
 
 
-# --- Integration: retry after failure / interruption ---
+# --- integration: retry after failure / interruption ---
 
 class X(NodeType): pass
 class Y(NodeType): pass
@@ -155,8 +146,6 @@ def _xy_dag(tmp_path, y_rule="make_y_fail"):
 
 
 def test_failed_node_reruns_on_retry(tmp_path):
-    """Node that writes its output then exits non-zero is compromised.
-    On retry: upstream (x) is skipped, failed node (y) re-executes."""
     dag, P = _xy_dag(tmp_path, "make_y_fail")
 
     with pytest.raises(Exception):
@@ -174,13 +163,11 @@ def test_failed_node_reruns_on_retry(tmp_path):
     with pytest.raises(Exception):
         dag.execute()
 
-    assert x.path.stat().st_mtime == x_mtime  # x not re-run
-    assert y.path.stat().st_mtime > y_mtime    # y re-executed despite output existing
+    assert x.path.stat().st_mtime == x_mtime
+    assert y.path.stat().st_mtime > y_mtime
 
 
 def test_interrupted_node_reruns_on_retry(tmp_path):
-    """Node that writes its output then receives SIGTERM is compromised.
-    On retry: upstream (x) is skipped, interrupted node (y) re-executes."""
     dag, P = _xy_dag(tmp_path, "make_y_signal")
 
     with pytest.raises(Exception):
@@ -198,5 +185,5 @@ def test_interrupted_node_reruns_on_retry(tmp_path):
     with pytest.raises(Exception):
         dag.execute()
 
-    assert x.path.stat().st_mtime == x_mtime  # x not re-run
-    assert y.path.stat().st_mtime > y_mtime    # y re-executed despite output existing
+    assert x.path.stat().st_mtime == x_mtime
+    assert y.path.stat().st_mtime > y_mtime

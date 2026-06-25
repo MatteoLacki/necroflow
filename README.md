@@ -127,6 +127,11 @@ Each output lives at `outdir/{rule}/{hash16}/{filename}`. The 16-character hash 
   - `dependencies.toml` — full accumulated config for provenance.
   - `{filename}.hash` — SHA-256 content hash, used for STALE detection on the next run.
   - `job.log` — captured stdout/stderr.
+  - `state` — last recorded run state (`running` / `up_to_date` / `failed` / `interrupted`). If a process is killed mid-run the `state` file is left as `running`; on the next invocation necroflow detects this and re-runs the node even if its output exists on disk.
+
+## Concurrency
+
+**Only one necroflow instance may run against a given `outdir` at a time.** `execute()` acquires an exclusive lock on `outdir/.rip/necroflow.lock` (via `fcntl.flock`) at startup and releases it on exit. A second instance targeting the same outdir will fail immediately with a clear error. Running two instances against *overlapping* outdirs (e.g. `results` and `results/sub`) is unsupported — there is no OS primitive to detect this, so avoid it.
 
 ## Parallelism and scheduling
 

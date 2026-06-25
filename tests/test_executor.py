@@ -94,6 +94,61 @@ def test_cooutputs_run_once(tmp_path):
     assert P.a.path.parent == P.b.path.parent
 
 
+def test_shared_node_executed_once(tmp_path):
+    """A node shared by two pipelines (same rule + config) must run exactly once.
+
+    Two pipelines both depend on make_a(x="shared") as their upstream. After
+    DAG deduplication the shared node has one canonical entry. We verify it ran
+    only once by checking a single job.log exists for that node's directory.
+    """
+    P1 = Pipeline()
+    P1.a = R.make_a(x="shared")
+    P1.b = R.make_b(P1.a)
+
+    P2 = Pipeline()
+    P2.a = R.make_a(x="shared")
+    P2.c = R.make_c(P2.a)
+
+    dag = DAG(tmp_path)
+    dag.add(P1)
+    dag.add(P2)
+    dag.execute()
+
+    # All outputs must exist, including the shared upstream node from P1
+    assert P1.a.path.exists()
+    assert P1.b.path.exists()
+    assert P2.c.path.exists()
+
+    # The shared upstream node ran once — only one make_a directory under outdir
+    make_a_dirs = list(tmp_path.glob("make_a/*/"))
+    assert len(make_a_dirs) == 1
+    # That directory has a single job.log confirming one execution
+    assert (make_a_dirs[0] / ".rip" / "job.log").exists()
+
+
+def test_shared_node_path_set_on_first_pipeline(tmp_path):
+    """First-added pipeline's node object must have path set after execution.
+
+    When two pipelines share an upstream node (same key), the first-added node
+    is canonical. The second pipeline's duplicate node is not stored. After
+    execution the first pipeline's object must have path set — not None.
+    """
+    P1 = Pipeline()
+    P1.a = R.make_a(x="shared")
+
+    P2 = Pipeline()
+    P2.a = R.make_a(x="shared")
+
+    dag = DAG(tmp_path)
+    dag.add(P1)
+    dag.add(P2)
+    dag.execute()
+
+    assert P1.a.path is not None
+    assert P1.a.path.exists()
+    assert P2.a.path == P1.a.path   # duplicate node gets same path as canonical
+
+
 def test_single_node_pipeline_executes(tmp_path):
     # source node (no parents) must be treated as a sink
     P = Pipeline()

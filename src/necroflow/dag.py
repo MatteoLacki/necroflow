@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-from collections import namedtuple
 from pathlib import Path
 from typing import Any
 
 import tomlkit
 
-from necroflow.nodes import Node, NodeState, NodeType, NodeTypeMeta, _is_nodetype
+from necroflow.nodes import Node, NodeState, NodeType, NodeTypeMeta, _is_nodetype, _topo_sort
+from necroflow.rules import Inputs, Outputs, Constraints, Rule, Rules
 
 
 
@@ -59,6 +59,7 @@ def _output_mtime(path: Path) -> float:
     return path.stat().st_mtime
 
 
+
 def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
     """Set node.state for each node. Requires resolve_paths() to have been called first.
 
@@ -66,55 +67,46 @@ def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
     Nodes outside the subgraph with existing output get Orphan.
     Nodes outside the subgraph with no output get state=None (excluded from execution).
     """
-    # build required subgraph via BFS over parents using object identity
-    required_subgraph: set[int] = set()
+    # BFS to collect all nodes in the required subgraph
+    required: dict[str, Node] = {}
     frontier = list(required_nodes)
     while frontier:
         n = frontier.pop()
-        if id(n) in required_subgraph:
+        if n.key in required:
             continue
-        required_subgraph.add(id(n))
-        frontier.extend(n.parents)
+        required[n.key] = n
+        frontier.extend(p for p in n.parents if p.key not in required)
 
+    # ORPHAN pass: output exists from a prior run but isn't needed now; skipped
+    # by the executor unless autoclean=True, in which case it gets deleted
     for node in nodes:
-        if id(node) not in required_subgraph:
-            if node.path is not None and node.path.exists():
-                node.state = NodeState.ORPHAN
-            else:
-                node.state = None
-            continue
+        if node.key not in required:
+            node.state = NodeState.ORPHAN if (node.path is not None and node.path.exists()) else None
 
+    # Classify in topological order so STALE propagates naturally in one pass
+    for node in _topo_sort(list(required.values())):
         if node.path is None or not node.path.exists():
             node.state = NodeState.MISSING
             continue
 
         node_mtime = _output_mtime(node.path)
-        stale = False
-        for p in node.parents:
-            if p.path is None or not p.path.exists():
-                continue
-            if _output_mtime(p.path) <= node_mtime:
-                continue  # fast path: parent not newer
-            hash_file = p.path.parent / ".rip" / (p.path.name + ".hash")
-            if hash_file.exists() and _content_hash(p.path) == hash_file.read_text().strip():
-                continue  # parent re-ran but content unchanged
-            stale = True
-            break
+        stale = any(
+            p.state in (NodeState.MISSING, NodeState.STALE)
+            for p in node.parents
+            if p.state is not None
+        )
+        if not stale:
+            for p in node.parents:
+                if p.path is None or not p.path.exists():
+                    continue
+                if _output_mtime(p.path) <= node_mtime:
+                    continue  # fast path: parent not newer
+                hash_file = p.path.parent / ".rip" / (p.path.name + ".hash")
+                if hash_file.exists() and _content_hash(p.path) == hash_file.read_text().strip():
+                    continue  # parent re-ran but content unchanged
+                stale = True
+                break
         node.state = NodeState.STALE if stale else NodeState.UP_TO_DATE
-
-    # propagate STALE transitively: if any parent is MISSING or STALE, this node is also STALE
-    changed = True
-    while changed:
-        changed = False
-        for node in nodes:
-            if node.state == NodeState.UP_TO_DATE:
-                if any(
-                    p.state in (NodeState.MISSING, NodeState.STALE)
-                    for p in node.parents
-                    if p.state is not None
-                ):
-                    node.state = NodeState.STALE
-                    changed = True
 
 
 def resolve_command(node: Node) -> str | list[str] | None:
@@ -148,27 +140,6 @@ def resolve_paths(nodes: list[Node], outdir: Path | str) -> None:
         node.path = outdir / node.key
 
 
-class Inputs:
-    """Declare rule inputs: NodeType values = positional Node args; plain types = config kwargs."""
-
-    def __init__(self, **specs):
-        self.specs = specs
-
-
-class Outputs:
-    """Declare rule outputs by name: Outputs(bam=Bam, log=Log)."""
-
-    def __init__(self, **specs):
-        self.specs = specs
-
-
-class Constraints:
-    """Declare scheduler constraints: Constraints(threads=4, ram="250Mi")."""
-
-    def __init__(self, **kwargs):
-        self.specs = kwargs
-
-
 _SI_SUFFIXES = {"K": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15}
 _BIN_SUFFIXES = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50}
 
@@ -192,94 +163,3 @@ def parse_resource(s: str | int) -> int:
     return int(s)
 
 
-class Rules:
-    """Container for registered rules. Names must be unique."""
-
-    def __init__(self):
-        object.__setattr__(self, "_registry", {})
-
-    def register(
-        self,
-        name: str,
-        inputs: Inputs,
-        outputs: Outputs,
-        command: str | list[str],
-        constraints: Constraints | None = None,
-        info: str | None = None,
-    ) -> None:
-        registry = object.__getattribute__(self, "_registry")
-        if name in registry:
-            raise ValueError(f"Rule {name!r} already registered")
-
-        pos_inputs = [(n, t) for n, t in inputs.specs.items() if _is_nodetype(t)]
-        kw_inputs = {n: t for n, t in inputs.specs.items() if not _is_nodetype(t)}
-
-        output_names = list(outputs.specs.keys())
-        multi = len(output_names) > 1
-        ReturnType = namedtuple(f"{name}_outputs", output_names) if multi else None
-
-        constraints_dict = constraints.specs if constraints else {}
-
-        def wrapper(*args, **kwargs):
-            if len(args) < len(pos_inputs):
-                missing = [pname for pname, _ in pos_inputs[len(args):]]
-                raise TypeError(f"{name}: missing required inputs: {missing!r}")
-            if len(args) > len(pos_inputs):
-                raise TypeError(
-                    f"{name}: too many positional inputs: expected {len(pos_inputs)}, got {len(args)}"
-                )
-            missing_kw = [kname for kname in kw_inputs if kname not in kwargs]
-            if missing_kw:
-                raise TypeError(f"{name}: missing required inputs: {missing_kw!r}")
-            for (pname, ptype), val in zip(pos_inputs, args):
-                if not isinstance(val, Node):
-                    raise TypeError(
-                        f"{name}: {pname!r} expected Node, got {type(val).__name__!r}"
-                    )
-                if val.node_type is None or not issubclass(val.node_type, ptype):
-                    got = val.node_type.__name__ if val.node_type else "None"
-                    raise TypeError(
-                        f"{name}: {pname!r} expected {ptype.__name__}, got {got}"
-                    )
-
-            for kname, val in kwargs.items():
-                if kname not in kw_inputs:
-                    continue
-                ktype = kw_inputs[kname]
-                try:
-                    ok = isinstance(val, ktype)
-                except TypeError:
-                    ok = True
-                if not ok:
-                    raise TypeError(
-                        f"{name}: {kname!r} expected {ktype}, got {type(val).__name__!r}"
-                    )
-
-            parents = [a for a in args if isinstance(a, Node)]
-            nodes = [
-                Node(
-                    output_name=oname,
-                    node_type=otype,
-                    parents=parents,
-                    config=kwargs,
-                    rule=wrapper,
-                    command=command,
-                )
-                for oname, otype in outputs.specs.items()
-            ]
-
-            all_outputs = {oname: n for oname, n in zip(output_names, nodes)}
-            for n in nodes:
-                n.output_nodes = all_outputs
-
-            return ReturnType(*nodes) if multi else nodes[0]
-
-        wrapper.__name__ = name
-        wrapper.constraints = constraints_dict
-        wrapper.inputs = inputs
-        wrapper.outputs = outputs
-        wrapper.command = command
-        wrapper.info = info
-
-        registry[name] = wrapper
-        object.__setattr__(self, name, wrapper)

@@ -68,8 +68,8 @@ def _label(node: Node) -> str:
 
 def _sinks(pipeline: Pipeline) -> list:
     """Nodes with no dependents (children) in the pipeline — includes source nodes."""
-    is_parent = {id(p) for n in pipeline.nodes for p in n.parents}
-    return [n for n in pipeline.nodes if id(n) not in is_parent]
+    is_parent = {p.key for n in pipeline.nodes for p in n.parents}
+    return [n for n in pipeline.nodes if n.key not in is_parent]
 
 
 class _GraphBase:
@@ -82,10 +82,10 @@ class _GraphBase:
     def _header(self) -> str:
         raise NotImplementedError
 
-    def _node_label(self, node: Node, nid: int) -> str:
+    def _node_label(self, node: Node) -> str:
         return _label(node)
 
-    def _node_color(self, nid: int) -> str:
+    def _node_color(self, node: Node) -> str:
         return "steelblue"
 
     def resolve_paths(self, outdir) -> None:
@@ -126,7 +126,7 @@ class _GraphBase:
         for nid, d in depth.items():
             layers[d].append(nid)
 
-        labels = {nid: self._node_label(id_to_node[nid], nid) for nid in node_ids}
+        labels = {nid: self._node_label(id_to_node[nid]) for nid in node_ids}
         raw_edges = [(id(p), id(n)) for n in nodes for p in n.parents if id(p) in node_ids]
 
         # Insert dummy pass-through nodes for long-range edges (span > 1 layer)
@@ -234,7 +234,8 @@ class DAG(_GraphBase):
 
     def __init__(self, outdir=None):
         from pathlib import Path
-        self._nodes: dict[str, object] = {}   # hash -> Node
+        self._nodes: dict[str, object] = {}   # key -> canonical Node
+        self._all_nodes: list = []            # all nodes including duplicates
         self._required: set[str] = set()
         self.outdir = Path(outdir) if outdir is not None else Path.cwd()
 
@@ -243,7 +244,8 @@ class DAG(_GraphBase):
         if request is None:
             request = _sinks(pipeline)
         for node in pipeline.nodes:
-            self._nodes[node.key] = node
+            self._nodes.setdefault(node.key, node)
+            self._all_nodes.append(node)
         for node in request:
             self._required.add(node.key)
 
@@ -255,14 +257,19 @@ class DAG(_GraphBase):
     def required_nodes(self) -> list:
         return [n for h, n in self._nodes.items() if h in self._required]
 
+    def resolve_paths(self, outdir) -> None:
+        _resolve_paths(self._all_nodes, outdir)
+
     def _header(self) -> str:
         return f"DAG  {len(self._nodes)} nodes  ({len(self._required)} required)"
 
-    def _node_label(self, node: Node, nid: int) -> str:
-        return _label(node) + (" ★" if nid in {id(n) for n in self.required_nodes} else "")
+    def _node_label(self, node: Node) -> str:
+        required_keys = {n.key for n in self.required_nodes}
+        return _label(node) + (" ★" if node.key in required_keys else "")
 
-    def _node_color(self, nid: int) -> str:
-        return "orange" if nid in {id(n) for n in self.required_nodes} else "steelblue"
+    def _node_color(self, node: Node) -> str:
+        required_keys = {n.key for n in self.required_nodes}
+        return "orange" if node.key in required_keys else "steelblue"
 
     def execute(self, resource_caps=None, scheduler=None, keep_going=False, autoclean=False, dry_run=False) -> None:
         from necroflow.executor import execute

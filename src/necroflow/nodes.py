@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -102,6 +103,50 @@ class Node:
             else self.output_name or "output"
         )
         return f"{rule_name}/{self.fingerprint}/{filename}"
+
+
+    @classmethod
+    def make_outputs(cls, rule, parents: list[Node], config: dict, command, outputs_specs: dict) -> list[Node]:
+        nodes = [
+            cls(
+                output_name=oname,
+                node_type=otype,
+                parents=parents,
+                config=config,
+                rule=rule,
+                command=command,
+            )
+            for oname, otype in outputs_specs.items()
+        ]
+        all_outputs = {n.output_name: n for n in nodes}
+        for n in nodes:
+            n.output_nodes = all_outputs
+        return nodes
+
+
+def _topo_sort(nodes: list[Node]) -> list[Node]:
+    """Return nodes in topological order (parents before children) via Kahn's algorithm.
+
+    Only edges between nodes in the provided list are considered.
+    """
+    key_to_node = {n.key: n for n in nodes}
+    children: dict[str, list[Node]] = {n.key: [] for n in nodes}
+    in_degree: dict[str, int] = {n.key: 0 for n in nodes}
+    for n in nodes:
+        for p in n.parents:
+            if p.key in key_to_node:
+                children[p.key].append(n)
+                in_degree[n.key] += 1
+    queue: deque[Node] = deque(n for n in nodes if in_degree[n.key] == 0)
+    result: list[Node] = []
+    while queue:
+        n = queue.popleft()
+        result.append(n)
+        for child in children[n.key]:
+            in_degree[child.key] -= 1
+            if in_degree[child.key] == 0:
+                queue.append(child)
+    return result
 
 
 def _is_nodetype(ann) -> bool:
