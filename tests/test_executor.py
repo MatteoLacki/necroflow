@@ -33,6 +33,22 @@ def test_execute_creates_outputs(tmp_path):
     assert P.b.path.exists()
 
 
+def test_execute_handles_outdir_with_spaces(tmp_path):
+    """String command placeholders must survive output paths containing spaces.
+
+    Necroflow owns the generated output paths, so callers should not have to
+    manually quote every {output} and {input} placeholder just because the
+    selected outdir contains whitespace.
+    """
+    outdir = tmp_path / "results with spaces"
+    P = Pipeline()
+    P.a = R.make_a(x="x")
+
+    execute(P, outdir)
+
+    assert P.a.path.exists()
+
+
 def test_execute_via_dag(tmp_path):
     P = Pipeline()
     P.a = R.make_a(x="x")

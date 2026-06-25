@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -126,7 +127,8 @@ def resolve_command(node: Node) -> str | list[str] | None:
         subs[oname] = onode.path
     if isinstance(node.command, list):
         return [c.format(**subs) for c in node.command]
-    return node.command.format(**subs)
+    quoted = {k: shlex.quote(str(v)) if isinstance(v, Path) else v for k, v in subs.items()}
+    return node.command.format(**quoted)
 
 
 def resolve_paths(nodes: list[Node], outdir: Path | str) -> None:
