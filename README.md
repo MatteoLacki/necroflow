@@ -71,11 +71,13 @@ def rna_pipeline(config, R):
 
 ## Running one sample
 
+`DAG("results")` sets the output directory where all computed files will be written (you can use any path you like).
+
 ```python
 from types import SimpleNamespace
 
 config = SimpleNamespace(path="/data/s1.fastq.gz", ref="hg38", gene_model="gencode_v44")
-dag = DAG("/results")
+dag = DAG("results")           # output directory — change to any writable path
 dag.add(rna_pipeline(config, R))
 dag.execute()
 ```
@@ -89,7 +91,7 @@ configs = [
     SimpleNamespace(path="/data/s3.fastq.gz", ref="hg38", gene_model="gencode_v44"),
 ]
 
-dag = DAG("/results")
+dag = DAG("results")
 for config in configs:
     dag.add(rna_pipeline(config, R))
 
@@ -109,7 +111,7 @@ P.save("pipeline.txt")      # same render to a file
 
 dag.save("dag.txt")         # works on DAG too
 
-P.resolve_paths("/results")
+P.resolve_paths("results")
 for node in P.nodes:
     print(resolve_command(node))   # fully-resolved shell command
 ```
@@ -202,7 +204,9 @@ R.register("align",
     "bwa mem {ref} {fastq} > {bam} 2> {log}",
     Constraints(threads=4))
 
-bam, log = R.align(fastq_node, ref="hg38")
+P = Pipeline()
+P.fastq = R.raw_fastq(path=config.path)
+P.bam, P.log = R.align(P.fastq, ref="hg38")
 ```
 
 ## Cleaning orphan outputs
@@ -216,7 +220,7 @@ dag.execute(autoclean=True)
 Or via CLI:
 
 ```bash
-necroflow --outdir /results --autoclean job.toml   # job.toml contains ".pipeline" key
+necroflow --outdir results --autoclean job.toml   # job.toml contains ".pipeline" key
 ```
 
 ## Command-line interface
@@ -224,7 +228,7 @@ necroflow --outdir /results --autoclean job.toml   # job.toml contains ".pipelin
 necroflow ships a `necroflow` command. Each positional argument is a **job TOML** — a self-contained file that specifies the pipeline factory, optional requested outputs, and user config params.
 
 ```bash
-necroflow --outdir /results [-c N|all] [--constraint KEY=VALUE ...] \
+necroflow --outdir results [-c N|all] [--constraint KEY=VALUE ...] \
           [--keep-going] [--autoclean] [--dry-run] JOB.toml [JOB2.toml ...]
 ```
 
@@ -237,7 +241,7 @@ necroflow --outdir /results [-c N|all] [--constraint KEY=VALUE ...] \
 | `--dry-run` / `-n` | Show what would run without executing. |
 
 ```bash
-necroflow --outdir /results -c8 --constraint ram=64Gi job.toml
+necroflow --outdir results -c8 --constraint ram=64Gi job.toml
 ```
 
 ### Job TOML format
@@ -277,7 +281,7 @@ This produces four pipelines: `experiment__ref+hg38__aligner+bwa`,
 After every run the CLI creates one subfolder per grid combo under `outdir/`:
 
 ```
-/results/
+results/
   {rule}/{hash16}/{file}           ← real outputs (content-addressed)
   experiment__ref+hg38__aligner+bwa/
     {rule}/{hash16}/{file}         ← symlinks to requested outputs only

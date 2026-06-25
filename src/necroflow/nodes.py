@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import inspect
 from dataclasses import dataclass, field
 from enum import Enum
@@ -37,6 +38,10 @@ class NodeType(metaclass=NodeTypeMeta):
 
     filename: str | None = None
 
+    @staticmethod
+    def _type_name(ann) -> str:
+        return ann.__name__ if hasattr(ann, "__name__") else repr(ann)
+
 
 @dataclass
 class Node:
@@ -57,6 +62,46 @@ class Node:
             doc = self.node_type.__doc__
             if doc:
                 self.info = doc.strip()
+
+    @property
+    def fingerprint(self) -> str:
+        """16-char hex fingerprint of the rule call that produced this node.
+
+        Shared by all co-outputs of the same call — output_name is excluded from
+        this hash but included in parent references so downstream nodes that
+        consume different co-outputs still get distinct hashes.
+
+        Constraints intentionally excluded: they describe execution resources
+        (threads, memory), not the computation itself. If the output already
+        exists on disk, the constraints used to produce it are irrelevant.
+        """
+        h = hashlib.sha256()
+        h.update((self.rule.__name__ if self.rule else "").encode())
+        cmd = self.command
+        h.update((cmd if isinstance(cmd, str) else repr(cmd) if cmd else "").encode())
+        for k, v in sorted(self.config.items()):
+            h.update(f"{k}={v!r}".encode())
+        for p in self.parents:
+            h.update(p.fingerprint.encode())
+            h.update((p.output_name or "").encode())
+        if self.rule:
+            for k, v in sorted(self.rule.inputs.specs.items()):
+                h.update(f"i:{k}={NodeType._type_name(v)}".encode())
+            for k, v in sorted(self.rule.outputs.specs.items()):
+                h.update(f"o:{k}={NodeType._type_name(v)}".encode())
+        return h.hexdigest()[:16]
+
+    @property
+    def key(self) -> str:
+        """Unique key for a node: rule_name/fingerprint/filename.
+        Distinct for co-outputs because filename differs."""
+        rule_name = self.rule.__name__ if self.rule else "unknown"
+        filename = (
+            self.node_type.filename
+            if self.node_type and self.node_type.filename
+            else self.output_name or "output"
+        )
+        return f"{rule_name}/{self.fingerprint}/{filename}"
 
 
 def _is_nodetype(ann) -> bool:

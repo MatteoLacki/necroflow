@@ -10,49 +10,6 @@ import tomlkit
 from necroflow.nodes import Node, NodeState, NodeType, NodeTypeMeta, _is_nodetype
 
 
-def _type_name(ann) -> str:
-    return ann.__name__ if hasattr(ann, "__name__") else repr(ann)
-
-
-def _call_fingerprint(node: Node) -> str:
-    """16-char hex fingerprint of the rule call that produced this node.
-
-    Shared by all co-outputs of the same call — output_name is excluded from
-    this hash but included in parent references so downstream nodes that
-    consume different co-outputs still get distinct hashes.
-
-    Constraints intentionally excluded: they describe execution resources
-    (threads, memory), not the computation itself. If the output already
-    exists on disk, the constraints used to produce it are irrelevant.
-    """
-    h = hashlib.sha256()
-    h.update((node.rule.__name__ if node.rule else "").encode())
-    cmd = node.command
-    h.update((cmd if isinstance(cmd, str) else repr(cmd) if cmd else "").encode())
-    for k, v in sorted(node.config.items()):
-        h.update(f"{k}={v!r}".encode())
-    for p in node.parents:
-        h.update(_call_fingerprint(p).encode())
-        h.update((p.output_name or "").encode())
-    if node.rule:
-        for k, v in sorted(node.rule.inputs.specs.items()):
-            h.update(f"i:{k}={_type_name(v)}".encode())
-        for k, v in sorted(node.rule.outputs.specs.items()):
-            h.update(f"o:{k}={_type_name(v)}".encode())
-    return h.hexdigest()[:16]
-
-
-def _node_key(node: Node) -> str:
-    """Unique key for a node: relative path rule_name/fingerprint/filename.
-    Distinct for co-outputs because filename differs."""
-    rule_name = node.rule.__name__ if node.rule else "unknown"
-    filename = (
-        node.node_type.filename
-        if node.node_type and node.node_type.filename
-        else node.output_name or "output"
-    )
-    return f"{rule_name}/{_call_fingerprint(node)}/{filename}"
-
 
 def _content_hash(path: Path) -> str:
     """SHA-256 of a file's bytes, or of all non-.rip files in a directory."""
@@ -188,13 +145,7 @@ def resolve_paths(nodes: list[Node], outdir: Path | str) -> None:
     """
     outdir = Path(outdir)
     for node in nodes:
-        rule_name = node.rule.__name__ if node.rule else "unknown"
-        filename = (
-            node.node_type.filename
-            if node.node_type and node.node_type.filename
-            else node.output_name or "output"
-        )
-        node.path = outdir / rule_name / _call_fingerprint(node) / filename
+        node.path = outdir / node.key
 
 
 class Inputs:

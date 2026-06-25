@@ -2,7 +2,6 @@ import sqlite3
 import time
 import pytest
 from necroflow import Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState, StateDB
-from necroflow.dag import _node_key
 
 class A(NodeType): pass
 class B(NodeType): pass
@@ -82,7 +81,7 @@ def test_simulated_crash_reruns_node(tmp_path):
     # simulate crash: manually set make_b's key to 'running' in DB
     dag.resolve_paths(tmp_path)
     b_node = next(n for n in dag.nodes if n.rule.__name__ == "make_b")
-    key = _node_key(b_node)
+    key = b_node.key
 
     db = StateDB(tmp_path)
     db.mark_running(key)
@@ -112,7 +111,7 @@ def test_failed_node_state(tmp_path):
     assert c_node.state == NodeState.FAILED
 
     db = StateDB(tmp_path)
-    assert _node_key(c_node) in db.compromised_keys()
+    assert c_node.key in db.compromised_keys()
     db.close()
 
 
@@ -131,7 +130,7 @@ def test_interrupted_node_state(tmp_path):
     assert c_node.state == NodeState.INTERRUPTED
 
     db = StateDB(tmp_path)
-    assert _node_key(c_node) in db.compromised_keys()
+    assert c_node.key in db.compromised_keys()
     db.close()
 
 

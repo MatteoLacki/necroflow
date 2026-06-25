@@ -1,10 +1,34 @@
-"""necroflow CLI — run pipelines from job TOML files with __grid expansion."""
+"""necroflow CLI — run pipelines from job TOML files with __grid expansion.
+
+Terms used in this file
+-----------------------
+pipeline_spec — the raw '.pipeline' string from the job TOML,
+                e.g. 'pipelines/rna.py:build'.  Parsed by _load_factory into
+                a file path and a function name.
+
+factory       — a user-supplied Python function loaded from a pipeline_spec.
+                Signature: factory(config: dict) -> Pipeline.
+
+job TOML      — a TOML file describing one run: which factory to call, which
+                outputs to request, and what config parameters to pass.
+                Must contain a '.pipeline' key; all other keys become config.
+
+combo         — one expanded parameter combination produced by __grid
+                expansion of a job TOML.  A single job TOML with two
+                __grid axes of size M×N yields M*N combos.
+
+request       — the subset of Pipeline nodes that the DAG must produce for a
+                given combo.  Defaults to the pipeline's sink nodes (leaves).
+                Overridden by '.requests' in the job TOML (list of
+                pipeline_label strings).
+"""
 from __future__ import annotations
 
 import argparse
 import importlib.util
 import os
 import sys
+from functools import cache
 from pathlib import Path
 from typing import Callable
 
@@ -16,9 +40,7 @@ from necroflow.grid import iter_configs
 from necroflow.pipeline import _sinks
 
 
-_factory_cache: dict[tuple[str, str], Callable] = {}
-
-
+@cache
 def _load_factory(spec: str) -> Callable:
     """Load a pipeline factory from 'path/to/file.py:function_name' (resolved from cwd)."""
     if ":" not in spec:
@@ -27,9 +49,6 @@ def _load_factory(spec: str) -> Callable:
         )
     path_str, func_name = spec.rsplit(":", 1)
     path = Path(path_str).resolve()
-    cache_key = (str(path), func_name)
-    if cache_key in _factory_cache:
-        return _factory_cache[cache_key]
     if not path.exists():
         raise SystemExit(f"error: pipeline file not found: {path}")
     mod_spec = importlib.util.spec_from_file_location("_necroflow_user_pipeline", path)
@@ -41,9 +60,7 @@ def _load_factory(spec: str) -> Callable:
         sys.path.pop(0)
     if not hasattr(module, func_name):
         raise SystemExit(f"error: function {func_name!r} not found in {path}")
-    factory = getattr(module, func_name)
-    _factory_cache[cache_key] = factory
-    return factory
+    return getattr(module, func_name)
 
 
 def _resolve_request(pipeline, labels: list[str]) -> list:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from necroflow.nodes import Node
-from necroflow.dag import resolve_paths as _resolve_paths, _node_key
+from necroflow.dag import resolve_paths as _resolve_paths
 
 # Maps frozenset of active directions {U,D,L,R} to box-drawing char
 _BOX = {
@@ -243,9 +243,9 @@ class DAG(_GraphBase):
         if request is None:
             request = _sinks(pipeline)
         for node in pipeline.nodes:
-            self._nodes[_node_key(node)] = node
+            self._nodes[node.key] = node
         for node in request:
-            self._required.add(_node_key(node))
+            self._required.add(node.key)
 
     @property
     def nodes(self) -> list:

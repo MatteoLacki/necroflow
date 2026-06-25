@@ -150,7 +150,7 @@ print(P)
 P.plot()
 
 # inspect resolved commands before running
-P.resolve_paths("/results")
+P.resolve_paths("results")
 for node in P.nodes:
     print(resolve_command(node))
 
@@ -161,7 +161,7 @@ basic_configs = [
     SimpleNamespace(path="/data/sample2.fastq.gz", ref="hg38", gene_model="gencode_v44"),
 ]
 
-dag = DAG("/results")
+dag = DAG("results")
 for config in basic_configs:
     P = basic_pipeline(config, R)
     dag.add(P, request=[P.counts])   # only run up to counts, skip qc
@@ -182,7 +182,7 @@ diamond_configs = [
     SimpleNamespace(path="/data/sample2.fastq.gz", ref="hg38"),
 ]
 
-dag2 = DAG("/results")
+dag2 = DAG("results")
 for config in diamond_configs:
     dag2.add(diamond_pipeline(config, R))  # sinks = [merged] per sample
 

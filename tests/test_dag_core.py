@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 from necroflow import NodeType, Inputs, Outputs, Rules, Pipeline
 from necroflow.dag import (
-    _call_fingerprint, _node_key, _accumulated_config,
+    _accumulated_config,
     resolve_paths, resolve_command, write_dependencies,
 )
 
@@ -36,7 +36,7 @@ R.register("sort_txt",       Inputs(txt=SortedTxt),  Outputs(sorted_txt=SortedTx
 def test_resolve_paths_structure(tmp_path):
     txt = R.make_txt(word="hi")
     resolve_paths([txt], tmp_path)
-    assert txt.path == tmp_path / "make_txt" / _call_fingerprint(txt) / "out.txt"
+    assert txt.path == tmp_path / "make_txt" / txt.fingerprint / "out.txt"
 
 
 def test_resolve_paths_cooutputs_share_dir(tmp_path):
@@ -58,13 +58,13 @@ def test_resolve_paths_hash_is_16_chars(tmp_path):
 def test_fingerprint_stable():
     txt1 = R.make_txt(word="hi")
     txt2 = R.make_txt(word="hi")
-    assert _call_fingerprint(txt1) == _call_fingerprint(txt2)
+    assert txt1.fingerprint == txt2.fingerprint
 
 
 def test_fingerprint_differs_on_config():
     txt_a = R.make_txt(word="hello")
     txt_b = R.make_txt(word="world")
-    assert _call_fingerprint(txt_a) != _call_fingerprint(txt_b)
+    assert txt_a.fingerprint != txt_b.fingerprint
 
 
 def test_fingerprint_differs_on_parent():
@@ -72,7 +72,7 @@ def test_fingerprint_differs_on_parent():
     txt_b = R.make_txt(word="world")
     upper_a, _ = R.to_upper(txt_a, n=1)
     upper_b, _ = R.to_upper(txt_b, n=1)
-    assert _call_fingerprint(upper_a) != _call_fingerprint(upper_b)
+    assert upper_a.fingerprint != upper_b.fingerprint
 
 
 def test_fingerprint_changes_on_inputs_type_change():
@@ -90,7 +90,7 @@ def test_fingerprint_changes_on_inputs_type_change():
 
     bam_a = Ra.align(Ra.raw(path="/d/s.fq"), ref="hg38")
     bam_b = Rb.align(Rb.raw(path="/d/s.fq"), ref="hg38")
-    assert _call_fingerprint(bam_a) != _call_fingerprint(bam_b)
+    assert bam_a.fingerprint != bam_b.fingerprint
 
 
 def test_fingerprint_changes_on_outputs_type_change():
@@ -106,20 +106,19 @@ def test_fingerprint_changes_on_outputs_type_change():
 
     bam_a = Ra.align(path="/d/s.fq")
     bam_b = Rb.align(path="/d/s.fq")
-    assert _call_fingerprint(bam_a) != _call_fingerprint(bam_b)
+    assert bam_a.fingerprint != bam_b.fingerprint
 
 
 def test_node_key_unique_for_cooutputs():
     txt = R.make_txt(word="hi")
     upper, log = R.to_upper(txt, n=1)
-    assert _node_key(upper) != _node_key(log)
+    assert upper.key != log.key
 
 
 def test_node_key_contains_rule_and_filename():
     txt = R.make_txt(word="hi")
-    key = _node_key(txt)
-    assert key.startswith("make_txt/")
-    assert key.endswith("/out.txt")
+    assert txt.key.startswith("make_txt/")
+    assert txt.key.endswith("/out.txt")
 
 
 # ── command resolution ────────────────────────────────────────────────────────

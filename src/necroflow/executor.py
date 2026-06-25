@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Callable
 
 from necroflow.dag import (
     NodeState,
-    _node_key,
     classify_nodes,
     parse_resource,
     resolve_command,
@@ -121,11 +120,11 @@ def execute(
 
     # After DAG deduplication, unique nodes may hold parent references to
     # superseded objects that are never classified.  Remap every parent pointer
-    # to the canonical node (same _node_key) so classify_nodes and the state
+    # to the canonical node (same .key) so classify_nodes and the state
     # machine operate on a consistent graph.
-    canonical = {_node_key(n): n for n in nodes}
+    canonical = {n.key: n for n in nodes}
     for n in nodes:
-        n.parents[:] = [canonical.get(_node_key(p), p) for p in n.parents]
+        n.parents[:] = [canonical.get(p.key, p) for p in n.parents]
 
     req = getattr(pipeline, "required_nodes", None)
     if req is None:
@@ -159,7 +158,7 @@ def execute(
 
     # reclassify UP_TO_DATE nodes that were compromised in a previous run
     for n in active:
-        if n.state == NodeState.UP_TO_DATE and _node_key(n) in compromised:
+        if n.state == NodeState.UP_TO_DATE and n.key in compromised:
             n.state = NodeState.STALE
 
     if dry_run:
@@ -210,7 +209,7 @@ def execute(
                     )
                     if can_run:
                         log_path = node.path.parent / ".rip" / "job.log"
-                        db.mark_running(_node_key(node))
+                        db.mark_running(node.key)
                         node.state = NodeState.RUNNING
                         _logger.job_start(node)
                         start = time.monotonic()
@@ -238,11 +237,11 @@ def execute(
                         # mark co-outputs that were skipped in the scheduler
                         for conode in node.output_nodes.values():
                             if conode is not node and id(conode) in active_ids and conode.state in _needs_run:
-                                db.mark_done(_node_key(conode), "up_to_date")
+                                db.mark_done(conode.key, "up_to_date")
                                 conode.state = NodeState.UP_TO_DATE
                                 if autoclean:
                                     n_cleaned += _cleanup_parents(conode, children, final_ids, active_id_set)
-                        db.mark_done(_node_key(node), "up_to_date")
+                        db.mark_done(node.key, "up_to_date")
                         node.state = NodeState.UP_TO_DATE
                         _logger.job_done(node, elapsed)
                         n_run += 1
@@ -254,14 +253,14 @@ def execute(
                             rc = exc.returncode
                             if rc < 0:
                                 node.state = NodeState.INTERRUPTED
-                                db.mark_done(_node_key(node), "interrupted")
+                                db.mark_done(node.key, "interrupted")
                             else:
                                 node.state = NodeState.FAILED
-                                db.mark_done(_node_key(node), "failed")
+                                db.mark_done(node.key, "failed")
                             _logger.job_failed(node, elapsed, rc, log_path)
                         else:
                             node.state = NodeState.FAILED
-                            db.mark_done(_node_key(node), "failed")
+                            db.mark_done(node.key, "failed")
                             _logger.job_error(node, elapsed, exc, log_path)
                         _logger.job_output(log_path)
                         n_failed += 1

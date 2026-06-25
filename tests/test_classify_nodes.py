@@ -5,7 +5,6 @@ from pathlib import Path
 from necroflow import (
     Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState, classify_nodes,
 )
-from necroflow.dag import _call_fingerprint, _node_key
 
 
 class Fastq(NodeType): pass
@@ -35,12 +34,12 @@ def make_pipeline(path="/data/s.fastq", ref="hg38"):
 
 def test_cooutputs_distinct_node_keys():
     P = make_pipeline()
-    assert _node_key(P.bam) != _node_key(P.log)
+    assert P.bam.key != P.log.key
 
 
 def test_cooutputs_share_fingerprint():
     P = make_pipeline()
-    assert _call_fingerprint(P.bam) == _call_fingerprint(P.log)
+    assert P.bam.fingerprint == P.log.fingerprint
 
 
 def test_command_change_changes_fingerprint():
@@ -56,7 +55,7 @@ def test_command_change_changes_fingerprint():
     P2.bam = R2.align(P2.fastq, ref="hg38")
     P2.sorted = R2.sort_bam(P2.bam)
 
-    assert _call_fingerprint(P1.bam) != _call_fingerprint(P2.bam)
+    assert P1.bam.fingerprint != P2.bam.fingerprint
 
 
 def test_dag_contains_all_cooutputs(tmp_path):
