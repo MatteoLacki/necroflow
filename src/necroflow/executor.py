@@ -168,6 +168,8 @@ def execute(
     at the end listing all failures.
     """
     _logger.setup()
+    if isinstance(scheduler, type):
+        scheduler = scheduler()
     caps: dict[str, int] = {"threads": os.cpu_count() or 1}
     if resource_caps:
         caps.update(resource_caps)
