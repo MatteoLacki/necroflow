@@ -86,10 +86,12 @@ def my_scheduler(ready: list[Node], remaining: list[Node]) -> list[Node]:
 - `ready` — nodes whose parents are all done, not yet running
 - `remaining` — all not-yet-done, not-yet-running nodes (superset of ready)
 
-Built-in schedulers:
+Schedulers are plain callables. `execute()` accepts either a function or a callable object instance.
 
-- `connected_component_scheduler` *(default)* — builds undirected graph of remaining nodes, finds connected components, prioritises nodes from the smallest component. Re-analyses after each completion so splitting components are handled dynamically.
-- `fifo_scheduler` — topological (registration) order; equivalent to previous behaviour.
+Built-in schedulers (`src/necroflow/schedulers.py`):
+
+- `connected_component_scheduler` *(default)* — module-level instance of `ConnectedComponentScheduler`. Computes connected components once on first call, then updates incrementally: on each job completion only the affected component is re-BFS'd to detect splits. All other components are untouched — O(1) size lookup. Resets automatically at the start of a new `execute()` run.
+- `fifo_scheduler` — plain function; topological (registration) order.
 
 ### NodeType (`src/necroflow/dag.py`)
 
@@ -238,6 +240,8 @@ node.path.exists()  # True → already computed for these inputs (cache hit)
 resolve_command(node)
 # formats node.command template: {input_name} → parent.path, {output_name} → node.path,
 # {config_key} → config value (str/int passed through as-is)
+# Path substitutions are wrapped with shlex.quote() for string commands (shell=True)
+# so that paths containing spaces are handled correctly. List commands are unaffected.
 ```
 
 Requires `resolve_paths()` to have been called first.
@@ -256,7 +260,8 @@ src/necroflow/
                   Node.state_file, .is_compromised, .mark_running(), .mark_done() (per-node state)
   rules.py      — Inputs, Outputs, Constraints, Rule (with .resources property), Rules;
                   parse_resource + SI/binary suffix tables
-  schedulers.py — Scheduler type alias, fifo_scheduler, connected_component_scheduler
+  schedulers.py — Scheduler type alias, fifo_scheduler, ConnectedComponentScheduler class,
+                  connected_component_scheduler (module-level instance)
   dag.py        — resolve_paths, resolve_command, write_dependencies, classify_nodes,
                   _content_hash, _output_mtime, _accumulated_config;
                   re-exports parse_resource from rules.py
@@ -280,6 +285,8 @@ examples/
 tests/
   test_classify_nodes.py — NodeState classification, co-output deduplication, stale propagation,
                            command-change cache invalidation
+  test_executor.py       — execute() correctness, scheduler ordering (chain + fork), thread budget,
+                           autoclean, dry-run, resource caps, conditional pipelines
   test_keep_going.py     — keep_going=True: independent branches, failure propagation, ExceptionGroup
   test_state.py          — per-node state file unit tests + crash/fail/interrupt/retry integration tests
 ```
@@ -336,9 +343,9 @@ calling `classify_nodes`, so the READY-promotion check `all(p.state == UP_TO_DAT
 consistent state:
 
 ```python
-canonical = {_node_key(n): n for n in nodes}
+canonical = {n.key: n for n in nodes}
 for n in nodes:
-    n.parents[:] = [canonical.get(_node_key(p), p) for p in n.parents]
+    n.parents[:] = [canonical.get(p.key, p) for p in n.parents]
 ```
 
 This runs after `resolve_paths` and before `classify_nodes` on every `execute()` call.
