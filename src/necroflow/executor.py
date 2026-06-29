@@ -16,6 +16,7 @@ from necroflow.dag import (
     resolve_command,
     write_dependencies,
 )
+from necroflow.pipeline import write_ancestor_graph
 from necroflow.schedulers import Scheduler, connected_component_scheduler, fifo_scheduler
 from necroflow import logger as _logger
 
@@ -130,6 +131,7 @@ def _on_job_done(node, active_keys: set, needs_run: set, autoclean: bool,
         if conode.key in active_keys and not conode.path.exists():
             raise RuntimeError(f"command succeeded but output missing: {conode.path}")
     write_dependencies(node)
+    write_ancestor_graph(node)
     n_cleaned = 0
     for conode in node.output_nodes.values():
         if conode is not node and conode.key in active_keys and conode.state in needs_run:

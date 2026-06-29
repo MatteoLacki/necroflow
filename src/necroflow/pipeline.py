@@ -199,6 +199,35 @@ class _GraphBase:
         Path(path).write_text(str(self) + "\n", encoding="utf-8")
 
 
+class _AncestorView(_GraphBase):
+    """Read-only view of a node and all its ancestors, for provenance rendering."""
+
+    def __init__(self, nodes: list) -> None:
+        self._nodes = nodes
+
+    @property
+    def nodes(self) -> list:
+        return self._nodes
+
+    def _header(self) -> str:
+        n = len(self._nodes)
+        return f"Provenance  {n} node{'s' if n != 1 else ''}"
+
+
+def write_ancestor_graph(node) -> None:
+    """Write an ASCII subgraph of node + all ancestors to .rip/graph.txt."""
+    seen: dict = {}
+    frontier = [node]
+    while frontier:
+        n = frontier.pop()
+        if n.key in seen:
+            continue
+        seen[n.key] = n
+        frontier.extend(n.parents)
+    view = _AncestorView(list(seen.values()))
+    rip = node.path.parent / ".rip"
+    rip.mkdir(parents=True, exist_ok=True)
+    (rip / "graph.txt").write_text(str(view) + "\n", encoding="utf-8")
 
 
 class Pipeline(_GraphBase):

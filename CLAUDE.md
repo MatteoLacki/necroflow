@@ -300,6 +300,7 @@ after each successful job:
 - **`{filename}.hash`** — SHA-256 content hash of each co-output file/directory (excluding `.rip/` itself).
 - **`job.log`** — captured stdout/stderr of the job.
 - **`state`** — plain-text run state: `running` (written at job start), `up_to_date` / `failed` / `interrupted` (overwritten on completion). If the process is killed, `state` stays as `running`; the next run detects this and re-runs the node even if its output exists.
+- **`graph.txt`** — ASCII render of the node and all its ancestors (provenance subgraph), written by `write_ancestor_graph(node)` in `pipeline.py`. Each node box includes its per-node config kwargs.
 
 ### Concurrency (`src/necroflow/executor.py`)
 
