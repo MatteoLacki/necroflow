@@ -2,6 +2,7 @@
 import pytest
 from necroflow import NodeType, Inputs, Outputs, Constraints, Rules, Pipeline, DAG, execute
 from necroflow import fifo_scheduler, connected_component_scheduler
+from necroflow.schedulers import ConnectedComponentScheduler
 
 
 class A(NodeType): filename = "a.txt"
@@ -206,6 +207,91 @@ def test_custom_scheduler_invoked(tmp_path):
     P.b = R.make_b(P.a)
     execute(P, tmp_path, scheduler=recording_scheduler)
     assert len(calls) > 0
+
+
+# ── connected-component scheduler ordering ────────────────────────────────────
+
+class Step(NodeType): pass  # reused across all chain rules below
+
+Rchain = Rules()
+Rchain.register("c2_s1", Inputs(x=str),    Outputs(s=Step), "touch {s}")
+Rchain.register("c2_s2", Inputs(s=Step),   Outputs(s=Step), "touch {s}")
+Rchain.register("c3_s1", Inputs(x=str),    Outputs(s=Step), "touch {s}")
+Rchain.register("c3_s2", Inputs(s=Step),   Outputs(s=Step), "touch {s}")
+Rchain.register("c3_s3", Inputs(s=Step),   Outputs(s=Step), "touch {s}")
+Rchain.register("c4_s1", Inputs(x=str),    Outputs(s=Step), "touch {s}")
+Rchain.register("c4_s2", Inputs(s=Step),   Outputs(s=Step), "touch {s}")
+Rchain.register("c4_s3", Inputs(s=Step),   Outputs(s=Step), "touch {s}")
+Rchain.register("c4_s4", Inputs(s=Step),   Outputs(s=Step), "touch {s}")
+
+
+def _recording(sched):
+    """Return (scheduler_fn, started_list). started_list records rule name of
+    first node returned per scheduler call (= submission order with threads=1)."""
+    started = []
+    def fn(ready, remaining):
+        result = sched(ready, remaining)
+        if result:
+            started.append(result[0].rule.__name__)
+        return result
+    return fn, started
+
+
+def test_scheduler_exhausts_smallest_chain_first(tmp_path):
+    """Three independent chains of sizes 2, 3, 4: with threads=1 the scheduler
+    must finish the size-2 chain before starting the size-3, and the size-3
+    before the size-4."""
+    P = Pipeline()
+    P.c2a = Rchain.c2_s1(x="c2");  P.c2b = Rchain.c2_s2(P.c2a)
+    P.c3a = Rchain.c3_s1(x="c3");  P.c3b = Rchain.c3_s2(P.c3a);  P.c3c = Rchain.c3_s3(P.c3b)
+    P.c4a = Rchain.c4_s1(x="c4");  P.c4b = Rchain.c4_s2(P.c4a);  P.c4c = Rchain.c4_s3(P.c4b);  P.c4d = Rchain.c4_s4(P.c4c)
+
+    fn, started = _recording(ConnectedComponentScheduler())
+    execute(P, tmp_path, scheduler=fn, resource_caps={"threads": 1})
+
+    chain2 = {"c2_s1", "c2_s2"}
+    chain3 = {"c3_s1", "c3_s2", "c3_s3"}
+    chain4 = {"c4_s1", "c4_s2", "c4_s3", "c4_s4"}
+    idx = {name: i for i, name in enumerate(started)}
+    assert max(idx[n] for n in chain2) < min(idx[n] for n in chain3)
+    assert max(idx[n] for n in chain3) < min(idx[n] for n in chain4)
+
+
+class FA(NodeType): pass
+class FB(NodeType): pass
+class FC(NodeType): pass
+class FD(NodeType): pass
+class FE(NodeType): pass
+class FF(NodeType): pass
+class FG(NodeType): pass
+
+Rfork = Rules()
+Rfork.register("ra", Inputs(x=str), Outputs(a=FA), "touch {a}")
+Rfork.register("rb", Inputs(a=FA),  Outputs(b=FB), "touch {b}")
+Rfork.register("rc", Inputs(b=FB),  Outputs(c=FC), "touch {c}")
+Rfork.register("rd", Inputs(b=FB),  Outputs(d=FD), "touch {d}")
+Rfork.register("re", Inputs(c=FC),  Outputs(e=FE), "touch {e}")
+Rfork.register("rf", Inputs(d=FD),  Outputs(f=FF), "touch {f}")
+Rfork.register("rg", Inputs(f=FF),  Outputs(g=FG), "touch {g}")
+
+
+def test_scheduler_fork_prefers_smaller_branch(tmp_path):
+    """DAG: A->B->(C->E | D->F->G). After A and B complete the graph splits into
+    C->E (size 2) and D->F->G (size 3). With threads=1 the scheduler must
+    complete C->E entirely before starting D."""
+    P = Pipeline()
+    P.a = Rfork.ra(x="x")
+    P.b = Rfork.rb(P.a)
+    P.c = Rfork.rc(P.b)
+    P.d = Rfork.rd(P.b)
+    P.e = Rfork.re(P.c)
+    P.f = Rfork.rf(P.d)
+    P.g = Rfork.rg(P.f)
+
+    fn, started = _recording(ConnectedComponentScheduler())
+    execute(P, tmp_path, scheduler=fn, resource_caps={"threads": 1})
+
+    assert started == ["ra", "rb", "rc", "re", "rd", "rf", "rg"]
 
 
 # ── thread budget ─────────────────────────────────────────────────────────────

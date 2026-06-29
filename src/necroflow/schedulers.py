@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Callable
 
-from necroflow.nodes import iter_connected_components
-
 # Scheduler protocol:
 #   scheduler(ready, remaining) -> list[Node]
 # ready     -- nodes whose parents are all done, not yet running
@@ -108,7 +106,7 @@ class ConnectedComponentScheduler:
                     self._component_of[k] = new_cid
 
     def __call__(self, ready: list, remaining: list) -> list:
-        if self._adj is None:
+        if self._adj is None or (not self._component_of and remaining):
             self._build(remaining)
             self._prev_keys = {n.key for n in remaining}
         else:
@@ -120,4 +118,4 @@ class ConnectedComponentScheduler:
         return sorted(ready, key=lambda n: self._sizes.get(self._component_of.get(n.key, -1), 0))
 
 
-connected_component_scheduler = ConnectedComponentScheduler
+connected_component_scheduler = ConnectedComponentScheduler()
