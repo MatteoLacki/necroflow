@@ -194,7 +194,7 @@ With `keep_going=False` (default) the first failure raises immediately. With `ke
 
 After each successful job, necroflow verifies that the declared output file exists. A command that exits 0 but writes no output is treated as a failure.
 
-Run state is persisted to `outdir/.rip/state.db` (SQLite) between invocations. A node whose output exists on disk but whose previous run was interrupted by a signal or left in an unknown state is automatically re-executed next time.
+Run state is persisted to a plain-text `state` file inside each node's `.rip/` directory between invocations. A node whose output exists on disk but whose previous run was interrupted by a signal or left in an unknown state is automatically re-executed next time.
 
 Each job's stdout/stderr is captured to `outdir/{rule}/{hash}/.rip/job.log`. On failure the log is printed to the terminal.
 
