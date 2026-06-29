@@ -100,6 +100,34 @@ dag.execute()   # runs all samples in parallel, skips any already-computed outpu
 
 Nodes with identical upstream configs (e.g. a shared reference index) are deduplicated across samples — recognised by hash, run once.
 
+## Conditional pipelines
+
+Pipeline factory functions are plain Python, so `if/else` branching on config values works naturally:
+
+```python
+def my_pipeline(config, R):
+    P = Pipeline()
+    P.a = R.align(path=config.path, ref=config.ref)
+    if config.call_variants:
+        P.result = R.call_snps(P.a)
+    else:
+        P.result = R.count_reads(P.a)
+    return P
+```
+
+The branching config value (`config.call_variants`) does not need to be passed to any node. The rule name already encodes which branch was taken in the fingerprint, so `call_snps` and `count_reads` always produce distinct output paths regardless.
+
+Two pipelines sharing the same upstream config (e.g. same `path` and `ref`) will reuse the `align` output — recognised as a cache hit — even if they take different branches downstream.
+
+**Pipeline attribute names cannot be overwritten.** Assigning to the same name twice raises `ValueError`. If you want to build a pipeline in a loop, use distinct names:
+
+```python
+for i, step in enumerate(steps):
+    setattr(P, f"result_{i}", R.process(step_node, mode=step))
+```
+
+The idiomatic pattern for multi-sample or multi-condition work is separate `Pipeline` objects added to a shared `DAG` — one pipeline per config, one `dag.add(P)` call per pipeline.
+
 ## Inspecting a pipeline
 
 ```python

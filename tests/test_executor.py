@@ -73,6 +73,37 @@ def test_execute_idempotent(tmp_path):
     assert P.b.path.stat().st_mtime == mtime_b
 
 
+def test_conditional_pipeline(tmp_path):
+    """if/else branching in a pipeline factory is fully supported.
+
+    Two pipelines sharing the same upstream node but taking different branches:
+    - the shared upstream output is produced once and cached for both
+    - each branch produces a distinct output at a distinct path
+    - the branching config value need not appear in any node's config
+    """
+    P1 = Pipeline()
+    P1.a = R.make_a(x="x")
+    P1.result = R.make_b(P1.a)   # branch "b"
+
+    P2 = Pipeline()
+    P2.a = R.make_a(x="x")
+    P2.result = R.make_c(P2.a)   # branch "c"
+
+    dag = DAG(tmp_path)
+    dag.add(P1)
+    dag.add(P2)
+    dag.execute()
+
+    # shared upstream is at the same path for both pipelines
+    assert P1.a.path == P2.a.path
+    assert P1.a.path.exists()
+
+    # each branch lands at a distinct path
+    assert P1.result.path != P2.result.path
+    assert P1.result.path.exists()
+    assert P2.result.path.exists()
+
+
 def test_execute_failure_raises(tmp_path):
     P = Pipeline()
     P.a = R.fail_a(x="x")
