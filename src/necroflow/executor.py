@@ -154,6 +154,7 @@ def execute(
     keep_going: bool = False,
     autoclean: bool = False,
     dry_run: bool = False,
+    node_runner=None,
 ) -> None:
     """Run required nodes in the pipeline, respecting declared resource caps.
 
@@ -168,7 +169,11 @@ def execute(
     keep_going=False (default): raise on the first failure.
     keep_going=True: continue running independent nodes; raise ExceptionGroup
     at the end listing all failures.
+
+    node_runner: optional callable(node, log_path) replacing _run_node. Use this to
+    intercept subprocess execution (e.g. to feed output to a TUI).
     """
+    _run = node_runner if node_runner is not None else _run_node
     _logger.setup()
     caps: dict[str, int] = {"threads": os.cpu_count() or 1}
     if resource_caps:
@@ -229,7 +234,7 @@ def execute(
                             node.state = NodeState.RUNNING
                             _logger.job_start(node)
                             start = time.monotonic()
-                            future = pool.submit(_run_node, node, log_path)
+                            future = pool.submit(_run, node, log_path)
                             running[future] = (node, start, job_res)
                             for r, v in job_res.items():
                                 running_resources[r] = running_resources.get(r, 0) + v
