@@ -114,7 +114,7 @@ R.register(
     "make_seed",
     Inputs(word=str),
     Outputs(seed=Seed),
-    _S + "echo {word} > {seed}",
+    _S + "echo {word} | tee {seed}",
     info="Write the input word to a file — the starting point for all transforms.",
 )
 
@@ -123,7 +123,7 @@ R.register(
     "to_upper",
     Inputs(seed=Seed),
     Outputs(upper=Upper),
-    _S + "tr a-z A-Z < {seed} > {upper}",
+    _S + "tr a-z A-Z < {seed} | tee {upper}",
     info="Convert all characters to uppercase.",
 )
 
@@ -131,7 +131,7 @@ R.register(
     "to_lower",
     Inputs(seed=Seed),
     Outputs(lower=Lower),
-    _S + "tr A-Z a-z < {seed} > {lower}",
+    _S + "tr A-Z a-z < {seed} | tee {lower}",
     info="Convert all characters to lowercase.",
 )
 
@@ -139,7 +139,7 @@ R.register(
     "reverse_it",
     Inputs(seed=Seed),
     Outputs(reversed=Reversed),
-    _S + "rev {seed} > {reversed}",
+    _S + "rev {seed} | tee {reversed}",
     info="Reverse the character order of the seed.",
 )
 
@@ -148,7 +148,7 @@ R.register(
     "sort_chars",
     Inputs(seed=Seed),
     Outputs(sorted_chars=SortedChars),
-    _S + "grep -o . {seed} | sort > {sorted_chars}",
+    _S + "grep -o . {seed} | sort | tee {sorted_chars}",
     info="Extract individual characters and sort them alphabetically.",
 )
 
@@ -157,7 +157,7 @@ R.register(
     "encode_rot13",
     Inputs(upper=Upper),
     Outputs(rot13=Rot13),
-    _S + "tr A-Za-z N-ZA-Mn-za-m < {upper} > {rot13}",
+    _S + "tr A-Za-z N-ZA-Mn-za-m < {upper} | tee {rot13}",
     info="Apply ROT13 substitution cipher to the uppercased text.",
 )
 
@@ -166,7 +166,7 @@ R.register(
     "repeat_word",
     Inputs(lower=Lower, n=int),
     Outputs(repeated=Repeated),
-    _S + "for _ in $(seq {n}); do cat {lower}; done > {repeated}",
+    _S + "for _ in $(seq {n}); do cat {lower}; done | tee {repeated}",
     info="Repeat the lowercased word n times, one per line.",
 )
 
@@ -175,7 +175,7 @@ R.register(
     "merge_cases",
     Inputs(upper=Upper, lower=Lower),
     Outputs(merged=Merged),
-    _S + "paste {upper} {lower} > {merged}",
+    _S + "paste {upper} {lower} | tee {merged}",
     info="Paste uppercase and lowercase versions side by side (diamond convergence).",
 )
 
@@ -184,7 +184,7 @@ R.register(
     "unique_chars",
     Inputs(sorted_chars=SortedChars),
     Outputs(unique_chars=UniqueChars),
-    _S + "uniq {sorted_chars} > {unique_chars}",
+    _S + "uniq {sorted_chars} | tee {unique_chars}",
     info="Deduplicate the sorted character list to get the unique character set.",
 )
 
@@ -193,7 +193,7 @@ R.register(
     "combine_all",
     Inputs(merged=Merged, rot13=Rot13, repeated=Repeated, reversed=Reversed),
     Outputs(combined=Combined),
-    _S + "cat {merged} {rot13} {repeated} {reversed} > {combined}",
+    _S + "cat {merged} {rot13} {repeated} {reversed} | tee {combined}",
     info="Concatenate all four transform outputs into one blob (4-way fan-in).",
 )
 
@@ -202,7 +202,7 @@ R.register(
     "make_stats",
     Inputs(combined=Combined, unique_chars=UniqueChars),
     Outputs(stats=Stats, audit=Audit),
-    _S + "wc -c {combined} > {stats} && wc -l {unique_chars} > {audit}",
+    _S + "wc -c {combined} | tee {stats} && wc -l {unique_chars} | tee {audit}",
     info="Compute byte count of combined blob and unique-character count (co-outputs).",
 )
 
@@ -211,7 +211,7 @@ R.register(
     "shout_rot",
     Inputs(rot13=Rot13),
     Outputs(upper_rot=UpperRot),
-    _S + "tr a-z A-Z < {rot13} > {upper_rot}",
+    _S + "tr a-z A-Z < {rot13} | tee {upper_rot}",
     info="Re-uppercase the ROT13 output for maximum shouting energy.",
 )
 
@@ -220,7 +220,7 @@ R.register(
     "sort_combined",
     Inputs(combined=Combined),
     Outputs(sorted_combined=SortedCombined),
-    _S + "sort {combined} > {sorted_combined}",
+    _S + "sort {combined} | tee {sorted_combined}",
     info="Lexicographically sort all lines in the combined blob.",
 )
 
@@ -229,7 +229,7 @@ R.register(
     "count_lines",
     Inputs(combined=Combined),
     Outputs(line_counts=LineCounts),
-    _S + "wc -l < {combined} > {line_counts}",
+    _S + "wc -l < {combined} | tee {line_counts}",
     info="Count the total number of lines in the combined blob.",
 )
 
@@ -238,7 +238,7 @@ R.register(
     "final_mix",
     Inputs(upper_rot=UpperRot, sorted_combined=SortedCombined),
     Outputs(final_mix=FinalMix),
-    _S + "cat {upper_rot} {sorted_combined} > {final_mix}",
+    _S + "cat {upper_rot} {sorted_combined} | tee {final_mix}",
     info="Concatenate shouted ROT13 and sorted blob into the final mix.",
 )
 
@@ -247,7 +247,7 @@ R.register(
     "grand_summary",
     Inputs(stats=Stats, line_counts=LineCounts, final_mix=FinalMix),
     Outputs(grand_summary=GrandSummary),
-    _S + "cat {stats} {line_counts} {final_mix} > {grand_summary}",
+    _S + "cat {stats} {line_counts} {final_mix} | tee {grand_summary}",
     info="Assemble stats, line counts, and final mix into the grand summary.",
 )
 
