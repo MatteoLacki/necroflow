@@ -133,15 +133,30 @@ class Rule:
 def _parse_rule_fn(fn) -> tuple:
     """Extract (rule_name, inputs_specs, outputs_specs, info) from a decorator-style rule function.
 
-    Parses parameter annotations for inputs and the return annotation for outputs.
-    Requires ``from __future__ import annotations`` in the calling module so that
-    ``Type[name]`` return annotations are stored as strings rather than evaluated.
+    Outputs are taken from a ``return Type[name]`` statement in the function body (preferred),
+    or from the ``->`` return annotation as a fallback (requires ``from __future__ import
+    annotations`` when using ``Type[name]`` subscript syntax).
     """
     import ast
+    import inspect
     import re
+    import textwrap
 
     def _pascal_to_snake(name: str) -> str:
         return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
+
+    def _parse_output_items(items):
+        specs = {}
+        for item in items:
+            if isinstance(item, ast.Subscript):
+                specs[item.slice.id] = fn.__globals__[item.value.id]
+            elif isinstance(item, ast.Name):
+                specs[_pascal_to_snake(item.id)] = fn.__globals__[item.id]
+            else:
+                raise ValueError(
+                    f"rule {rule_name!r}: output items must be Type[name] or Type"
+                )
+        return specs
 
     rule_name = fn.__name__
     info = fn.__doc__.strip() if fn.__doc__ else None
@@ -155,34 +170,44 @@ def _parse_rule_fn(fn) -> tuple:
             ann = eval(ann, fn.__globals__)  # noqa: PGH001
         inputs_specs[pname] = ann
 
-    return_ann = raw_anns.get('return')
+    # Prefer return Type[name] in the function body over -> annotation
     outputs_specs = {}
-    if return_ann is not None:
-        if not isinstance(return_ann, str):
-            outputs_specs[_pascal_to_snake(return_ann.__name__)] = return_ann
-        else:
-            try:
-                expr_tree = ast.parse(return_ann.strip(), mode='eval')
-            except SyntaxError:
-                raise ValueError(
-                    f"rule {rule_name!r}: cannot parse return annotation {return_ann!r}"
-                )
-            items = (
-                expr_tree.body.elts
-                if isinstance(expr_tree.body, ast.Tuple)
-                else [expr_tree.body]
-            )
-            for item in items:
-                if isinstance(item, ast.Subscript):
-                    outputs_specs[item.slice.id] = fn.__globals__[item.value.id]
-                elif isinstance(item, ast.Name):
-                    type_obj = fn.__globals__[item.id]
-                    outputs_specs[_pascal_to_snake(item.id)] = type_obj
-                else:
+    body_return = None
+    try:
+        src = textwrap.dedent(inspect.getsource(fn))
+        func_tree = ast.parse(src)
+        func_def = next(
+            n for n in ast.walk(func_tree)
+            if isinstance(n, ast.FunctionDef) and n.name == rule_name
+        )
+        for stmt in func_def.body:
+            if isinstance(stmt, ast.Return) and stmt.value is not None:
+                body_return = stmt.value
+                break
+    except (OSError, StopIteration):
+        pass
+
+    if body_return is not None:
+        items = body_return.elts if isinstance(body_return, ast.Tuple) else [body_return]
+        outputs_specs = _parse_output_items(items)
+    else:
+        return_ann = raw_anns.get('return')
+        if return_ann is not None:
+            if not isinstance(return_ann, str):
+                outputs_specs[_pascal_to_snake(return_ann.__name__)] = return_ann
+            else:
+                try:
+                    expr_tree = ast.parse(return_ann.strip(), mode='eval')
+                except SyntaxError:
                     raise ValueError(
-                        f"rule {rule_name!r}: return annotation items must be "
-                        f"Type[name] or Type, got {ast.dump(item)}"
+                        f"rule {rule_name!r}: cannot parse return annotation {return_ann!r}"
                     )
+                items = (
+                    expr_tree.body.elts
+                    if isinstance(expr_tree.body, ast.Tuple)
+                    else [expr_tree.body]
+                )
+                outputs_specs = _parse_output_items(items)
 
     return rule_name, inputs_specs, outputs_specs, info
 
@@ -215,15 +240,14 @@ class Rules:
             r = Rules()
 
             @r.command("ln -s {path} {fastq}")
-            def raw_fastq(path: str) -> Fastq[fastq]:
+            def raw_fastq(path: str):
                 "Symlink a raw FASTQ file into the output tree."
+                return Fastq[fastq]
 
-            @r.command("bwa mem {ref} {fastq} > {bam}", threads=4)
-            def align(fastq: Fastq, ref: str) -> (Bam[bam], Log[log]):
+            @r.command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
+            def align(fastq: Fastq, ref: str):
                 "Align reads with BWA-MEM."
-
-        Requires ``from __future__ import annotations`` in the calling module
-        so that ``Type[name]`` return annotations are not evaluated at definition time.
+                return Bam[bam], Log[log]
         """
         def decorator(fn):
             rule_name, inputs_specs, outputs_specs, info = _parse_rule_fn(fn)
@@ -246,17 +270,16 @@ class Rules:
             rule = R.rule
 
             @rule
-            def sort_bam(bam: Bam) -> SortedBam[sorted_bam]:
+            def sort_bam(bam: Bam):
                 "Sort BAM by coordinate."
                 command = "samtools sort {bam} -o {sorted_bam}"
+                return SortedBam[sorted_bam]
 
             @rule(threads=4)
-            def align(fastq: Fastq, ref: str) -> (Bam[bam], Log[log]):
+            def align(fastq: Fastq, ref: str):
                 "Align reads with BWA-MEM."
-                command = "bwa mem {ref} {fastq} > {bam}"
-
-        Requires ``from __future__ import annotations`` in the calling module.
-        Prefer ``r.command(...)`` when the command fits on one line.
+                command = "bwa mem {ref} {fastq} > {bam} 2> {log}"
+                return Bam[bam], Log[log]
         """
         import ast
         import inspect

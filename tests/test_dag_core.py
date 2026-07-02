@@ -295,3 +295,42 @@ def test_register_valid_command_ok():
     r = Rules()
     r.register("good", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}")
     assert r.good is not None
+
+
+# ── body return style ─────────────────────────────────────────────────────────
+
+def test_command_decorator_body_return_single():
+    r = Rules()
+
+    @r.command("echo {word} > {txt}")
+    def make_txt(word: str):
+        return Txt[txt]
+
+    assert r.make_txt.outputs.specs == {"txt": Txt}
+
+
+def test_command_decorator_body_return_multi():
+    r = Rules()
+
+    @r.command("tr a-z A-Z < {txt} | tee {log} > {upper}")
+    def to_upper(txt: Txt):
+        return Upper[upper], Log[log]
+
+    assert r.to_upper.outputs.specs == {"upper": Upper, "log": Log}
+
+
+def test_command_decorator_body_return_ignores_arrow_annotation():
+    r = Rules()
+
+    @r.command("echo {word} > {txt}")
+    def make_txt2(word: str) -> Upper:  # -> annotation should be ignored
+        return Txt[txt]
+
+    assert r.make_txt2.outputs.specs == {"txt": Txt}
+
+
+def test_command_decorator_annotation_fallback():
+    """-> annotation fallback still works when no return statement in body."""
+    r = Rules()
+    r.register("fallback", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}")
+    assert r.fallback.outputs.specs == {"txt": Txt}
