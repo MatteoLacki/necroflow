@@ -10,9 +10,6 @@ except NameError:
 from types import SimpleNamespace
 from necroflow import (
     NodeType,
-    Inputs,
-    Outputs,
-    Constraints,
     Rules,
     resolve_command,
     Pipeline,
@@ -60,73 +57,65 @@ class MergedVcf(NodeType):
 
 # --- rules ---
 
-R = Rules()
-rule = R.rule
+r = Rules()
 
-@rule
+@r.command("ln -s {path} {fastq}")
 def raw_fastq(path: str) -> Fastq[fastq]:
     """Symlink a raw FASTQ file into the output tree."""
-    command = "ln -s {path} {fastq}"
 
-@rule(threads=4)
+@r.command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
 def align(fastq: Fastq, ref: str) -> (Bam[bam], Log[log]):
     """Align reads to a reference genome with BWA-MEM."""
-    command = "bwa mem {ref} {fastq} > {bam}"
 
-@rule
+@r.command("samtools sort {bam} -o {sorted_bam}")
 def sort_bam(bam: Bam) -> SortedBam[sorted_bam]:
     """Sort BAM by coordinate with samtools."""
-    command = "samtools sort {bam} -o {sorted_bam}"
 
-@rule
+@r.command("featureCounts -a {gene_model} {bam} -o {counts}")
 def quantify(bam: SortedBam, gene_model: str) -> (Counts[counts], QcReport[qcreport]):
     """Count reads per gene using featureCounts."""
-    command = "featureCounts -a {gene_model} {bam} -o {counts}"
 
-@rule
+@r.command("gatk HaplotypeCaller -I {bam} -O {vcf} --caller {caller}")
 def call_variants(bam: SortedBam, caller: str) -> Vcf[vcf]:
     """Call germline SNPs and indels with GATK HaplotypeCaller."""
-    command = "gatk HaplotypeCaller -I {bam} -O {vcf} --caller {caller}"
 
-@rule
+@r.command("bcftools annotate -a {db} {vcf} -o {annotated_vcf}")
 def annotate(vcf: Vcf, db: str) -> AnnotatedVcf[annotated_vcf]:
     """Annotate variants against a reference database with bcftools."""
-    command = "bcftools annotate -a {db} {vcf} -o {annotated_vcf}"
 
-@rule
+@r.command("bcftools merge {snp_ann} {indel_ann} -o {merged_vcf}")
 def merge_annotations(snp_ann: AnnotatedVcf, indel_ann: AnnotatedVcf) -> MergedVcf[merged_vcf]:
     """Merge SNP and indel annotated VCFs into one file."""
-    command = "bcftools merge {snp_ann} {indel_ann} -o {merged_vcf}"
 
 
 # --- pipeline definitions ---
 
-def basic_pipeline(config, R):
+def basic_pipeline(config, r):
     P = Pipeline()
-    P.fastq = R.raw_fastq(path=config.path)
-    P.bam, P.align_log = R.align(P.fastq, ref=config.ref)
-    P.sorted_bam = R.sort_bam(P.bam)
-    P.counts, P.qc = R.quantify(P.sorted_bam, gene_model=config.gene_model)
+    P.fastq = r.raw_fastq(path=config.path)
+    P.bam, P.align_log = r.align(P.fastq, ref=config.ref)
+    P.sorted_bam = r.sort_bam(P.bam)
+    P.counts, P.qc = r.quantify(P.sorted_bam, gene_model=config.gene_model)
     return P
 
 
-def diamond_pipeline(config, R):
+def diamond_pipeline(config, r):
     P = Pipeline()
-    P.fastq = R.raw_fastq(path=config.path)
-    P.bam, P.align_log = R.align(P.fastq, ref=config.ref)
-    P.sorted_bam = R.sort_bam(P.bam)
-    P.snp_vcf = R.call_variants(P.sorted_bam, caller="haplotypecaller")
-    P.indel_vcf = R.call_variants(P.sorted_bam, caller="mutect2")
-    P.snp_ann = R.annotate(P.snp_vcf, db="dbsnp")
-    P.indel_ann = R.annotate(P.indel_vcf, db="clinvar")
-    P.merged = R.merge_annotations(P.snp_ann, P.indel_ann)
+    P.fastq = r.raw_fastq(path=config.path)
+    P.bam, P.align_log = r.align(P.fastq, ref=config.ref)
+    P.sorted_bam = r.sort_bam(P.bam)
+    P.snp_vcf = r.call_variants(P.sorted_bam, caller="haplotypecaller")
+    P.indel_vcf = r.call_variants(P.sorted_bam, caller="mutect2")
+    P.snp_ann = r.annotate(P.snp_vcf, db="dbsnp")
+    P.indel_ann = r.annotate(P.indel_vcf, db="clinvar")
+    P.merged = r.merge_annotations(P.snp_ann, P.indel_ann)
     return P
 
 
 # --- single-pipeline inspection ---
 
 config = SimpleNamespace(path="/data/sample1.fastq.gz", ref="hg38", gene_model="gencode_v44")
-P = basic_pipeline(config, R)
+P = basic_pipeline(config, r)
 print(P)
 P.save("/tmp/simple_dag_pipeline.txt")
 
@@ -144,7 +133,7 @@ basic_configs = [
 
 dag = DAG("results")
 for config in basic_configs:
-    P = basic_pipeline(config, R)
+    P = basic_pipeline(config, r)
     dag.add(P, request=[P.counts])   # only run up to counts, skip qc
 
 print(dag)
@@ -165,7 +154,7 @@ diamond_configs = [
 
 dag2 = DAG("results")
 for config in diamond_configs:
-    dag2.add(diamond_pipeline(config, R))  # sinks = [merged] per sample
+    dag2.add(diamond_pipeline(config, r))  # sinks = [merged] per sample
 
 print(dag2)
 dag2.save("/tmp/simple_dag_diamond.txt")

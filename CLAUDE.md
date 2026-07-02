@@ -151,20 +151,18 @@ Holds registered rules. Names must be unique. Each registered rule becomes a cal
 **Decorator style** (preferred) — requires `from __future__ import annotations` in the calling module:
 
 ```python
-R = Rules()
-rule = R.rule   # alias once
+r = Rules()
 
-@rule(threads=4)
+@r.command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
 def align(fastq: Fastq, ref: str) -> (Bam[bam], Log[log]):
     """Align reads to a reference genome with BWA-MEM."""
-    command = "bwa mem {ref} {fastq} > {bam} 2> {log}"
 
-bam, log = R.align(fastq_node, ref="hg38")
+bam, log = r.align(fastq_node, ref="hg38")
 ```
 
-Return annotation: `Type[name]` for single output, `(Type[name], ...)` for multiple.
-Constraints as kwargs on `@rule(...)`. Docstring becomes `info`. Decorator replaces the
-function with the registered `Rule` object — `R.align` and the bare name `align` are the same.
+Command is the first decorator argument. Return annotation: `Type[name]` for single output,
+`(Type[name], ...)` for multiple. Constraints as kwargs. Docstring becomes `info`.
+Decorator replaces the function with the registered `Rule` object.
 
 **Explicit style** — always available, no future import needed:
 

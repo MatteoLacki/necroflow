@@ -46,30 +46,26 @@ class Counts(NodeType):
     filename = "counts.txt"
 
 # 2. Register rules
-R = Rules()
-rule = R.rule
+r = Rules()
 
-@rule
+@r.command("ln -s {path} {fastq}")
 def raw_fastq(path: str) -> Fastq[fastq]:
     """Symlink a raw FASTQ file into the output tree."""
-    command = "ln -s {path} {fastq}"
 
-@rule(threads=4)
+@r.command("bwa mem {ref} {fastq} > {bam}", threads=4)
 def align(fastq: Fastq, ref: str) -> Bam[bam]:
     """Align reads to a reference genome with BWA-MEM."""
-    command = "bwa mem {ref} {fastq} > {bam}"
 
-@rule
+@r.command("featureCounts -a {gene_model} {bam} -o {counts}")
 def count(bam: Bam, gene_model: str) -> Counts[counts]:
     """Count reads per gene using featureCounts."""
-    command = "featureCounts -a {gene_model} {bam} -o {counts}"
 
 # 3. Build a pipeline
-def rna_pipeline(config, R):
+def rna_pipeline(config, r):
     P = Pipeline()
-    P.fastq = R.raw_fastq(path=config.path)
-    P.bam = R.align(P.fastq, ref=config.ref)
-    P.counts = R.count(P.bam, gene_model=config.gene_model)
+    P.fastq = r.raw_fastq(path=config.path)
+    P.bam = r.align(P.fastq, ref=config.ref)
+    P.counts = r.count(P.bam, gene_model=config.gene_model)
     return P
 ```
 
@@ -172,10 +168,9 @@ Each output lives at `outdir/{rule}/{hash16}/{filename}`. The 16-character hash 
 `execute()` runs nodes in parallel subject to resource caps. By default the thread cap is all available CPUs. Declare per-job requirements with `Constraints`; set global caps via `resource_caps` (Python API) or CLI flags.
 
 ```python
-@rule(threads=4, ram="8Gi")
+@r.command("bwa mem {ref} {fastq} > {bam}", threads=4, ram="8Gi")
 def align(fastq: Fastq, ref: str) -> Bam[bam]:
     """Align reads with BWA-MEM."""
-    command = "bwa mem {ref} {fastq} > {bam}"
 
 dag.execute(resource_caps={"threads": 16, "ram": parse_resource("64Gi")})
 ```
@@ -208,15 +203,13 @@ class SortedBam(Bam):
     """Coordinate-sorted BAM."""
     filename = "sorted.bam"
 
-@rule
+@r.command("samtools sort {bam} -o {sorted_bam}")
 def sort(bam: Bam) -> SortedBam[sorted_bam]:
     """Sort BAM by coordinate with samtools."""
-    command = "samtools sort {bam} -o {sorted_bam}"
 
-@rule
+@r.command("featureCounts -a {gene_model} {bam} -o {counts}")
 def quantify(bam: SortedBam, gene_model: str) -> Counts[counts]:  # only accepts sorted bam
     """Count reads per gene using featureCounts."""
-    command = "featureCounts -a {gene_model} {bam} -o {counts}"
 ```
 
 ## Failure handling
@@ -238,10 +231,9 @@ Each job's stdout/stderr is captured to `outdir/{rule}/{hash}/.rip/job.log`. On 
 A rule with multiple declared outputs runs its command **once**; all co-outputs are marked complete when the command finishes:
 
 ```python
-@rule(threads=4)
+@r.command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
 def align(fastq: Fastq, ref: str) -> (Bam[bam], Log[log]):
     """Align reads with BWA-MEM, capturing the log."""
-    command = "bwa mem {ref} {fastq} > {bam} 2> {log}"
 
 P = Pipeline()
 P.fastq = R.raw_fastq(path=config.path)
