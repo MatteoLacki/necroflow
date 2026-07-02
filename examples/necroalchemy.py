@@ -108,148 +108,87 @@ class GrandSummary(NodeType):
 _S = "sleep $((RANDOM % 3 + 1)) && "
 
 R = Rules()
+rule = R.rule
 
-# step 1 — materialise the seed word
-R.register(
-    "make_seed",
-    Inputs(word=str),
-    Outputs(seed=Seed),
-    _S + "echo {word} | tee {seed}",
-    info="Write the input word to a file — the starting point for all transforms.",
-)
+@rule  # step 1 — materialise the seed word
+def make_seed(word: str) -> Seed[seed]:
+    """Write the input word to a file — the starting point for all transforms."""
+    command = _S + "echo {word} | tee {seed}"
 
-# steps 2-4 — three independent transforms of the seed (fan-out)
-R.register(
-    "to_upper",
-    Inputs(seed=Seed),
-    Outputs(upper=Upper),
-    _S + "tr a-z A-Z < {seed} | tee {upper}",
-    info="Convert all characters to uppercase.",
-)
+@rule  # steps 2-4 — three independent transforms of the seed (fan-out)
+def to_upper(seed: Seed) -> Upper[upper]:
+    """Convert all characters to uppercase."""
+    command = _S + "tr a-z A-Z < {seed} | tee {upper}"
 
-R.register(
-    "to_lower",
-    Inputs(seed=Seed),
-    Outputs(lower=Lower),
-    _S + "tr A-Z a-z < {seed} | tee {lower}",
-    info="Convert all characters to lowercase.",
-)
+@rule
+def to_lower(seed: Seed) -> Lower[lower]:
+    """Convert all characters to lowercase."""
+    command = _S + "tr A-Z a-z < {seed} | tee {lower}"
 
-R.register(
-    "reverse_it",
-    Inputs(seed=Seed),
-    Outputs(reversed=Reversed),
-    _S + "rev {seed} | tee {reversed}",
-    info="Reverse the character order of the seed.",
-)
+@rule
+def reverse_it(seed: Seed) -> Reversed[reversed]:
+    """Reverse the character order of the seed."""
+    command = _S + "rev {seed} | tee {reversed}"
 
-# step 5 — character inventory of the seed
-R.register(
-    "sort_chars",
-    Inputs(seed=Seed),
-    Outputs(sorted_chars=SortedChars),
-    _S + "grep -o . {seed} | sort | tee {sorted_chars}",
-    info="Extract individual characters and sort them alphabetically.",
-)
+@rule  # step 5 — character inventory of the seed
+def sort_chars(seed: Seed) -> SortedChars[sorted_chars]:
+    """Extract individual characters and sort them alphabetically."""
+    command = _S + "grep -o . {seed} | sort | tee {sorted_chars}"
 
-# step 6 — rot13 on the uppercased text
-R.register(
-    "encode_rot13",
-    Inputs(upper=Upper),
-    Outputs(rot13=Rot13),
-    _S + "tr A-Za-z N-ZA-Mn-za-m < {upper} | tee {rot13}",
-    info="Apply ROT13 substitution cipher to the uppercased text.",
-)
+@rule  # step 6 — rot13 on the uppercased text
+def encode_rot13(upper: Upper) -> Rot13[rot13]:
+    """Apply ROT13 substitution cipher to the uppercased text."""
+    command = _S + "tr A-Za-z N-ZA-Mn-za-m < {upper} | tee {rot13}"
 
-# step 7 — repeat the lowercased word n times
-R.register(
-    "repeat_word",
-    Inputs(lower=Lower, n=int),
-    Outputs(repeated=Repeated),
-    _S + "for _ in $(seq {n}); do cat {lower}; done | tee {repeated}",
-    info="Repeat the lowercased word n times, one per line.",
-)
+@rule  # step 7 — repeat the lowercased word n times
+def repeat_word(lower: Lower, n: int) -> Repeated[repeated]:
+    """Repeat the lowercased word n times, one per line."""
+    command = _S + "for _ in $(seq {n}); do cat {lower}; done | tee {repeated}"
 
-# step 8 — diamond merge: put upper and lower side by side
-R.register(
-    "merge_cases",
-    Inputs(upper=Upper, lower=Lower),
-    Outputs(merged=Merged),
-    _S + "paste {upper} {lower} | tee {merged}",
-    info="Paste uppercase and lowercase versions side by side (diamond convergence).",
-)
+@rule  # step 8 — diamond merge: put upper and lower side by side
+def merge_cases(upper: Upper, lower: Lower) -> Merged[merged]:
+    """Paste uppercase and lowercase versions side by side (diamond convergence)."""
+    command = _S + "paste {upper} {lower} | tee {merged}"
 
-# step 9 — unique character set
-R.register(
-    "unique_chars",
-    Inputs(sorted_chars=SortedChars),
-    Outputs(unique_chars=UniqueChars),
-    _S + "uniq {sorted_chars} | tee {unique_chars}",
-    info="Deduplicate the sorted character list to get the unique character set.",
-)
+@rule  # step 9 — unique character set
+def unique_chars(sorted_chars: SortedChars) -> UniqueChars[unique_chars]:
+    """Deduplicate the sorted character list to get the unique character set."""
+    command = _S + "uniq {sorted_chars} | tee {unique_chars}"
 
-# step 10 — 4-way merge into one blob
-R.register(
-    "combine_all",
-    Inputs(merged=Merged, rot13=Rot13, repeated=Repeated, reversed=Reversed),
-    Outputs(combined=Combined),
-    _S + "cat {merged} {rot13} {repeated} {reversed} | tee {combined}",
-    info="Concatenate all four transform outputs into one blob (4-way fan-in).",
-)
+@rule  # step 10 — 4-way merge into one blob
+def combine_all(merged: Merged, rot13: Rot13, repeated: Repeated, reversed: Reversed) -> Combined[combined]:
+    """Concatenate all four transform outputs into one blob (4-way fan-in)."""
+    command = _S + "cat {merged} {rot13} {repeated} {reversed} | tee {combined}"
 
-# step 11+12 — co-outputs: byte count + unique-char count (from the same rule call)
-R.register(
-    "make_stats",
-    Inputs(combined=Combined, unique_chars=UniqueChars),
-    Outputs(stats=Stats, audit=Audit),
-    _S + "wc -c {combined} | tee {stats} && wc -l {unique_chars} | tee {audit}",
-    info="Compute byte count of combined blob and unique-character count (co-outputs).",
-)
+@rule  # step 11+12 — co-outputs: byte count + unique-char count
+def make_stats(combined: Combined, unique_chars: UniqueChars) -> (Stats[stats], Audit[audit]):
+    """Compute byte count of combined blob and unique-character count (co-outputs)."""
+    command = _S + "wc -c {combined} | tee {stats} && wc -l {unique_chars} | tee {audit}"
 
-# step 13 — shout the rot13 (uppercase again)
-R.register(
-    "shout_rot",
-    Inputs(rot13=Rot13),
-    Outputs(upper_rot=UpperRot),
-    _S + "tr a-z A-Z < {rot13} | tee {upper_rot}",
-    info="Re-uppercase the ROT13 output for maximum shouting energy.",
-)
+@rule  # step 13 — shout the rot13 (uppercase again)
+def shout_rot(rot13: Rot13) -> UpperRot[upper_rot]:
+    """Re-uppercase the ROT13 output for maximum shouting energy."""
+    command = _S + "tr a-z A-Z < {rot13} | tee {upper_rot}"
 
-# step 14 — sort the combined blob
-R.register(
-    "sort_combined",
-    Inputs(combined=Combined),
-    Outputs(sorted_combined=SortedCombined),
-    _S + "sort {combined} | tee {sorted_combined}",
-    info="Lexicographically sort all lines in the combined blob.",
-)
+@rule  # step 14 — sort the combined blob
+def sort_combined(combined: Combined) -> SortedCombined[sorted_combined]:
+    """Lexicographically sort all lines in the combined blob."""
+    command = _S + "sort {combined} | tee {sorted_combined}"
 
-# step 15 — count lines in combined blob
-R.register(
-    "count_lines",
-    Inputs(combined=Combined),
-    Outputs(line_counts=LineCounts),
-    _S + "wc -l < {combined} | tee {line_counts}",
-    info="Count the total number of lines in the combined blob.",
-)
+@rule  # step 15 — count lines in combined blob
+def count_lines(combined: Combined) -> LineCounts[line_counts]:
+    """Count the total number of lines in the combined blob."""
+    command = _S + "wc -l < {combined} | tee {line_counts}"
 
-# step 16 — mix the shouted rot13 with the sorted blob
-R.register(
-    "final_mix",
-    Inputs(upper_rot=UpperRot, sorted_combined=SortedCombined),
-    Outputs(final_mix=FinalMix),
-    _S + "cat {upper_rot} {sorted_combined} | tee {final_mix}",
-    info="Concatenate shouted ROT13 and sorted blob into the final mix.",
-)
+@rule  # step 16 — mix the shouted rot13 with the sorted blob
+def final_mix(upper_rot: UpperRot, sorted_combined: SortedCombined) -> FinalMix[final_mix]:
+    """Concatenate shouted ROT13 and sorted blob into the final mix."""
+    command = _S + "cat {upper_rot} {sorted_combined} | tee {final_mix}"
 
-# step 17 — grand convergence: stats + line counts + the final mix
-R.register(
-    "grand_summary",
-    Inputs(stats=Stats, line_counts=LineCounts, final_mix=FinalMix),
-    Outputs(grand_summary=GrandSummary),
-    _S + "cat {stats} {line_counts} {final_mix} | tee {grand_summary}",
-    info="Assemble stats, line counts, and final mix into the grand summary.",
-)
+@rule  # step 17 — grand convergence: stats + line counts + the final mix
+def grand_summary(stats: Stats, line_counts: LineCounts, final_mix: FinalMix) -> GrandSummary[grand_summary]:
+    """Assemble stats, line counts, and final mix into the grand summary."""
+    command = _S + "cat {stats} {line_counts} {final_mix} | tee {grand_summary}"
 
 
 # ── pipeline factory ──────────────────────────────────────────────────────────

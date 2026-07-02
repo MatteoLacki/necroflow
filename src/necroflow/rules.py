@@ -132,3 +132,115 @@ class Rules:
         rule = Rule(name, inputs, outputs, command, constraints, info)
         self._registry[name] = rule
         self.__dict__[name] = rule
+
+    def rule(self, fn=None, **constraints):
+        """Decorator to register a rule from a function definition.
+
+        Usage:
+            rule = R.rule
+
+            @rule
+            def sort_bam(bam: Bam) -> SortedBam[sorted_bam]:
+                "Sort BAM by coordinate."
+                command = "samtools sort {bam} -o {sorted_bam}"
+
+            @rule(threads=4)
+            def align(fastq: Fastq, ref: str) -> Bam[bam], Log[log]:
+                "Align reads with BWA-MEM."
+                command = "bwa mem {ref} {fastq} > {bam}"
+
+        Requires ``from __future__ import annotations`` in the calling module
+        so that ``Type[name]`` return annotations are not evaluated at definition time.
+        """
+        import ast
+        import inspect
+        import re
+        import textwrap
+
+        def _pascal_to_snake(name: str) -> str:
+            return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
+
+        def decorator(fn):
+            rule_name = fn.__name__
+            info = fn.__doc__.strip() if fn.__doc__ else None
+
+            # inputs: resolve parameter annotations (strings if future annotations active)
+            raw_anns = fn.__annotations__
+            inputs_specs = {}
+            for pname, ann in raw_anns.items():
+                if pname == 'return':
+                    continue
+                if isinstance(ann, str):
+                    ann = eval(ann, fn.__globals__)  # noqa: PGH001
+                inputs_specs[pname] = ann
+
+            # outputs: parse return annotation
+            return_ann = raw_anns.get('return')
+            outputs_specs = {}
+            if return_ann is not None:
+                if not isinstance(return_ann, str):
+                    # no future annotations; must be a plain unevaluated type
+                    outputs_specs[_pascal_to_snake(return_ann.__name__)] = return_ann
+                else:
+                    try:
+                        expr_tree = ast.parse(return_ann.strip(), mode='eval')
+                    except SyntaxError:
+                        raise ValueError(
+                            f"rule {rule_name!r}: cannot parse return annotation {return_ann!r}"
+                        )
+                    items = (
+                        expr_tree.body.elts
+                        if isinstance(expr_tree.body, ast.Tuple)
+                        else [expr_tree.body]
+                    )
+                    for item in items:
+                        if isinstance(item, ast.Subscript):
+                            type_name = item.value.id
+                            out_name = item.slice.id
+                            outputs_specs[out_name] = fn.__globals__[type_name]
+                        elif isinstance(item, ast.Name):
+                            type_obj = fn.__globals__[item.id]
+                            outputs_specs[_pascal_to_snake(item.id)] = type_obj
+                        else:
+                            raise ValueError(
+                                f"rule {rule_name!r}: return annotation items must be "
+                                f"Type[name] or Type, got {ast.dump(item)}"
+                            )
+
+            # command: find `command = "..."` assignment in function body
+            src = textwrap.dedent(inspect.getsource(fn))
+            func_tree = ast.parse(src)
+            func_def = next(
+                n for n in ast.walk(func_tree)
+                if isinstance(n, ast.FunctionDef) and n.name == rule_name
+            )
+            command = None
+            for stmt in func_def.body:
+                if (
+                    isinstance(stmt, ast.Assign)
+                    and len(stmt.targets) == 1
+                    and isinstance(stmt.targets[0], ast.Name)
+                    and stmt.targets[0].id == 'command'
+                ):
+                    expr = ast.Expression(body=stmt.value)
+                    ast.fix_missing_locations(expr)
+                    command = eval(  # noqa: PGH001
+                        compile(expr, '<rule>', 'eval'), fn.__globals__
+                    )
+                    break
+
+            if command is None:
+                raise ValueError(f"rule {rule_name!r}: no 'command = ...' found in body")
+
+            constraints_obj = Constraints(**constraints) if constraints else None
+            self.register(
+                rule_name,
+                Inputs(**inputs_specs),
+                Outputs(**outputs_specs),
+                command,
+                constraints_obj,
+                info,
+            )
+            return self.__dict__[rule_name]
+
+        return decorator(fn) if fn is not None else decorator

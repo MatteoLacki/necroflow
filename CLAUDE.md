@@ -98,13 +98,19 @@ Built-in schedulers (`src/necroflow/schedulers.py`):
 Base class for node types. Uses a metaclass so that calling the class creates a `Node`.
 
 ```python
-class Fastq(NodeType): ...          # single type
-class SortedBam(Bam): ...           # subtype — accepted wherever Bam expected
+class Fastq(NodeType):
+    """Raw sequencing reads (FASTQ format)."""
+    filename = "reads.fastq.gz"
+
+class SortedBam(Bam):               # subtype — accepted wherever Bam expected
+    """Coordinate-sorted BAM."""
+    filename = "sorted.bam"
 
 Fastq("label")  # → Node(output_name="label", node_type=Fastq)
 ```
 
 `node.node_type` is the class itself. Subtype checks use `issubclass`.
+Docstrings flow through to `node.info` via `Node.__post_init__`.
 
 ### Node (`src/necroflow/nodes.py`)
 
@@ -142,20 +148,40 @@ Constraints(threads=4, memory="8G")  # scheduler resources
 
 Holds registered rules. Names must be unique. Each registered rule becomes a callable attribute.
 
+**Decorator style** (preferred) — requires `from __future__ import annotations` in the calling module:
+
 ```python
 R = Rules()
+rule = R.rule   # alias once
+
+@rule(threads=4)
+def align(fastq: Fastq, ref: str) -> (Bam[bam], Log[log]):
+    """Align reads to a reference genome with BWA-MEM."""
+    command = "bwa mem {ref} {fastq} > {bam} 2> {log}"
+
+bam, log = R.align(fastq_node, ref="hg38")
+```
+
+Return annotation: `Type[name]` for single output, `(Type[name], ...)` for multiple.
+Constraints as kwargs on `@rule(...)`. Docstring becomes `info`. Decorator replaces the
+function with the registered `Rule` object — `R.align` and the bare name `align` are the same.
+
+**Explicit style** — always available, no future import needed:
+
+```python
 R.register(
     "align",
     Inputs(fastq=Fastq, ref=str),
     Outputs(bam=Bam, log=Log),
     "bwa mem {ref} {fastq} > {bam} 2> {log}",
     Constraints(threads=4),
+    info="Align reads to a reference genome with BWA-MEM.",
 )
 
 bam, log = R.align(fastq_node, ref="hg38")
-# bam.config       == {"ref": "hg38"}
+# bam.config           == {"ref": "hg38"}
 # bam.rule.constraints == {"threads": 4}
-# bam.command      == "bwa mem {ref} {fastq} > {bam} 2> {log}"
+# bam.command          == "bwa mem {ref} {fastq} > {bam} 2> {log}"
 ```
 
 Positional args = input Nodes (matched by NodeType annotation order); keyword args = config.

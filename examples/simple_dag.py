@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 try:
     _ip = get_ipython()
     _ip.run_line_magic("load_ext", "autoreload")
@@ -59,63 +61,42 @@ class MergedVcf(NodeType):
 # --- rules ---
 
 R = Rules()
+rule = R.rule
 
-R.register(
-    "raw_fastq",
-    Inputs(path=str),
-    Outputs(fastq=Fastq),
-    "ln -s {path} {fastq}",
-    info="Symlink a raw FASTQ file into the output tree.",
-)
+@rule
+def raw_fastq(path: str) -> Fastq[fastq]:
+    """Symlink a raw FASTQ file into the output tree."""
+    command = "ln -s {path} {fastq}"
 
-R.register(
-    "align",
-    Inputs(fastq=Fastq, ref=str),
-    Outputs(bam=Bam, log=Log),
-    "bwa mem {ref} {fastq} > {bam}",
-    Constraints(threads=4),
-    info="Align reads to a reference genome with BWA-MEM.",
-)
+@rule(threads=4)
+def align(fastq: Fastq, ref: str) -> (Bam[bam], Log[log]):
+    """Align reads to a reference genome with BWA-MEM."""
+    command = "bwa mem {ref} {fastq} > {bam}"
 
-R.register(
-    "sort_bam",
-    Inputs(bam=Bam),
-    Outputs(sorted_bam=SortedBam),
-    "samtools sort {bam} -o {sorted_bam}",
-    info="Sort BAM by coordinate with samtools.",
-)
+@rule
+def sort_bam(bam: Bam) -> SortedBam[sorted_bam]:
+    """Sort BAM by coordinate with samtools."""
+    command = "samtools sort {bam} -o {sorted_bam}"
 
-R.register(
-    "quantify",
-    Inputs(bam=SortedBam, gene_model=str),
-    Outputs(counts=Counts, qcreport=QcReport),
-    "featureCounts -a {gene_model} {bam} -o {counts}",
-    info="Count reads per gene using featureCounts.",
-)
+@rule
+def quantify(bam: SortedBam, gene_model: str) -> (Counts[counts], QcReport[qcreport]):
+    """Count reads per gene using featureCounts."""
+    command = "featureCounts -a {gene_model} {bam} -o {counts}"
 
-R.register(
-    "call_variants",
-    Inputs(bam=SortedBam, caller=str),
-    Outputs(vcf=Vcf),
-    "gatk HaplotypeCaller -I {bam} -O {vcf} --caller {caller}",
-    info="Call germline SNPs and indels with GATK HaplotypeCaller.",
-)
+@rule
+def call_variants(bam: SortedBam, caller: str) -> Vcf[vcf]:
+    """Call germline SNPs and indels with GATK HaplotypeCaller."""
+    command = "gatk HaplotypeCaller -I {bam} -O {vcf} --caller {caller}"
 
-R.register(
-    "annotate",
-    Inputs(vcf=Vcf, db=str),
-    Outputs(annotated_vcf=AnnotatedVcf),
-    "bcftools annotate -a {db} {vcf} -o {annotated_vcf}",
-    info="Annotate variants against a reference database with bcftools.",
-)
+@rule
+def annotate(vcf: Vcf, db: str) -> AnnotatedVcf[annotated_vcf]:
+    """Annotate variants against a reference database with bcftools."""
+    command = "bcftools annotate -a {db} {vcf} -o {annotated_vcf}"
 
-R.register(
-    "merge_annotations",
-    Inputs(snp_ann=AnnotatedVcf, indel_ann=AnnotatedVcf),
-    Outputs(merged_vcf=MergedVcf),
-    "bcftools merge {snp_ann} {indel_ann} -o {merged_vcf}",
-    info="Merge SNP and indel annotated VCFs into one file.",
-)
+@rule
+def merge_annotations(snp_ann: AnnotatedVcf, indel_ann: AnnotatedVcf) -> MergedVcf[merged_vcf]:
+    """Merge SNP and indel annotated VCFs into one file."""
+    command = "bcftools merge {snp_ann} {indel_ann} -o {merged_vcf}"
 
 
 # --- pipeline definitions ---
