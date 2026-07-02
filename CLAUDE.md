@@ -148,20 +148,21 @@ Constraints(threads=4, memory="8G")  # scheduler resources
 
 Holds registered rules. Names must be unique. Each registered rule becomes a callable attribute.
 
-**Decorator style** (preferred) — requires `from __future__ import annotations` in the calling module:
+**Decorator style** (preferred):
 
 ```python
 r = Rules()
 
 @r.command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
-def align(fastq: Fastq, ref: str) -> (Bam[bam], Log[log]):
+def align(fastq: Fastq, ref: str):
     """Align reads to a reference genome with BWA-MEM."""
+    return Bam[bam], Log[log]
 
 bam, log = r.align(fastq_node, ref="hg38")
 ```
 
-Command is the first decorator argument. Return annotation: `Type[name]` for single output,
-`(Type[name], ...)` for multiple. Constraints as kwargs. Docstring becomes `info`.
+Command is the first decorator argument. Outputs declared as `return Type[name]` in the body
+(`Type[name], ...` for multiple). Constraints as kwargs. Docstring becomes `info`.
 Decorator replaces the function with the registered `Rule` object.
 
 **Explicit style** — always available, no future import needed:

@@ -29,7 +29,6 @@ source .venv/bin/activate
 ## Quick example
 
 ```python
-from __future__ import annotations  # required for Type[name] return annotations
 from necroflow import NodeType, Rules, Pipeline, DAG
 
 # 1. Define types
@@ -49,16 +48,19 @@ class Counts(NodeType):
 r = Rules()
 
 @r.command("ln -s {path} {fastq}")
-def raw_fastq(path: str) -> Fastq[fastq]:
+def raw_fastq(path: str):
     """Symlink a raw FASTQ file into the output tree."""
+    return Fastq[fastq]
 
 @r.command("bwa mem {ref} {fastq} > {bam}", threads=4)
-def align(fastq: Fastq, ref: str) -> Bam[bam]:
+def align(fastq: Fastq, ref: str):
     """Align reads to a reference genome with BWA-MEM."""
+    return Bam[bam]
 
 @r.command("featureCounts -a {gene_model} {bam} -o {counts}")
-def count(bam: Bam, gene_model: str) -> Counts[counts]:
+def count(bam: Bam, gene_model: str):
     """Count reads per gene using featureCounts."""
+    return Counts[counts]
 
 # 3. Build a pipeline
 def rna_pipeline(config, r):
@@ -69,7 +71,7 @@ def rna_pipeline(config, r):
     return P
 ```
 
-The decorator syntax requires `from __future__ import annotations` so that `Fastq[fastq]` in the return annotation is stored as a string rather than evaluated (which would raise `NameError` on `fastq`). The original `R.register(...)` API continues to work unchanged.
+The original `R.register(...)` API continues to work unchanged.
 
 ## Running one sample
 
@@ -169,8 +171,9 @@ Each output lives at `outdir/{rule}/{hash16}/{filename}`. The 16-character hash 
 
 ```python
 @r.command("bwa mem {ref} {fastq} > {bam}", threads=4, ram="8Gi")
-def align(fastq: Fastq, ref: str) -> Bam[bam]:
+def align(fastq: Fastq, ref: str):
     """Align reads with BWA-MEM."""
+    return Bam[bam]
 
 dag.execute(resource_caps={"threads": 16, "ram": parse_resource("64Gi")})
 ```
@@ -204,12 +207,14 @@ class SortedBam(Bam):
     filename = "sorted.bam"
 
 @r.command("samtools sort {bam} -o {sorted_bam}")
-def sort(bam: Bam) -> SortedBam[sorted_bam]:
+def sort(bam: Bam):
     """Sort BAM by coordinate with samtools."""
+    return SortedBam[sorted_bam]
 
 @r.command("featureCounts -a {gene_model} {bam} -o {counts}")
-def quantify(bam: SortedBam, gene_model: str) -> Counts[counts]:  # only accepts sorted bam
+def quantify(bam: SortedBam, gene_model: str):  # only accepts sorted bam
     """Count reads per gene using featureCounts."""
+    return Counts[counts]
 ```
 
 ## Failure handling
@@ -232,8 +237,9 @@ A rule with multiple declared outputs runs its command **once**; all co-outputs 
 
 ```python
 @r.command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
-def align(fastq: Fastq, ref: str) -> (Bam[bam], Log[log]):
+def align(fastq: Fastq, ref: str):
     """Align reads with BWA-MEM, capturing the log."""
+    return Bam[bam], Log[log]
 
 P = Pipeline()
 P.fastq = R.raw_fastq(path=config.path)

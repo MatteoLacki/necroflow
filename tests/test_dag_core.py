@@ -334,3 +334,12 @@ def test_command_decorator_annotation_fallback():
     r = Rules()
     r.register("fallback", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}")
     assert r.fallback.outputs.specs == {"txt": Txt}
+
+
+def test_command_unannotated_input_raises():
+    """Unannotated input is invisible to the decorator → unknown placeholder → ValueError."""
+    r = Rules()
+    with pytest.raises(ValueError, match="unknown placeholders"):
+        @r.command("echo {word} > {txt}")
+        def make_txt(word):   # missing annotation — word absent from inputs_specs
+            return Txt[txt]
