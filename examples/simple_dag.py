@@ -72,7 +72,7 @@ def sort_bam(bam: Bam) -> SortedBam[sorted_bam]:
     """Sort BAM by coordinate with samtools."""
 
 @r.command("featureCounts -a {gene_model} {bam} -o {counts}")
-def quantify(bam: SortedBam, gene_model: str) -> (Counts[counts], QcReport[qcreport]):
+def quantify(bam: SortedBam, gene_model: str) -> Counts[counts]:
     """Count reads per gene using featureCounts."""
 
 @r.command("gatk HaplotypeCaller -I {bam} -O {vcf} --caller {caller}")
@@ -95,7 +95,7 @@ def basic_pipeline(config, r):
     P.fastq = r.raw_fastq(path=config.path)
     P.bam, P.align_log = r.align(P.fastq, ref=config.ref)
     P.sorted_bam = r.sort_bam(P.bam)
-    P.counts, P.qc = r.quantify(P.sorted_bam, gene_model=config.gene_model)
+    P.counts = r.quantify(P.sorted_bam, gene_model=config.gene_model)
     return P
 
 

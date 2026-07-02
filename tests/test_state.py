@@ -13,8 +13,8 @@ class C(NodeType): pass
 R = Rules()
 R.register("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
 R.register("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
-R.register("fail_c", Inputs(x=str), Outputs(c=C), "exit 1")
-R.register("signal_c", Inputs(x=str), Outputs(c=C), "kill -TERM $$")
+R.register("fail_c", Inputs(x=str), Outputs(c=C), "{{ : {c}; exit 1; }}")
+R.register("signal_c", Inputs(x=str), Outputs(c=C), "{{ : {c}; kill -TERM $$; }}")
 
 
 def _node(tmp_path, key="rule/fp/out.txt"):

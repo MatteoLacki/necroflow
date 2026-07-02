@@ -14,12 +14,12 @@ class D(NodeType): filename = "d.txt"
 R = Rules()
 R.register("make_a",       Inputs(x=str), Outputs(a=A),        "touch {a}")
 R.register("make_ab",      Inputs(x=str), Outputs(a=A, b=B),   "touch {a} {b}")
-R.register("make_only_a",  Inputs(x=str), Outputs(a=A, b=B),   "touch {a}")
+R.register("make_only_a",  Inputs(x=str), Outputs(a=A, b=B),   "touch {a} {b}; rm {b}")
 R.register("make_b",       Inputs(a=A),   Outputs(b=B),        "touch {b}")
 R.register("make_c",       Inputs(a=A),   Outputs(c=C),        "touch {c}")
 R.register("make_c_from_b",Inputs(b=B),   Outputs(c=C),        "touch {c}")
-R.register("fail_a",       Inputs(x=str), Outputs(a=A),        "exit 1")
-R.register("no_output_a",  Inputs(x=str), Outputs(a=A),        "true")   # exits 0, creates nothing
+R.register("fail_a",       Inputs(x=str), Outputs(a=A),        "{{ : {a}; exit 1; }}")
+R.register("no_output_a",  Inputs(x=str), Outputs(a=A),        "{{ : {a}; true; }}")  # exits 0, creates nothing
 R.register("make_a_heavy", Inputs(x=str), Outputs(a=A),        "touch {a}", Constraints(threads=4))
 
 

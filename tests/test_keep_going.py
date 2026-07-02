@@ -9,7 +9,7 @@ class D(NodeType): pass
 R = Rules()
 R.register("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
 R.register("make_b", Inputs(x=str), Outputs(b=B), "touch {b}")
-R.register("fail_c", Inputs(a=A), Outputs(c=C), "exit 1")   # always fails
+R.register("fail_c", Inputs(a=A), Outputs(c=C), "{{ : {c}; exit 1; }}")  # always fails
 R.register("make_d", Inputs(c=C), Outputs(d=D), "touch {d}")
 
 

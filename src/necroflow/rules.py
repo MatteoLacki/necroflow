@@ -71,6 +71,24 @@ class Rule:
         output_names = list(outputs.specs.keys())
         self._multi = len(output_names) > 1
         self._return_type = namedtuple(f"{name}_outputs", output_names) if self._multi else None
+        if command is not None:
+            self._validate_command(name, inputs, outputs, command)
+
+    @staticmethod
+    def _validate_command(name, inputs, outputs, command):
+        import re
+        text = command if isinstance(command, str) else " ".join(str(c) for c in command)
+        placeholders = set(re.findall(r'\{(\w+)\}', text))
+        all_names = set(inputs.specs) | set(outputs.specs)
+        unknown = placeholders - all_names
+        missing_outputs = set(outputs.specs) - placeholders
+        errors = []
+        if unknown:
+            errors.append(f"unknown placeholders: {sorted(unknown)}")
+        if missing_outputs:
+            errors.append(f"outputs not referenced in command: {sorted(missing_outputs)}")
+        if errors:
+            raise ValueError(f"Rule {name!r}: " + "; ".join(errors))
 
     @property
     def resources(self) -> dict[str, int]:

@@ -263,3 +263,35 @@ def test_pipeline_duplicate_raises():
     P.txt = R.make_txt(word="hi")
     with pytest.raises(ValueError):
         P.txt = R.make_txt(word="world")
+
+
+# ── command placeholder validation ────────────────────────────────────────────
+
+def test_register_unknown_placeholder_raises():
+    r = Rules()
+    with pytest.raises(ValueError, match="unknown placeholders"):
+        r.register("bad", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt} {typo}")
+
+
+def test_register_missing_output_raises():
+    r = Rules()
+    with pytest.raises(ValueError, match="outputs not referenced in command"):
+        r.register("bad", Inputs(word=str), Outputs(txt=Txt, log=Log), "echo {word} > {txt}")
+
+
+def test_register_list_command_missing_output_raises():
+    r = Rules()
+    with pytest.raises(ValueError, match="outputs not referenced in command"):
+        r.register("bad", Inputs(word=str), Outputs(txt=Txt, log=Log), ["echo {word} > {txt}", "echo done"])
+
+
+def test_register_unreferenced_input_is_allowed():
+    r = Rules()
+    r.register("ok", Inputs(word=str), Outputs(txt=Txt), "touch {txt}")
+    assert r.ok is not None
+
+
+def test_register_valid_command_ok():
+    r = Rules()
+    r.register("good", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}")
+    assert r.good is not None
