@@ -11,6 +11,8 @@ Python pipeline framework inspired by Snakemake. Define rules, wire them into pi
 
 A local browser GUI for visualising pipelines and launching runs is available at [necroflow_gui](https://github.com/MatteoLacki/necroflow_gui).
 
+See [COMPARISON.md](COMPARISON.md) for a detailed comparison with Snakemake, Nextflow, Luigi, CWL/WDL, and Prefect/Airflow across 20 axes.
+
 ## Core ideas
 
 - **Rules** describe how to produce outputs from inputs — shell command templates with typed I/O.
