@@ -40,6 +40,7 @@ class NodeType(metaclass=NodeTypeMeta):
     """
 
     filename: str | None = None
+    invalidator = None
 
     @staticmethod
     def _type_name(ann) -> str:

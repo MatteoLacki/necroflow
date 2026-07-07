@@ -53,19 +53,56 @@ def _acquire_lock(outdir: Path):
         fh.close()
 
 
+def _remove_rule_output_dir(node) -> bool:
+    """Remove the whole rule-call output directory for node, if it exists."""
+    if node.path is None:
+        return False
+    output_dir = node.path.parent
+    if not output_dir.exists():
+        return False
+    shutil.rmtree(output_dir)
+    _logger.cleaned(node)
+    return True
+
+
+def _remove_output_path(node) -> bool:
+    """Remove only node.path, leaving siblings and side files in the rule-call dir."""
+    if node.path is None or not node.path.exists():
+        return False
+    if node.path.is_dir():
+        shutil.rmtree(node.path)
+    else:
+        node.path.unlink()
+    _logger.cleaned(node)
+    return True
+
+
+def _can_remove_parent_dir(parent, children: dict, final_keys: set, active_keys: set) -> bool:
+    """Return True when every active co-output in a rule-call is cleanable."""
+    siblings = [n for n in parent.output_nodes.values() if n.key in active_keys]
+    if not siblings:
+        return False
+    if any(s.key in final_keys for s in siblings):
+        return False
+    return all(
+        all(c.state == NodeState.UP_TO_DATE for c in children[s.key])
+        for s in siblings
+    )
+
+
 def _cleanup_parents(node, children: dict, final_keys: set, active_keys: set) -> int:
-    """Delete output of each parent whose all children are now UP_TO_DATE (intermediates only)."""
+    """Delete each finished intermediate parent's whole rule-call output directory."""
     n_cleaned = 0
+    seen_dirs: set[Path] = set()
     for parent in node.parents:
-        if parent.key not in active_keys or parent.key in final_keys:
+        if parent.key not in active_keys or parent.key in final_keys or parent.path is None:
             continue
-        if all(c.state == NodeState.UP_TO_DATE for c in children[parent.key]):
-            if parent.path is not None and parent.path.exists():
-                if parent.path.is_dir():
-                    shutil.rmtree(parent.path)
-                else:
-                    parent.path.unlink()
-                _logger.cleaned(parent)
+        output_dir = parent.path.parent
+        if output_dir in seen_dirs:
+            continue
+        if _can_remove_parent_dir(parent, children, final_keys, active_keys):
+            seen_dirs.add(output_dir)
+            if _remove_rule_output_dir(parent):
                 n_cleaned += 1
     return n_cleaned
 
@@ -97,13 +134,19 @@ def _prepare_active(pipeline, outdir: Path, autoclean: bool, dry_run: bool):
 
     n_cleaned = 0
     if autoclean and not dry_run:
+        active_dirs = {n.path.parent for n in active if n.path is not None}
+        cleaned_dirs: set[Path] = set()
         for n in nodes:
-            if n.state == NodeState.ORPHAN and n.path is not None and n.path.exists():
-                if n.path.is_dir():
-                    shutil.rmtree(n.path)
-                else:
-                    n.path.unlink()
-                _logger.cleaned(n)
+            if n.state != NodeState.ORPHAN or n.path is None:
+                continue
+            output_dir = n.path.parent
+            if output_dir in cleaned_dirs:
+                continue
+            if output_dir not in active_dirs:
+                if _remove_rule_output_dir(n):
+                    cleaned_dirs.add(output_dir)
+                    n_cleaned += 1
+            elif _remove_output_path(n):
                 n_cleaned += 1
 
     for n in active:
@@ -217,9 +260,9 @@ def execute(
                     ready = [n for n in active if n.state == NodeState.READY]
                     remaining = [n for n in active if n.state in needs_run]
                     for node in scheduler(ready, remaining):
-                        # skip co-outputs whose sibling is already running or done
+                        # skip co-outputs whose sibling is already running
                         coouts = [c for c in node.output_nodes.values() if c.key in active_keys and c is not node]
-                        if any(c.state in (NodeState.RUNNING, NodeState.UP_TO_DATE) for c in coouts):
+                        if any(c.state == NodeState.RUNNING for c in coouts):
                             continue
                         job_res = node.rule.resources
                         # run if all capped resources have room, or nothing else is running (solo fallback)

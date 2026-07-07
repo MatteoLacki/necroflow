@@ -154,6 +154,42 @@ for node in P.nodes:
 
 Each output lives at `outdir/{rule}/{hash16}/{filename}`. The 16-character hash captures the entire upstream config chain, including rule name, command, config values, parent fingerprints, and declared `Inputs`/`Outputs` types (`Constraints` are excluded — execution resources don't affect output identity).
 
+During path resolution, necroflow validates generated paths against the filesystem's `NAME_MAX` and `PATH_MAX` limits. If a rule name, filename, output directory, or complete generated path would exceed those limits, path resolution fails before execution starts.
+
+### Rule work directories
+
+Commands may use the built-in `{workdir}` placeholder to refer to the rule-call output directory: `outdir/{rule}/{hash16}`. Use it for tools that need to write a directory of side files or temporary computation products that should live next to the declared outputs:
+
+```python
+@r.command("dosomething --tmp {workdir}/scratch -o {result}")
+def compute(input: Input):
+    return Result[result]
+```
+
+The `{workdir}` directory is created before the command runs. Files written there are kept by default, just like declared outputs, because the directory is part of the cached rule-call result. The name `workdir` is reserved for this built-in placeholder and cannot be used as an input or output name.
+
+Command template validation is intentionally strict about outputs: every declared output name must appear in the command template. Declared inputs and config values may be unused; if they are passed to the rule call, they still participate in the output fingerprint. Any placeholder that does appear must be a declared input, a declared output, or a built-in placeholder such as `{workdir}`.
+
+### Custom invalidation
+
+A `NodeType` may define an optional `invalidator` callback next to `filename`. The callback receives the concrete `Node` and must return a stable string token. Necroflow stores that token under the node's `.rip/` metadata after a successful run and marks the node `STALE` if the token is missing or changes later.
+
+```python
+import hashlib
+from pathlib import Path
+
+def sha256_of_path(node):
+    return hashlib.sha256(Path(node.config["path"]).read_bytes()).hexdigest()
+
+class ToolBinary(NodeType):
+    filename = "tool.ready"
+    invalidator = sha256_of_path
+```
+
+Use this for external dependencies that should invalidate a cached node without becoming normal necroflow outputs, such as a binary, script, or selected source tree hash. Types without `invalidator` use the normal cache behavior. If the callback raises, execution fails fast instead of guessing whether the cache is valid.
+
+Invalidators are evaluated during the initial node classification at the start of `execute()`. After a job succeeds, necroflow recomputes and stores the token for that node's outputs, but it does not re-run all invalidators between tasks in the same execution. If an external dependency changes while a pipeline is already running, that change is detected on the next `execute()` invocation.
+
 - Re-running with the same inputs is a no-op (cache hit).
 - Changing any upstream parameter, command, or declared type produces a new path — old results are never overwritten.
 - A parent whose mtime is newer than a child triggers a content-hash check: if the parent's bytes are unchanged, the child is **not** re-run. Only a genuine content change marks children STALE.
@@ -250,7 +286,7 @@ P.bam, P.log = R.align(P.fastq, ref="hg38")
 
 ## Cleaning orphan outputs
 
-Outputs that existed from a previous run but are no longer in the required subgraph are classified as `ORPHAN`. Pass `autoclean=True` to delete them per-file (files via `unlink`, directories via `rmtree`):
+Outputs that existed from a previous run but are no longer in the required subgraph are classified as `ORPHAN`. Pass `autoclean=True` to delete them. Intermediate rule-call directories are removed as whole directories once all downstream work is complete, so side files written under `{workdir}` are cleaned together with the declared outputs:
 
 ```python
 dag.execute(autoclean=True)
@@ -276,7 +312,7 @@ necroflow --outdir results [-c N|all] [--constraint KEY=VALUE ...] \
 | `-c N` / `-call` | Thread cap — integer or `all` (default: all CPUs). |
 | `--constraint KEY=VALUE` | Additional resource cap. Repeatable. Accepts SI/binary suffixes. |
 | `--keep-going` / `-k` | Continue past failures; collect all errors at the end. |
-| `--autoclean` | Delete orphan and intermediate outputs. |
+| `--autoclean` | Delete orphan outputs and intermediate rule-call directories, including `{workdir}` side files. |
 | `--dry-run` / `-n` | Show what would run without executing. |
 
 ```bash

@@ -1,4 +1,6 @@
+import hashlib
 import time
+from pathlib import Path
 
 import pytest
 
@@ -188,3 +190,156 @@ def test_interrupted_node_reruns_on_retry(tmp_path):
 
     assert x.path.stat().st_mtime == x_mtime
     assert y.path.stat().st_mtime > y_mtime
+
+
+# --- integration: NodeType invalidators ---
+
+def _sha256_file(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_nodetype_invalidator_external_file_change_reruns_node(tmp_path):
+    dependency = tmp_path / "tool.bin"
+    dependency.write_text("v1")
+
+    def external_hash(node):
+        return _sha256_file(Path(node.config["dependency"]))
+
+    class ExternalInvalidated(NodeType):
+        filename = "external.txt"
+        invalidator = external_hash
+
+    r = Rules()
+    r.register(
+        "make_external",
+        Inputs(text=str, dependency=str),
+        Outputs(out=ExternalInvalidated),
+        "echo {text} > {out}",
+    )
+    P = Pipeline()
+    P.out = r.make_external(text="payload", dependency=str(dependency))
+
+    execute = DAG(outdir=tmp_path)
+    execute.add(P)
+    execute.execute()
+    mtime_before = P.out.path.stat().st_mtime
+
+    time.sleep(0.05)
+    dependency.write_text("v2")
+    execute.execute()
+
+    assert P.out.path.stat().st_mtime > mtime_before
+
+
+def test_nodetype_invalidator_output_file_change_reruns_node(tmp_path):
+    def output_hash(node):
+        return _sha256_file(node.path)
+
+    class OutputHashInvalidated(NodeType):
+        filename = "output-hash.txt"
+        invalidator = output_hash
+
+    r = Rules()
+    r.register("make_output_hash", Inputs(text=str), Outputs(out=OutputHashInvalidated), "echo {text} > {out}")
+    P = Pipeline()
+    P.out = r.make_output_hash(text="payload")
+    dag = DAG(outdir=tmp_path)
+    dag.add(P)
+    dag.execute()
+
+    P.out.path.write_text("manual edit\n")
+    assert P.out.path.read_text().strip() == "manual edit"
+
+    dag.execute()
+
+    assert P.out.path.read_text().strip() == "payload"
+
+
+def test_nodetype_invalidator_missing_metadata_reruns_node(tmp_path):
+    def output_hash(node):
+        return _sha256_file(node.path)
+
+    class OutputInvalidated(NodeType):
+        filename = "output.txt"
+        invalidator = output_hash
+
+    r = Rules()
+    r.register("make_output", Inputs(text=str), Outputs(out=OutputInvalidated), "echo {text} > {out}")
+    P = Pipeline()
+    P.out = r.make_output(text="payload")
+    dag = DAG(outdir=tmp_path)
+    dag.add(P)
+    dag.execute()
+    token_file = P.out.path.parent / ".rip" / (P.out.path.name + ".invalidation")
+    assert token_file.exists()
+    token_file.unlink()
+    mtime_before = P.out.path.stat().st_mtime
+
+    time.sleep(0.05)
+    dag.execute()
+
+    assert P.out.path.stat().st_mtime > mtime_before
+
+
+def test_nodetype_invalidator_exception_fails_fast(tmp_path):
+    should_raise = {"value": False}
+
+    def maybe_raise(node):
+        if should_raise["value"]:
+            raise RuntimeError("invalidator failed")
+        return "ok"
+
+    class RaisingInvalidator(NodeType):
+        filename = "raising.txt"
+        invalidator = maybe_raise
+
+    r = Rules()
+    r.register("make_raising", Inputs(text=str), Outputs(out=RaisingInvalidator), "echo {text} > {out}")
+    P = Pipeline()
+    P.out = r.make_raising(text="payload")
+    dag = DAG(outdir=tmp_path)
+    dag.add(P)
+    dag.execute()
+
+    should_raise["value"] = True
+    with pytest.raises(RuntimeError, match="invalidator failed"):
+        dag.execute()
+
+
+def test_multi_output_invalidator_reruns_shared_command_once(tmp_path):
+    dependency = tmp_path / "dep.txt"
+    dependency.write_text("v1")
+    count = tmp_path / "count.txt"
+    count.write_text("0")
+
+    def external_hash(node):
+        return _sha256_file(Path(node.config["dependency"]))
+
+    class InvalidatedA(NodeType):
+        filename = "a.txt"
+        invalidator = external_hash
+
+    class PlainB(NodeType):
+        filename = "b.txt"
+
+    r = Rules()
+    r.register(
+        "make_pair",
+        Inputs(dependency=str, count=str),
+        Outputs(a=InvalidatedA, b=PlainB),
+        "n=$(cat {count}); n=$((n + 1)); echo $n > {count}; echo a > {a}; echo b > {b}",
+    )
+    P = Pipeline()
+    P.a, P.b = r.make_pair(dependency=str(dependency), count=str(count))
+    dag = DAG(outdir=tmp_path)
+    dag.add(P)
+
+    dag.execute()
+    assert count.read_text().strip() == "1"
+
+    dependency.write_text("v2")
+    dag.execute()
+
+    assert count.read_text().strip() == "2"
+    assert P.a.path.exists()
+    assert P.b.path.exists()

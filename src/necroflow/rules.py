@@ -4,6 +4,8 @@ from collections import namedtuple
 
 from necroflow.nodes import Node, _is_nodetype
 
+BUILTIN_COMMAND_PLACEHOLDERS = {"workdir"}
+
 _SI_SUFFIXES = {"K": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15}
 _BIN_SUFFIXES = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50}
 
@@ -68,6 +70,12 @@ class Rule:
         self.info = info
         self._pos_inputs = [(n, t) for n, t in inputs.specs.items() if _is_nodetype(t)]
         self._kw_inputs = {n: t for n, t in inputs.specs.items() if not _is_nodetype(t)}
+        reserved = BUILTIN_COMMAND_PLACEHOLDERS & (set(inputs.specs) | set(outputs.specs))
+        if reserved:
+            raise ValueError(
+                f"Rule {name!r}: reserved command placeholder name used as input/output: "
+                f"{sorted(reserved)}"
+            )
         output_names = list(outputs.specs.keys())
         self._multi = len(output_names) > 1
         self._return_type = namedtuple(f"{name}_outputs", output_names) if self._multi else None
@@ -79,7 +87,7 @@ class Rule:
         import re
         text = command if isinstance(command, str) else " ".join(str(c) for c in command)
         placeholders = set(re.findall(r'\{(\w+)\}', text))
-        all_names = set(inputs.specs) | set(outputs.specs)
+        all_names = set(inputs.specs) | set(outputs.specs) | BUILTIN_COMMAND_PLACEHOLDERS
         unknown = placeholders - all_names
         missing_outputs = set(outputs.specs) - placeholders
         errors = []

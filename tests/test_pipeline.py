@@ -107,6 +107,13 @@ def test_pipeline_save(tmp_path):
     assert "Pipeline" in out.read_text()
 
 
+def test_workdir_is_reserved_input_output_name():
+    with pytest.raises(ValueError, match="reserved command placeholder"):
+        Rules().register("bad_input", Inputs(workdir=str), Outputs(a=A), "touch {a}")
+    with pytest.raises(ValueError, match="reserved command placeholder"):
+        Rules().register("bad_output", Inputs(x=str), Outputs(workdir=A), "touch {workdir}")
+
+
 # ── DAG deduplication ─────────────────────────────────────────────────────────
 
 def test_dag_deduplicates_shared_nodes():

@@ -13,6 +13,8 @@ class D(NodeType): filename = "d.txt"
 
 R = Rules()
 R.register("make_a",       Inputs(x=str), Outputs(a=A),        "touch {a}")
+R.register("make_a_workdir", Inputs(x=str), Outputs(a=A),       "mkdir -p {workdir}/scratch; echo {x} > {workdir}/scratch/value.txt; touch {a}")
+R.register("make_a_from_workdir", Inputs(x=str), Outputs(a=A),  "mkdir -p {workdir}/tool-results; echo {x} > {workdir}/tool-results/a.txt; mv {workdir}/tool-results/a.txt {a}")
 R.register("make_ab",      Inputs(x=str), Outputs(a=A, b=B),   "touch {a} {b}")
 R.register("make_only_a",  Inputs(x=str), Outputs(a=A, b=B),   "touch {a} {b}; rm {b}")
 R.register("make_b",       Inputs(a=A),   Outputs(b=B),        "touch {b}")
@@ -48,6 +50,28 @@ def test_execute_handles_outdir_with_spaces(tmp_path):
     execute(P, outdir)
 
     assert P.a.path.exists()
+
+
+def test_workdir_placeholder_resolves_to_rule_output_dir(tmp_path):
+    """{workdir} gives commands a retained side-output directory for scratch results."""
+    P = Pipeline()
+    P.a = R.make_a_workdir(x="x")
+
+    execute(P, tmp_path)
+
+    assert (P.a.path.parent / "scratch" / "value.txt").read_text().strip() == "x"
+
+
+def test_workdir_can_stage_results_before_final_output_move(tmp_path):
+    """A command may write tool results under {workdir}, then move the final artifact to {output}."""
+    P = Pipeline()
+    P.a = R.make_a_from_workdir(x="final contents")
+
+    execute(P, tmp_path)
+
+    assert P.a.path.read_text().strip() == "final contents"
+    assert (P.a.path.parent / "tool-results").is_dir()
+    assert not (P.a.path.parent / "tool-results" / "a.txt").exists()
 
 
 def test_execute_via_dag(tmp_path):
@@ -457,6 +481,16 @@ def test_autoclean_deletes_intermediates(tmp_path):
     assert P.c.path.exists()
     assert not P.b.path.exists()
     assert not P.a.path.exists()
+
+
+def test_autoclean_deletes_intermediate_workdir(tmp_path):
+    """autoclean=True removes the whole rule-call directory, including {workdir} side files."""
+    P = Pipeline()
+    P.a = R.make_a_workdir(x="x")
+    P.b = R.make_b(P.a)
+    execute(P, tmp_path, autoclean=True)
+    assert P.b.path.exists()
+    assert not P.a.path.parent.exists()
 
 
 def test_autoclean_false_leaves_intermediates(tmp_path):

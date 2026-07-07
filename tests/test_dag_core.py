@@ -2,6 +2,7 @@
 provenance, Inputs/Outputs validation, NodeType subtyping, pipeline_label."""
 import pytest
 from pathlib import Path
+import necroflow.dag as dag_core
 from necroflow import NodeType, Inputs, Outputs, Rules, Pipeline
 from necroflow.dag import (
     _accumulated_config,
@@ -51,6 +52,27 @@ def test_resolve_paths_hash_is_16_chars(tmp_path):
     txt = R.make_txt(word="hi")
     resolve_paths([txt], tmp_path)
     assert len(txt.path.parent.name) == 16
+
+
+def test_resolve_paths_rejects_component_over_name_max(tmp_path, monkeypatch):
+    class LongName(NodeType):
+        filename = "x" * 11
+
+    r = Rules()
+    r.register("make_long_name", Inputs(word=str), Outputs(out=LongName), "echo {word} > {out}")
+    node = r.make_long_name(word="hi")
+    monkeypatch.setattr(dag_core, "_filesystem_limits", lambda path: (10, 4096))
+
+    with pytest.raises(ValueError, match="NAME_MAX"):
+        resolve_paths([node], tmp_path)
+
+
+def test_resolve_paths_rejects_total_path_over_path_max(tmp_path, monkeypatch):
+    node = R.make_txt(word="hi")
+    monkeypatch.setattr(dag_core, "_filesystem_limits", lambda path: (255, 20))
+
+    with pytest.raises(ValueError, match="PATH_MAX"):
+        resolve_paths([node], tmp_path)
 
 
 # ── fingerprinting ────────────────────────────────────────────────────────────

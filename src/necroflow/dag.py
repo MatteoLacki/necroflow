@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shlex
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,42 @@ import tomlkit
 from necroflow.nodes import Node, NodeState, NodeType, NodeTypeMeta, _is_nodetype, _topo_sort
 from necroflow.rules import Inputs, Outputs, Constraints, Rule, Rules, parse_resource
 
+
+
+def _filesystem_limits(path: Path) -> tuple[int | None, int | None]:
+    """Return (NAME_MAX, PATH_MAX) for the nearest existing parent of path."""
+    for candidate in (path, *path.parents):
+        if not candidate.exists():
+            continue
+        try:
+            name_max = os.pathconf(candidate, "PC_NAME_MAX")
+        except (OSError, ValueError):
+            name_max = None
+        try:
+            path_max = os.pathconf(candidate, "PC_PATH_MAX")
+        except (OSError, ValueError):
+            path_max = None
+        return name_max, path_max
+    return None, None
+
+
+def _check_path_limits(path: Path) -> None:
+    name_max, path_max = _filesystem_limits(path)
+    if name_max is not None:
+        for part in path.parts:
+            if part in (path.anchor, os.sep, ""):
+                continue
+            length = len(os.fsencode(part))
+            if length > name_max:
+                raise ValueError(
+                    f"path component too long ({length} > NAME_MAX {name_max}): {part!r}"
+                )
+    if path_max is not None:
+        length = len(os.fsencode(os.fspath(path)))
+        if length > path_max:
+            raise ValueError(
+                f"path too long ({length} > PATH_MAX {path_max}): {path}"
+            )
 
 
 def _content_hash(path: Path) -> str:
@@ -33,8 +70,39 @@ def _accumulated_config(node: Node) -> dict:
     return config
 
 
+def _invalidator(node: Node):
+    if node.node_type is None:
+        return None
+    return getattr(node.node_type, "invalidator", None)
+
+
+def _invalidation_file(node: Node) -> Path:
+    return node.path.parent / ".rip" / (node.path.name + ".invalidation")
+
+
+def _invalidation_token(node: Node) -> str | None:
+    invalidator = _invalidator(node)
+    if invalidator is None:
+        return None
+    token = invalidator(node)
+    if not isinstance(token, str):
+        raise TypeError(
+            f"invalidator for {node.node_type.__name__} must return str, "
+            f"got {type(token).__name__}"
+        )
+    return token
+
+
+def _has_changed_invalidation(node: Node) -> bool:
+    token = _invalidation_token(node)
+    if token is None:
+        return False
+    token_path = _invalidation_file(node)
+    return not token_path.exists() or token_path.read_text() != token
+
+
 def write_dependencies(node: Node) -> None:
-    """Write dependencies.toml and per-output content hashes into node.path.parent.
+    """Write dependencies.toml, content hashes, and invalidation tokens.
 
     Call after the job succeeds. Co-outputs share a directory, so calling this for
     any one of them writes metadata for all siblings via node.output_nodes.
@@ -50,6 +118,9 @@ def write_dependencies(node: Node) -> None:
     for onode in node.output_nodes.values():
         if onode.path is not None and onode.path.exists():
             (rip / (onode.path.name + ".hash")).write_text(_content_hash(onode.path))
+            token = _invalidation_token(onode)
+            if token is not None:
+                _invalidation_file(onode).write_text(token)
 
 
 def _output_mtime(path: Path) -> float:
@@ -107,6 +178,8 @@ def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
                     continue  # parent re-ran but content unchanged
                 stale = True
                 break
+        if _has_changed_invalidation(node):
+            stale = True
         node.state = NodeState.STALE if stale else NodeState.UP_TO_DATE
 
 
@@ -125,6 +198,7 @@ def resolve_command(node: Node) -> str | list[str] | None:
     subs.update(node.config)
     for oname, onode in node.output_nodes.items():
         subs[oname] = onode.path
+    subs["workdir"] = node.path.parent
     if isinstance(node.command, list):
         return [c.format(**subs) for c in node.command]
     quoted = {k: shlex.quote(str(v)) if isinstance(v, Path) else v for k, v in subs.items()}
@@ -139,7 +213,9 @@ def resolve_paths(nodes: list[Node], outdir: Path | str) -> None:
     """
     outdir = Path(outdir)
     for node in nodes:
-        node.path = outdir / node.key
+        path = outdir / node.key
+        _check_path_limits(path)
+        node.path = path
 
 
 
