@@ -63,6 +63,45 @@ def _load_factory(spec: str) -> Callable:
     return getattr(module, func_name)
 
 
+def _dedupe_preserve_order(labels: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for label in labels:
+        if label not in seen:
+            seen.add(label)
+            result.append(label)
+    return result
+
+
+def _load_reap_labels(path: Path, names: list[str]) -> list[str]:
+    if not names:
+        return []
+    if not path.exists():
+        raise SystemExit(f"error: reap file not found: {path}")
+    doc = tomlkit.parse(path.read_text(encoding="utf-8"))
+    labels: list[str] = []
+    for name in names:
+        if name not in doc:
+            raise SystemExit(f"error: reap target set {name!r} not found in {path}")
+        value = doc[name]
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise SystemExit(
+                f"error: reap target set {name!r} must be a list of strings"
+            )
+        labels.extend(value)
+    return labels
+
+
+def _resolve_invalidation_keys(pipeline, labels: list[str]) -> set[str]:
+    if not labels:
+        return set()
+    by_label = {n.pipeline_label: n for n in pipeline.nodes if n.pipeline_label}
+    missing = [label for label in labels if label not in by_label]
+    if missing:
+        raise SystemExit(f"error: invalidation labels not found in pipeline: {missing}")
+    return {by_label[label].key for label in labels}
+
+
 def _resolve_request(pipeline, labels: list[str]) -> list:
     """Map pipeline_label strings to Node objects."""
     by_label = {n.pipeline_label: n for n in pipeline.nodes if n.pipeline_label}
@@ -160,11 +199,36 @@ def main(argv=None) -> None:
         dest="dry_run",
         help="Show what would run without executing anything.",
     )
+    parser.add_argument(
+        "--invalidate",
+        action="append",
+        default=[],
+        metavar="LABEL",
+        help="Force an already-requested pipeline label to rerun. Repeatable.",
+    )
+    parser.add_argument(
+        "--reap",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Force labels from NAME in reap.toml to rerun. Repeatable.",
+    )
+    parser.add_argument(
+        "--reap-file",
+        default=Path("reap.toml"),
+        type=Path,
+        metavar="PATH",
+        help="TOML file containing named invalidation label sets (default: reap.toml).",
+    )
 
     args = parser.parse_args(argv)
+    invalidation_labels = _dedupe_preserve_order(
+        list(args.invalidate) + _load_reap_labels(args.reap_file, args.reap)
+    )
 
     dag = DAG(args.outdir)
     combos: list[tuple[str, object, list]] = []
+    forced_stale_keys: set[str] = set()
 
     for job_path_str in args.jobs:
         job_path = Path(job_path_str)
@@ -182,6 +246,7 @@ def main(argv=None) -> None:
             factory_config = {k: v for k, v in config_dict.items() if not k.startswith(".")}
             P = factory(factory_config)
             request = _resolve_request(P, request_labels) if request_labels is not None else _sinks(P)
+            forced_stale_keys.update(_resolve_invalidation_keys(P, invalidation_labels))
             dag.add(P, request=request)
             combos.append((label, P, request))
 
@@ -198,6 +263,7 @@ def main(argv=None) -> None:
         keep_going=args.keep_going,
         autoclean=args.autoclean,
         dry_run=args.dry_run,
+        forced_stale_keys=forced_stale_keys,
     )
 
     if args.dry_run:

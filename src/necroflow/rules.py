@@ -61,12 +61,14 @@ class Rule:
         command: str | list[str],
         constraints: Constraints | None = None,
         info: str | None = None,
+        repeat: int = 1,
     ):
         self.__name__ = name
         self.inputs = inputs
         self.outputs = outputs
         self.command = command
         self.constraints = constraints.specs if constraints else {}
+        self.repeat = self._validate_repeat(repeat)
         self.info = info
         self._pos_inputs = [(n, t) for n, t in inputs.specs.items() if _is_nodetype(t)]
         self._kw_inputs = {n: t for n, t in inputs.specs.items() if not _is_nodetype(t)}
@@ -81,6 +83,12 @@ class Rule:
         self._return_type = namedtuple(f"{name}_outputs", output_names) if self._multi else None
         if command is not None:
             self._validate_command(name, inputs, outputs, command)
+
+    @staticmethod
+    def _validate_repeat(repeat: int) -> int:
+        if isinstance(repeat, bool) or not isinstance(repeat, int) or repeat < 1:
+            raise ValueError(f"repeat must be a positive integer, got {repeat!r}")
+        return repeat
 
     @staticmethod
     def _validate_command(name, inputs, outputs, command):
@@ -234,10 +242,11 @@ class Rules:
         command: str | list[str],
         constraints: Constraints | None = None,
         info: str | None = None,
+        repeat: int = 1,
     ) -> None:
         if name in self._registry:
             raise ValueError(f"Rule {name!r} already registered")
-        rule = Rule(name, inputs, outputs, command, constraints, info)
+        rule = Rule(name, inputs, outputs, command, constraints, info, repeat)
         self._registry[name] = rule
         self.__dict__[name] = rule
 
@@ -257,6 +266,8 @@ class Rules:
                 "Align reads with BWA-MEM."
                 return Bam[bam], Log[log]
         """
+        repeat = constraints.pop("repeat", 1)
+
         def decorator(fn):
             rule_name, inputs_specs, outputs_specs, info = _parse_rule_fn(fn)
             constraints_obj = Constraints(**constraints) if constraints else None
@@ -267,6 +278,7 @@ class Rules:
                 cmd,
                 constraints_obj,
                 info,
+                repeat,
             )
             return self.__dict__[rule_name]
         return decorator
@@ -292,6 +304,8 @@ class Rules:
         import ast
         import inspect
         import textwrap
+
+        repeat = constraints.pop("repeat", 1)
 
         def decorator(fn):
             rule_name, inputs_specs, outputs_specs, info = _parse_rule_fn(fn)
@@ -326,6 +340,7 @@ class Rules:
                 cmd,
                 constraints_obj,
                 info,
+                repeat,
             )
             return self.__dict__[rule_name]
 

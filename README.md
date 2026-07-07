@@ -218,6 +218,8 @@ dag.execute(resource_caps={"threads": 16, "ram": parse_resource("64Gi")})
 
 Resource values accept SI (`K M G T P` = powers of 1000) and binary (`Ki Mi Gi Ti Pi` = powers of 1024) suffixes — e.g. `"8Gi"` is 8 GiB, `"8G"` is 8 GB. A job whose requirement exceeds the cap still runs solo when nothing else is running.
 
+Rules also accept `repeat=N` in `R.register(...)`, `@r.command(...)`, and `@r.rule(...)` for Snakemake-style compatibility. Necroflow stores it as `rule.repeat` and validates that it is a positive integer, but it is currently metadata only: it does not make the executor run the command multiple times and it is not part of scheduling resources or output fingerprints.
+
 By default the scheduler prioritises nodes from the **smallest connected component** of remaining work — this tends to finish whole samples before starting new ones, keeping memory pressure low.
 
 ```python
@@ -304,7 +306,9 @@ necroflow ships a `necroflow` command. Each positional argument is a **job TOML*
 
 ```bash
 necroflow --outdir results [-c N|all] [--constraint KEY=VALUE ...] \
-          [--keep-going] [--autoclean] [--dry-run] JOB.toml [JOB2.toml ...]
+          [--keep-going] [--autoclean] [--dry-run] \
+          [--invalidate LABEL ...] [--reap NAME ...] [--reap-file PATH] \
+          JOB.toml [JOB2.toml ...]
 ```
 
 | Flag | Meaning |
@@ -314,9 +318,19 @@ necroflow --outdir results [-c N|all] [--constraint KEY=VALUE ...] \
 | `--keep-going` / `-k` | Continue past failures; collect all errors at the end. |
 | `--autoclean` | Delete orphan outputs and intermediate rule-call directories, including `{workdir}` side files. |
 | `--dry-run` / `-n` | Show what would run without executing. |
+| `--invalidate LABEL` | Force an already-requested pipeline label to rerun. Repeatable. |
+| `--reap NAME` | Force labels listed under `NAME` in `reap.toml` to rerun. Repeatable. |
+| `--reap-file PATH` | TOML file for named invalidation sets (default: `reap.toml`). |
 
 ```bash
-necroflow --outdir results -c8 --constraint ram=64Gi job.toml
+necroflow --outdir results --invalidate counts job.toml
+necroflow --outdir results --reap quick --reap-file reap.toml job.toml
+```
+
+`--invalidate` and `--reap` do not override `.requests` and do not request extra outputs. They only mark matching labels stale when those labels are already in the active requested subgraph. A `reap.toml` file contains top-level named label lists:
+
+```toml
+quick = ["counts", "qc"]
 ```
 
 ### Job TOML format

@@ -319,6 +319,29 @@ def test_register_valid_command_ok():
     assert r.good is not None
 
 
+def test_register_repeat_metadata():
+    r = Rules()
+    r.register("repeat_rule", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=3)
+    assert r.repeat_rule.repeat == 3
+    assert "repeat" not in r.repeat_rule.resources
+
+
+def test_register_repeat_must_be_positive_int():
+    r = Rules()
+    with pytest.raises(ValueError, match="repeat must be a positive integer"):
+        r.register("bad_repeat", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=0)
+    with pytest.raises(ValueError, match="repeat must be a positive integer"):
+        r.register("bad_repeat_bool", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=True)
+
+
+def test_repeat_does_not_affect_fingerprint():
+    r1 = Rules()
+    r1.register("make", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=1)
+    r2 = Rules()
+    r2.register("make", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=3)
+    assert r1.make(word="hi").fingerprint == r2.make(word="hi").fingerprint
+
+
 # ── body return style ─────────────────────────────────────────────────────────
 
 def test_command_decorator_body_return_single():
@@ -329,6 +352,17 @@ def test_command_decorator_body_return_single():
         return Txt[txt]
 
     assert r.make_txt.outputs.specs == {"txt": Txt}
+
+
+def test_command_decorator_accepts_repeat_and_constraints():
+    r = Rules()
+
+    @r.command("echo {word} > {txt}", threads=2, repeat=4)
+    def make_txt(word: str):
+        return Txt[txt]
+
+    assert r.make_txt.repeat == 4
+    assert r.make_txt.resources == {"threads": 2}
 
 
 def test_command_decorator_body_return_multi():
@@ -356,6 +390,18 @@ def test_command_decorator_annotation_fallback():
     r = Rules()
     r.register("fallback", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}")
     assert r.fallback.outputs.specs == {"txt": Txt}
+
+
+def test_rule_decorator_accepts_repeat_and_constraints():
+    r = Rules()
+
+    @r.rule(threads=2, repeat=5)
+    def make_txt(word: str):
+        command = "echo {word} > {txt}"
+        return Txt[txt]
+
+    assert r.make_txt.repeat == 5
+    assert r.make_txt.resources == {"threads": 2}
 
 
 def test_command_unannotated_input_raises():

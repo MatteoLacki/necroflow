@@ -1,5 +1,6 @@
 """Tests for CLI internals: _create_link_outputs, manifest keys, main()."""
 import textwrap
+import time
 import tomlkit
 import pytest
 from pathlib import Path
@@ -134,6 +135,110 @@ def job_toml(tmp_path, factory_file):
     t = tmp_path / "job.toml"
     t.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
     return t
+
+
+def _real_output(outdir: Path, filename: str) -> Path:
+    matches = [p for p in outdir.rglob(filename) if not p.is_symlink()]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def test_main_invalidate_parent_reruns_parent_and_child(tmp_path, factory_file):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    outdir = tmp_path / "out"
+    main(["--outdir", str(outdir), str(job)])
+    a_path = _real_output(outdir, "a.txt")
+    b_path = _real_output(outdir, "b.txt")
+    a_mtime = a_path.stat().st_mtime
+    b_mtime = b_path.stat().st_mtime
+
+    time.sleep(0.05)
+    main(["--outdir", str(outdir), "--invalidate", "a", str(job)])
+
+    assert a_path.stat().st_mtime > a_mtime
+    assert b_path.stat().st_mtime > b_mtime
+
+
+def test_main_invalidate_child_reruns_only_child(tmp_path, factory_file):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    outdir = tmp_path / "out"
+    main(["--outdir", str(outdir), str(job)])
+    a_path = _real_output(outdir, "a.txt")
+    b_path = _real_output(outdir, "b.txt")
+    a_mtime = a_path.stat().st_mtime
+    b_mtime = b_path.stat().st_mtime
+
+    time.sleep(0.05)
+    main(["--outdir", str(outdir), "--invalidate", "b", str(job)])
+
+    assert a_path.stat().st_mtime == a_mtime
+    assert b_path.stat().st_mtime > b_mtime
+
+
+def test_main_invalidate_inactive_label_does_not_request_it(tmp_path, factory_file):
+    job = tmp_path / "job.toml"
+    job.write_text(
+        f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n".requests" = ["a"]\n'
+    )
+    outdir = tmp_path / "out"
+
+    main(["--outdir", str(outdir), "--invalidate", "b", str(job)])
+
+    assert [p for p in outdir.rglob("a.txt") if not p.is_symlink()]
+    assert not [p for p in outdir.rglob("b.txt") if not p.is_symlink()]
+
+
+def test_main_invalidate_missing_label_errors(tmp_path, factory_file):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    with pytest.raises(SystemExit, match="invalidation labels not found"):
+        main(["--outdir", str(tmp_path / "out"), "--invalidate", "missing", str(job)])
+
+
+def test_main_reap_file_expands_invalidation_labels(tmp_path, factory_file):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    reap = tmp_path / "reap.toml"
+    reap.write_text('quick = ["b"]\n')
+    outdir = tmp_path / "out"
+    main(["--outdir", str(outdir), str(job)])
+    a_path = _real_output(outdir, "a.txt")
+    b_path = _real_output(outdir, "b.txt")
+    a_mtime = a_path.stat().st_mtime
+    b_mtime = b_path.stat().st_mtime
+
+    time.sleep(0.05)
+    main(["--outdir", str(outdir), "--reap", "quick", "--reap-file", str(reap), str(job)])
+
+    assert a_path.stat().st_mtime == a_mtime
+    assert b_path.stat().st_mtime > b_mtime
+
+
+def test_main_reap_missing_file_errors(tmp_path, factory_file):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    with pytest.raises(SystemExit, match="reap file not found"):
+        main(["--outdir", str(tmp_path / "out"), "--reap", "quick", str(job)])
+
+
+def test_main_reap_missing_group_errors(tmp_path, factory_file):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    reap = tmp_path / "reap.toml"
+    reap.write_text('other = ["a"]\n')
+    with pytest.raises(SystemExit, match="not found"):
+        main(["--outdir", str(tmp_path / "out"), "--reap", "quick", "--reap-file", str(reap), str(job)])
+
+
+def test_main_reap_invalid_group_errors(tmp_path, factory_file):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    reap = tmp_path / "reap.toml"
+    reap.write_text('quick = "a"\n')
+    with pytest.raises(SystemExit, match="list of strings"):
+        main(["--outdir", str(tmp_path / "out"), "--reap", "quick", "--reap-file", str(reap), str(job)])
 
 
 def test_main_runs_pipeline(tmp_path, factory_file):

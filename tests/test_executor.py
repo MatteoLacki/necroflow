@@ -97,6 +97,39 @@ def test_execute_idempotent(tmp_path):
     assert P.b.path.stat().st_mtime == mtime_b
 
 
+def test_forced_stale_parent_propagates_to_child(tmp_path):
+    import time
+    P = Pipeline()
+    P.a = R.make_a(x="x")
+    P.b = R.make_b(P.a)
+    execute(P, tmp_path)
+    mtime_a = P.a.path.stat().st_mtime
+    mtime_b = P.b.path.stat().st_mtime
+
+    time.sleep(0.05)
+    execute(P, tmp_path, forced_stale_keys={P.a.key})
+
+    assert P.a.path.stat().st_mtime > mtime_a
+    assert P.b.path.stat().st_mtime > mtime_b
+
+
+def test_compromised_parent_propagates_to_child(tmp_path):
+    import time
+    P = Pipeline()
+    P.a = R.make_a(x="x")
+    P.b = R.make_b(P.a)
+    execute(P, tmp_path)
+    mtime_a = P.a.path.stat().st_mtime
+    mtime_b = P.b.path.stat().st_mtime
+    P.a.state_file.write_text("running")
+
+    time.sleep(0.05)
+    execute(P, tmp_path)
+
+    assert P.a.path.stat().st_mtime > mtime_a
+    assert P.b.path.stat().st_mtime > mtime_b
+
+
 def test_conditional_pipeline(tmp_path):
     """if/else branching in a pipeline factory is fully supported.
 

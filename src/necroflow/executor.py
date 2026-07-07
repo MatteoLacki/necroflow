@@ -107,7 +107,26 @@ def _cleanup_parents(node, children: dict, final_keys: set, active_keys: set) ->
     return n_cleaned
 
 
-def _prepare_active(pipeline, outdir: Path, autoclean: bool, dry_run: bool):
+def _propagate_stale(active: list, active_keys: set) -> None:
+    """Propagate STALE from active parents to active UP_TO_DATE descendants."""
+    changed = True
+    while changed:
+        changed = False
+        for node in active:
+            if node.state != NodeState.UP_TO_DATE:
+                continue
+            if any(p.key in active_keys and p.state == NodeState.STALE for p in node.parents):
+                node.state = NodeState.STALE
+                changed = True
+
+
+def _prepare_active(
+    pipeline,
+    outdir: Path,
+    autoclean: bool,
+    dry_run: bool,
+    forced_stale_keys: set[str] | None = None,
+):
     """Resolve paths, classify nodes, clean orphans, reclassify compromised.
 
     Returns (active, active_keys, n_cleaned):
@@ -132,6 +151,12 @@ def _prepare_active(pipeline, outdir: Path, autoclean: bool, dry_run: bool):
     active = [n for n in nodes if n.state is not None and n.state != NodeState.ORPHAN]
     active_keys = {n.key for n in active}
 
+    if forced_stale_keys:
+        for n in active:
+            if n.key in forced_stale_keys and n.state == NodeState.UP_TO_DATE:
+                n.state = NodeState.STALE
+        _propagate_stale(active, active_keys)
+
     n_cleaned = 0
     if autoclean and not dry_run:
         active_dirs = {n.path.parent for n in active if n.path is not None}
@@ -149,9 +174,13 @@ def _prepare_active(pipeline, outdir: Path, autoclean: bool, dry_run: bool):
             elif _remove_output_path(n):
                 n_cleaned += 1
 
+    compromised = False
     for n in active:
         if n.state == NodeState.UP_TO_DATE and n.is_compromised:
             n.state = NodeState.STALE
+            compromised = True
+    if compromised:
+        _propagate_stale(active, active_keys)
 
     return active, active_keys, n_cleaned
 
@@ -198,6 +227,7 @@ def execute(
     autoclean: bool = False,
     dry_run: bool = False,
     node_runner=None,
+    forced_stale_keys: set[str] | None = None,
 ) -> None:
     """Run required nodes in the pipeline, respecting declared resource caps.
 
@@ -223,7 +253,9 @@ def execute(
         caps.update(resource_caps)
     outdir = Path(outdir)
     with _acquire_lock(outdir):
-        active, active_keys, n_cleaned = _prepare_active(pipeline, outdir, autoclean, dry_run)
+        active, active_keys, n_cleaned = _prepare_active(
+            pipeline, outdir, autoclean, dry_run, forced_stale_keys
+        )
 
         if dry_run:
             n_would_run = sum(1 for n in active if n.state in (NodeState.MISSING, NodeState.STALE))
