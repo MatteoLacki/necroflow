@@ -81,8 +81,12 @@ class Node:
         """
         h = hashlib.sha256()
         h.update((self.rule.__name__ if self.rule else "").encode())
-        cmd = self.command
-        h.update((cmd if isinstance(cmd, str) else repr(cmd) if cmd else "").encode())
+        recipe = getattr(self.rule, "recipe_identity", None) if self.rule else None
+        if recipe is not None:
+            h.update(f"recipe:{recipe}".encode())
+        else:
+            cmd = self.command
+            h.update((cmd if isinstance(cmd, str) else repr(cmd) if cmd else "").encode())
         for k, v in sorted(self.config.items()):
             h.update(f"{k}={v!r}".encode())
         for p in self.parents:

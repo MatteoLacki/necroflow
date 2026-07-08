@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import namedtuple
+from collections.abc import Callable
+import re
 
 from necroflow.nodes import Node, _is_nodetype
 
@@ -50,6 +52,10 @@ class Constraints:
         self.specs = kwargs
 
 
+def _pascal_to_snake(name: str) -> str:
+    return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
+
+
 class Rule:
     """A registered rule: validates inputs and produces output Nodes when called."""
 
@@ -58,15 +64,19 @@ class Rule:
         name: str,
         inputs: Inputs,
         outputs: Outputs,
-        command: str | list[str],
+        command: str | list[str] | None,
         constraints: Constraints | None = None,
         info: str | None = None,
         repeat: int = 1,
+        recipe_identity: str | None = None,
+        materializer: Callable | None = None,
     ):
         self.__name__ = name
         self.inputs = inputs
         self.outputs = outputs
         self.command = command
+        self.recipe_identity = recipe_identity
+        self.materializer = materializer
         self.constraints = constraints.specs if constraints else {}
         self.repeat = self._validate_repeat(repeat)
         self.info = info
@@ -92,7 +102,6 @@ class Rule:
 
     @staticmethod
     def _validate_command(name, inputs, outputs, command):
-        import re
         text = command if isinstance(command, str) else " ".join(str(c) for c in command)
         placeholders = set(re.findall(r'\{(\w+)\}', text))
         all_names = set(inputs.specs) | set(outputs.specs) | BUILTIN_COMMAND_PLACEHOLDERS
@@ -155,11 +164,7 @@ def _parse_rule_fn(fn) -> tuple:
     """
     import ast
     import inspect
-    import re
     import textwrap
-
-    def _pascal_to_snake(name: str) -> str:
-        return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
 
     def _parse_output_items(items):
         specs = {}
@@ -239,16 +244,64 @@ class Rules:
         name: str,
         inputs: Inputs,
         outputs: Outputs,
-        command: str | list[str],
+        command: str | list[str] | None,
         constraints: Constraints | None = None,
         info: str | None = None,
         repeat: int = 1,
+        recipe_identity: str | None = None,
+        materializer: Callable | None = None,
     ) -> None:
         if name in self._registry:
             raise ValueError(f"Rule {name!r} already registered")
-        rule = Rule(name, inputs, outputs, command, constraints, info, repeat)
+        rule = Rule(
+            name,
+            inputs,
+            outputs,
+            command,
+            constraints,
+            info,
+            repeat,
+            recipe_identity,
+            materializer,
+        )
         self._registry[name] = rule
         self.__dict__[name] = rule
+
+    def text_file(
+        self,
+        name: str,
+        output: type,
+        *,
+        input_name: str = "text",
+        encoding: str = "utf-8",
+        output_name: str | None = None,
+    ) -> None:
+        """Register a built-in rule that writes a string config value to a file.
+
+        The text is written directly by Python, not passed through the shell.
+        """
+        if input_name in BUILTIN_COMMAND_PLACEHOLDERS:
+            raise ValueError(f"text_file input_name {input_name!r} is reserved")
+        if not _is_nodetype(output):
+            raise TypeError(f"text_file output must be a NodeType, got {output!r}")
+        oname = output_name or _pascal_to_snake(output.__name__)
+        recipe = (
+            f"necroflow.text_file/v1:encoding={encoding}:"
+            f"input={input_name}:output={oname}"
+        )
+
+        def materializer(node, log) -> None:
+            node.path.write_text(node.config[input_name], encoding=encoding)
+
+        self.register(
+            name,
+            Inputs(**{input_name: str}),
+            Outputs(**{oname: output}),
+            None,
+            info=f"Write {input_name!r} to {output.__name__}.",
+            recipe_identity=recipe,
+            materializer=materializer,
+        )
 
     def command(self, cmd: str | list[str], **constraints):
         """Decorator to register a rule, with the command as the decorator argument.

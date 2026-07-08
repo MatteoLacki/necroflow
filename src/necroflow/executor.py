@@ -362,10 +362,14 @@ def execute(
 
 
 def _run_node(node, log_path) -> None:
-    cmd = resolve_command(node)
     node.path.parent.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "w") as log:
+        materializer = getattr(node.rule, "materializer", None)
+        if materializer is not None:
+            materializer(node, log)
+            return
+        cmd = resolve_command(node)
         if isinstance(cmd, list):
             subprocess.run(cmd, check=True, stdout=log, stderr=log)
         else:

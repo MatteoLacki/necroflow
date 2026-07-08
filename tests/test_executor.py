@@ -583,3 +583,93 @@ def test_resource_cap_respected(tmp_path):
     # Should complete without error (solo fallback ensures each job runs eventually)
     execute(P, tmp_path, resource_caps={"threads": 8, "ram": parse_resource("300Mi")})
     assert P.a.path.exists() and P.b.path.exists()
+
+
+# -- built-in text file rules -------------------------------------------------
+
+def test_text_file_rule_writes_exact_text(tmp_path):
+    class ConfigFile(NodeType):
+        filename = "config.json"
+
+    r = Rules()
+    r.text_file("write_config", ConfigFile)
+    P = Pipeline()
+    P.config = r.write_config(text='{"a": 1}\n')
+
+    execute(P, tmp_path)
+
+    assert P.config.path.read_text() == '{"a": 1}\n'
+
+
+def test_text_file_rule_is_idempotent(tmp_path):
+    import time
+
+    class ConfigFile(NodeType):
+        filename = "config.txt"
+
+    r = Rules()
+    r.text_file("write_config", ConfigFile)
+    P = Pipeline()
+    P.config = r.write_config(text="same\n")
+
+    execute(P, tmp_path)
+    mtime = P.config.path.stat().st_mtime
+    time.sleep(0.05)
+    execute(P, tmp_path)
+
+    assert P.config.path.stat().st_mtime == mtime
+
+
+def test_text_file_fingerprint_changes_with_text():
+    class ConfigFile(NodeType):
+        filename = "config.txt"
+
+    r = Rules()
+    r.text_file("write_config", ConfigFile)
+
+    assert r.write_config(text="a").fingerprint != r.write_config(text="b").fingerprint
+
+
+def test_text_file_recipe_distinguishes_from_shell_rule():
+    class ConfigFile(NodeType):
+        filename = "config.txt"
+
+    text_rules = Rules()
+    text_rules.text_file("write_config", ConfigFile)
+    shell_rules = Rules()
+    shell_rules.register(
+        "write_config",
+        Inputs(text=str),
+        Outputs(config_file=ConfigFile),
+        "printf %s {text} > {config_file}",
+    )
+
+    assert (
+        text_rules.write_config(text="same").fingerprint
+        != shell_rules.write_config(text="same").fingerprint
+    )
+
+
+def test_text_file_rejects_non_string_text():
+    class ConfigFile(NodeType):
+        filename = "config.txt"
+
+    r = Rules()
+    r.text_file("write_config", ConfigFile)
+
+    with pytest.raises(TypeError, match="expected <class 'str'>"):
+        r.write_config(text={"not": "text"})
+
+
+def test_text_file_custom_input_name(tmp_path):
+    class ConfigFile(NodeType):
+        filename = "config.txt"
+
+    r = Rules()
+    r.text_file("write_config", ConfigFile, input_name="serialized_config")
+    P = Pipeline()
+    P.config = r.write_config(serialized_config="custom\n")
+
+    execute(P, tmp_path)
+
+    assert P.config.path.read_text() == "custom\n"
