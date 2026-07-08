@@ -5,9 +5,11 @@
 #
 # Run with:
 #   necroflow \
-#     --pipeline examples/necroalchemy_factory.py:factory \
-#     --config   examples/necroalchemy_grid.toml \
-#     --outdir   /tmp/necroalchemy_cli
+#     --nodes-dir   /tmp/necroalchemy_nodes \
+#     --results-dir /tmp/necroalchemy_results \
+#     examples/necroalchemy_grid.toml
+
+".pipeline" = "examples/necroalchemy_factory.py:factory"
 
 word__grid = ["necroflow", "snakemake", "python"]
 n__grid    = [2, 5]

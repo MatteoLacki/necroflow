@@ -66,10 +66,25 @@ def test_skips_missing_outputs(tmp_path):
     resolve_paths(P.nodes, tmp_path)
     # do NOT create the output file
     combos = [("run1", P, _sinks(P))]
-    _create_link_outputs(outdir=tmp_path, combos=combos)
+    _create_link_outputs(results_dir=tmp_path, combos=combos)
     combo_dir = tmp_path / "run1"
     assert combo_dir.is_dir()  # dir still created
     assert not any(combo_dir.rglob("*.txt"))  # but no symlinks for missing output
+
+
+def test_link_outputs_can_use_separate_nodes_and_results_dirs(tmp_path):
+    nodes_dir = tmp_path / "nodes"
+    results_dir = tmp_path / "results"
+    P, _ = _make_pipeline_with_outputs(nodes_dir)
+
+    _create_link_outputs(results_dir, [("run1", P, _sinks(P))], nodes_dir=nodes_dir)
+
+    links = [p for p in (results_dir / "run1").rglob("*") if p.is_symlink()]
+    assert links
+    assert all(p.resolve().is_file() for p in links)
+    content = (results_dir / "run1" / "manifest.toml").read_text()
+    doc = tomlkit.parse(content)
+    assert all(not str(v).startswith("../") for v in doc["outputs"].values())
 
 
 # ── manifest ─────────────────────────────────────────────────────────────────
@@ -241,15 +256,153 @@ def test_main_reap_invalid_group_errors(tmp_path, factory_file):
         main(["--outdir", str(tmp_path / "out"), "--reap", "quick", "--reap-file", str(reap), str(job)])
 
 
-def test_main_runs_pipeline(tmp_path, factory_file):
-    """main() executes a job TOML and produces output files."""
+def test_main_validation_rejects_config_before_execution(tmp_path, factory_file):
+    validator = tmp_path / "validator.py"
+    validator.write_text(textwrap.dedent("""\
+        def validate(cfg):
+            if cfg["v"] != "ok":
+                raise ValueError("v must be ok")
+    """))
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "bad"\n')
+    outdir = tmp_path / "out"
+
+    with pytest.raises(SystemExit, match="v must be ok"):
+        main(["--outdir", str(outdir), "--validation", f"{validator}:validate", str(job)])
+
+    assert not list(outdir.rglob("a.txt"))
+
+
+def test_main_validation_is_repeatable_and_ordered(tmp_path, factory_file):
+    log = tmp_path / "validation.log"
+    validator = tmp_path / "validator.py"
+    validator.write_text(textwrap.dedent(f"""\
+        from pathlib import Path
+        LOG = Path({str(log)!r})
+        def first(cfg):
+            LOG.write_text(LOG.read_text() + "first\\n" if LOG.exists() else "first\\n")
+        def second(cfg):
+            LOG.write_text(LOG.read_text() + "second\\n")
+    """))
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    main([
+        "--outdir", str(tmp_path / "out"),
+        "--validation", f"{validator}:first",
+        "--validation", f"{validator}:second",
+        str(job),
+    ])
+
+    assert log.read_text() == "first\nsecond\n"
+
+
+def test_main_validation_sees_expanded_metadata_stripped_config(tmp_path, factory_file):
+    log = tmp_path / "seen.txt"
+    validator = tmp_path / "validator.py"
+    validator.write_text(textwrap.dedent(f"""\
+        from pathlib import Path
+        LOG = Path({str(log)!r})
+        def validate(cfg):
+            assert ".pipeline" not in cfg
+            assert ".requests" not in cfg
+            assert "v__grid" not in cfg
+            LOG.write_text(LOG.read_text() + cfg["v"] + "\\n" if LOG.exists() else cfg["v"] + "\\n")
+    """))
+    job = tmp_path / "job.toml"
+    job.write_text(
+        f'".pipeline" = "{factory_file}:factory"\n".requests" = ["a"]\nv__grid = ["one", "two"]\n'
+    )
+
+    main(["--outdir", str(tmp_path / "out"), "--validation", f"{validator}:validate", str(job)])
+
+    assert log.read_text().splitlines() == ["one", "two"]
+
+
+def test_main_validation_bad_spec_errors(tmp_path, factory_file):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    with pytest.raises(SystemExit, match="validation spec must be"):
+        main(["--outdir", str(tmp_path / "out"), "--validation", "validator.py", str(job)])
+
+
+def test_main_validation_missing_function_errors(tmp_path, factory_file):
+    validator = tmp_path / "validator.py"
+    validator.write_text("def validate(cfg):\n    pass\n")
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    with pytest.raises(SystemExit, match="validation function 'missing' not found"):
+        main(["--outdir", str(tmp_path / "out"), "--validation", f"{validator}:missing", str(job)])
+
+
+def test_iter_job_configs_python_api_validates_expanded_config(tmp_path, factory_file):
+    from necroflow.config import iter_job_configs
+
+    seen = []
+    def validate(cfg):
+        seen.append(cfg["v"])
+        if cfg["v"] == "bad":
+            raise ValueError("bad value")
+
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv__grid = ["good", "bad"]\n')
+
+    with pytest.raises(ValueError, match="bad value"):
+        list(iter_job_configs(job, validation=[validate]))
+
+    assert seen == ["good", "bad"]
+
+
+def test_main_runs_pipeline_with_default_nodes_and_results_dirs(tmp_path, factory_file, monkeypatch):
+    """main() defaults hashed outputs to nodes/ and job links to results/."""
+    monkeypatch.chdir(tmp_path)
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    main([str(job)])
+
+    assert any((tmp_path / "nodes").rglob("a.txt"))
+    assert any((tmp_path / "nodes").rglob("b.txt"))
+    assert (tmp_path / "results" / "job" / "manifest.toml").exists()
+    assert not any((tmp_path / "results" / "job").rglob("a.txt"))
+    assert any((tmp_path / "results" / "job").rglob("b.txt"))
+
+
+def test_main_runs_pipeline_with_split_nodes_and_results_dirs(tmp_path, factory_file):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    nodes_dir = tmp_path / "nodes-root"
+    results_dir = tmp_path / "results-root"
+
+    main(["--nodes-dir", str(nodes_dir), "--results-dir", str(results_dir), str(job)])
+
+    assert _real_output(nodes_dir, "a.txt").exists()
+    real_b = _real_output(nodes_dir, "b.txt")
+    assert not list(results_dir.rglob("*.txt")) or all(p.is_symlink() for p in results_dir.rglob("*.txt"))
+    assert not list((results_dir / "job").rglob("a.txt"))
+    b_links = list((results_dir / "job").rglob("b.txt"))
+    assert len(b_links) == 1 and b_links[0].is_symlink() and b_links[0].resolve() == real_b
+
+
+def test_main_outdir_keeps_single_root_compatibility(tmp_path, factory_file):
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
     outdir = tmp_path / "out"
+
     main(["--outdir", str(outdir), str(job)])
-    # both nodes should have been run (rglob includes symlinks; just check presence)
+
     assert any(outdir.rglob("a.txt"))
-    assert any(outdir.rglob("b.txt"))
+    assert (outdir / "job" / "manifest.toml").exists()
+
+
+def test_main_outdir_cannot_be_combined_with_split_dirs(tmp_path, factory_file):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    with pytest.raises(SystemExit, match="--outdir cannot be combined"):
+        main(["--outdir", str(tmp_path / "out"), "--nodes-dir", str(tmp_path / "nodes"), str(job)])
 
 
 def test_main_request_limits_execution(tmp_path, factory_file):

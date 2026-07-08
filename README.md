@@ -152,13 +152,13 @@ for node in P.nodes:
 
 ## Caching
 
-Each output lives at `outdir/{rule}/{hash16}/{filename}`. The 16-character hash captures the entire upstream config chain, including rule name, command, config values, parent fingerprints, and declared `Inputs`/`Outputs` types (`Constraints` are excluded — execution resources don't affect output identity).
+Each hashed node output lives at `nodes/{rule}/{hash16}/{filename}` by default. The 16-character hash captures the entire upstream config chain, including rule name, command, config values, parent fingerprints, and declared `Inputs`/`Outputs` types (`Constraints` are excluded — execution resources don't affect output identity).
 
 During path resolution, necroflow validates generated paths against the filesystem's `NAME_MAX` and `PATH_MAX` limits. If a rule name, filename, output directory, or complete generated path would exceed those limits, path resolution fails before execution starts.
 
 ### Rule work directories
 
-Commands may use the built-in `{workdir}` placeholder to refer to the rule-call output directory: `outdir/{rule}/{hash16}`. Use it for tools that need to write a directory of side files or temporary computation products that should live next to the declared outputs:
+Commands may use the built-in `{workdir}` placeholder to refer to the rule-call output directory: `nodes/{rule}/{hash16}` by default. Use it for tools that need to write a directory of side files or temporary computation products that should live next to the declared outputs:
 
 ```python
 @r.command("dosomething --tmp {workdir}/scratch -o {result}")
@@ -201,7 +201,7 @@ Invalidators are evaluated during the initial node classification at the start o
 
 ## Concurrency
 
-**Only one necroflow instance may run against a given `outdir` at a time.** `execute()` acquires an exclusive lock on `outdir/.rip/necroflow.lock` (via `fcntl.flock`) at startup and releases it on exit. A second instance targeting the same outdir will fail immediately with a clear error. Running two instances against *overlapping* outdirs (e.g. `results` and `results/sub`) is unsupported — there is no OS primitive to detect this, so avoid it.
+**Only one necroflow instance may run against a given node store at a time.** `execute()` acquires an exclusive lock on `nodes/.rip/necroflow.lock` (via `fcntl.flock`) at startup and releases it on exit. A second instance targeting the same node store will fail immediately with a clear error. Running two instances against *overlapping* node stores (e.g. `nodes` and `nodes/sub`) is unsupported — there is no OS primitive to detect this, so avoid it.
 
 ## Parallelism and scheduling
 
@@ -269,7 +269,7 @@ After each successful job, necroflow verifies that the declared output file exis
 
 Run state is persisted to a plain-text `state` file inside each node's `.rip/` directory between invocations. A node whose output exists on disk but whose previous run was interrupted by a signal or left in an unknown state is automatically re-executed next time.
 
-Each job's stdout/stderr is captured to `outdir/{rule}/{hash}/.rip/job.log`. On failure the log is printed to the terminal.
+Each job's stdout/stderr is captured to the node store at `{rule}/{hash}/.rip/job.log`. On failure the log is printed to the terminal.
 
 ## Multi-output rules
 
@@ -297,7 +297,7 @@ dag.execute(autoclean=True)
 Or via CLI:
 
 ```bash
-necroflow --outdir results --autoclean job.toml   # job.toml contains ".pipeline" key
+necroflow --nodes-dir nodes --results-dir results --autoclean job.toml
 ```
 
 ## Command-line interface
@@ -305,14 +305,18 @@ necroflow --outdir results --autoclean job.toml   # job.toml contains ".pipeline
 necroflow ships a `necroflow` command. Each positional argument is a **job TOML** — a self-contained file that specifies the pipeline factory, optional requested outputs, and user config params.
 
 ```bash
-necroflow --outdir results [-c N|all] [--constraint KEY=VALUE ...] \
-          [--keep-going] [--autoclean] [--dry-run] \
+necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \
+          [--constraint KEY=VALUE ...] [--keep-going] [--autoclean] [--dry-run] \
           [--invalidate LABEL ...] [--reap NAME ...] [--reap-file PATH] \
+          [--validation PATH.py:FUNCTION ...] \
           JOB.toml [JOB2.toml ...]
 ```
 
 | Flag | Meaning |
 |---|---|
+| `--nodes-dir DIR` | Hashed node output store (default: `nodes`). |
+| `--results-dir DIR` | Per-job symlink and manifest directory (default: `results`). |
+| `--outdir DIR` / `-o DIR` | Compatibility alias that uses one directory for both node outputs and job links. Cannot be combined with `--nodes-dir` or `--results-dir`. |
 | `-c N` / `-call` | Thread cap — integer or `all` (default: all CPUs). |
 | `--constraint KEY=VALUE` | Additional resource cap. Repeatable. Accepts SI/binary suffixes. |
 | `--keep-going` / `-k` | Continue past failures; collect all errors at the end. |
@@ -321,10 +325,11 @@ necroflow --outdir results [-c N|all] [--constraint KEY=VALUE ...] \
 | `--invalidate LABEL` | Force an already-requested pipeline label to rerun. Repeatable. |
 | `--reap NAME` | Force labels listed under `NAME` in `reap.toml` to rerun. Repeatable. |
 | `--reap-file PATH` | TOML file for named invalidation sets (default: `reap.toml`). |
+| `--validation PATH.py:FUNCTION` | Validate each expanded job config with a Python callable. Repeatable. |
 
 ```bash
-necroflow --outdir results --invalidate counts job.toml
-necroflow --outdir results --reap quick --reap-file reap.toml job.toml
+necroflow --invalidate counts job.toml
+necroflow --reap quick --reap-file reap.toml job.toml
 ```
 
 `--invalidate` and `--reap` do not override `.requests` and do not request extra outputs. They only mark matching labels stale when those labels are already in the active requested subgraph. A `reap.toml` file contains top-level named label lists:
@@ -349,6 +354,54 @@ sample = "NA12878"
 
 Keys starting with `.` are necroflow metadata — stripped before the dict reaches the factory. They never appear in node configs or affect output hashes. User config can freely use any name, including `pipeline` or `request`.
 
+### Config validation
+
+Use `--validation path/to/schema.py:validate` to reject malformed job configs before pipeline construction. The callable receives the same plain config dict that the pipeline factory receives and should raise an exception on invalid input:
+
+```python
+def validate(config):
+    if "sample" not in config:
+        raise ValueError("missing required key: sample")
+```
+
+```bash
+necroflow --validation schema.py:validate job.toml
+```
+
+`--validation` is repeatable and validators run in CLI order. Validation runs after `__grid` expansion and after stripping dot-prefixed necroflow metadata such as `.pipeline` and `.requests`. This callback mechanism is intentional: with `__grid`, the raw TOML file is not always the concrete config that a factory will receive, so validating the file ahead of time can miss or misreport errors in individual expanded combinations.
+
+Python-only callers can use the same loader:
+
+```python
+from necroflow import iter_job_configs
+
+for job in iter_job_configs("job.toml", validation=["schema.py:validate"]):
+    print(job.label, job.config)
+```
+
+Cerberus is available as an optional validation extra:
+
+```bash
+pip install "necroflow[validation]"
+```
+
+A validator can then load a Cerberus schema from TOML or JSON and apply it to the expanded config:
+
+```python
+import tomllib
+from pathlib import Path
+from cerberus import Validator
+
+schema = tomllib.loads(Path("schema.toml").read_text())
+
+def validate(config):
+    validator = Validator(schema, allow_unknown=False)
+    if not validator.validate(config):
+        raise ValueError(validator.errors)
+```
+
+Cerberus handles structural checks well; branch-specific or cross-parameter domain rules can live in `check_with` hooks or in ordinary Python after the Cerberus check.
+
 ### Parameter grids
 
 Any TOML key ending in `__grid` is expanded into a Cartesian product of all
@@ -367,19 +420,21 @@ This produces four pipelines: `experiment__ref+hg38__aligner+bwa`,
 
 ### Linked outputs
 
-After every run the CLI creates one subfolder per grid combo under `outdir/`:
+After every run the CLI stores hashed node outputs under `nodes/` and creates one user-facing subfolder per grid combo under `results/`:
 
 ```
+nodes/
+  {rule}/{hash16}/{file}           ← real node outputs (content-addressed)
+
 results/
-  {rule}/{hash16}/{file}           ← real outputs (content-addressed)
   experiment__ref+hg38__aligner+bwa/
-    {rule}/{hash16}/{file}         ← symlinks to requested outputs only
+    {rule}/{hash16}/{file}         ← symlinks to requested node outputs only
     manifest.toml                  ← requested output paths for this combo
   experiment__ref+hg38__aligner+bowtie2/
     ...
 ```
 
-Only the **requested** outputs (defaults to pipeline sinks) get a symlink — intermediate ancestors are excluded. `manifest.toml` lists the same outputs keyed by the Pipeline attribute name assigned in the factory:
+Only the **requested** outputs (defaults to pipeline sinks) get a symlink — intermediate ancestors are excluded. `manifest.toml` lists the same outputs keyed by the Pipeline attribute name assigned in the factory, with paths relative to the node store:
 
 ```toml
 [outputs]

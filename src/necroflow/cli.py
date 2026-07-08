@@ -25,42 +25,24 @@ request       — the subset of Pipeline nodes that the DAG must produce for a
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import os
-import sys
-from functools import cache
 from pathlib import Path
 from typing import Callable
 
 import tomlkit
 
 from necroflow import DAG
+from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import parse_resource, resolve_paths
-from necroflow.grid import iter_configs
 from necroflow.pipeline import _sinks
 
 
-@cache
 def _load_factory(spec: str) -> Callable:
     """Load a pipeline factory from 'path/to/file.py:function_name' (resolved from cwd)."""
-    if ":" not in spec:
-        raise SystemExit(
-            f"error: '.pipeline' value must be 'file.py:function_name', got {spec!r}"
-        )
-    path_str, func_name = spec.rsplit(":", 1)
-    path = Path(path_str).resolve()
-    if not path.exists():
-        raise SystemExit(f"error: pipeline file not found: {path}")
-    mod_spec = importlib.util.spec_from_file_location("_necroflow_user_pipeline", path)
-    module = importlib.util.module_from_spec(mod_spec)
-    sys.path.insert(0, str(path.parent))
     try:
-        mod_spec.loader.exec_module(module)
-    finally:
-        sys.path.pop(0)
-    if not hasattr(module, func_name):
-        raise SystemExit(f"error: function {func_name!r} not found in {path}")
-    return getattr(module, func_name)
+        return load_callable(spec, kind="pipeline")
+    except Exception as exc:
+        raise SystemExit(f"error: {exc}") from exc
 
 
 def _dedupe_preserve_order(labels: list[str]) -> list[str]:
@@ -112,20 +94,23 @@ def _resolve_request(pipeline, labels: list[str]) -> list:
 
 
 def _create_link_outputs(
-    outdir: Path,
+    results_dir: Path,
     combos: list[tuple[str, object, list]],
+    *,
+    nodes_dir: Path | None = None,
 ) -> None:
-    """Create per-combo symlink dirs and manifests under outdir/{label}/.
+    """Create per-combo symlink dirs and manifests under results_dir/{label}/.
 
     Only requested (sink) outputs get a symlink — ancestors are excluded.
     """
+    root = nodes_dir if nodes_dir is not None else results_dir
     for label, pipeline, sink_nodes in combos:
-        combo_dir = outdir / label
+        combo_dir = results_dir / label
 
         for node in sink_nodes:
             if node.path is None or not node.path.exists():
                 continue
-            rel = node.path.relative_to(outdir)
+            rel = node.path.relative_to(root)
             link = combo_dir / rel
             link.parent.mkdir(parents=True, exist_ok=True)
             if link.is_symlink() or link.exists():
@@ -135,7 +120,7 @@ def _create_link_outputs(
         manifest_lines = ["[outputs]\n"]
         for node in sink_nodes:
             if node.path is not None and node.path.exists():
-                rel = node.path.relative_to(outdir)
+                rel = node.path.relative_to(root)
                 key = (
                     node.pipeline_label
                     or node.output_name
@@ -162,11 +147,25 @@ def main(argv=None) -> None:
         help="Job TOML file(s). Each defines a pipeline, optional request, and config params.",
     )
     parser.add_argument(
-        "--outdir", "-o",
-        required=True,
+        "--nodes-dir",
+        default=None,
         type=Path,
         metavar="DIR",
-        help="Output directory.",
+        help="Directory for hashed node outputs (default: nodes).",
+    )
+    parser.add_argument(
+        "--results-dir",
+        default=None,
+        type=Path,
+        metavar="DIR",
+        help="Directory for per-job symlink outputs (default: results).",
+    )
+    parser.add_argument(
+        "--outdir", "-o",
+        default=None,
+        type=Path,
+        metavar="DIR",
+        help="Compatibility alias for using one directory for node outputs and results.",
     )
     parser.add_argument(
         "-c",
@@ -220,35 +219,59 @@ def main(argv=None) -> None:
         metavar="PATH",
         help="TOML file containing named invalidation label sets (default: reap.toml).",
     )
+    parser.add_argument(
+        "--validation",
+        action="append",
+        default=[],
+        metavar="PATH.py:FUNCTION",
+        help="Validate each expanded job config with a Python callable. Repeatable.",
+    )
 
     args = parser.parse_args(argv)
+    if args.outdir is not None and (args.nodes_dir is not None or args.results_dir is not None):
+        raise SystemExit("error: --outdir cannot be combined with --nodes-dir or --results-dir")
+    if args.outdir is not None:
+        nodes_dir = args.outdir
+        results_dir = args.outdir
+    else:
+        nodes_dir = args.nodes_dir if args.nodes_dir is not None else Path("nodes")
+        results_dir = args.results_dir if args.results_dir is not None else Path("results")
+
     invalidation_labels = _dedupe_preserve_order(
         list(args.invalidate) + _load_reap_labels(args.reap_file, args.reap)
     )
 
-    dag = DAG(args.outdir)
+    dag = DAG(nodes_dir)
     combos: list[tuple[str, object, list]] = []
     forced_stale_keys: set[str] = set()
 
     for job_path_str in args.jobs:
         job_path = Path(job_path_str)
-        if not job_path.exists():
-            raise SystemExit(f"error: job file not found: {job_path}")
-        doc = tomlkit.parse(job_path.read_text(encoding="utf-8"))
-        for label, config_dict in iter_configs(doc, base_stem=job_path.stem):
-            pipeline_spec = config_dict.get(".pipeline")
-            if not pipeline_spec:
-                raise SystemExit(
-                    f"error: job TOML {job_path} has no '.pipeline' key"
+        try:
+            job_configs = iter_job_configs(
+                job_path, validation=args.validation, require_pipeline=True
+            )
+            for job_config in job_configs:
+                if not job_config.pipeline_spec:
+                    raise SystemExit(
+                        f"error: job TOML {job_path} has no '.pipeline' key"
+                    )
+                factory = _load_factory(job_config.pipeline_spec)
+                P = factory(job_config.config)
+                request = (
+                    _resolve_request(P, job_config.request_labels)
+                    if job_config.request_labels is not None
+                    else _sinks(P)
                 )
-            factory = _load_factory(pipeline_spec)
-            request_labels = config_dict.get(".requests", None)
-            factory_config = {k: v for k, v in config_dict.items() if not k.startswith(".")}
-            P = factory(factory_config)
-            request = _resolve_request(P, request_labels) if request_labels is not None else _sinks(P)
-            forced_stale_keys.update(_resolve_invalidation_keys(P, invalidation_labels))
-            dag.add(P, request=request)
-            combos.append((label, P, request))
+                forced_stale_keys.update(
+                    _resolve_invalidation_keys(P, invalidation_labels)
+                )
+                dag.add(P, request=request)
+                combos.append((job_config.label, P, request))
+        except SystemExit:
+            raise
+        except Exception as exc:
+            raise SystemExit(f"error: {exc}") from exc
 
     cores = args.cores.strip()
     resource_caps = {"threads": os.cpu_count() or 1 if cores.lower() == "all" else int(cores)}
@@ -270,8 +293,8 @@ def main(argv=None) -> None:
         return
 
     for _label, pipeline, _nodes in combos:
-        resolve_paths(pipeline.nodes, args.outdir)
-    _create_link_outputs(args.outdir, combos)
+        resolve_paths(pipeline.nodes, nodes_dir)
+    _create_link_outputs(results_dir, combos, nodes_dir=nodes_dir)
 
 
 if __name__ == "__main__":

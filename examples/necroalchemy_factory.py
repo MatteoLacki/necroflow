@@ -5,21 +5,21 @@ can be imported directly.
 
 Usage (from the necroflow/ project root):
 
-    necroflow \\
-        --pipeline examples/necroalchemy_factory.py:factory \\
-        --config   examples/necroalchemy_grid.toml \\
-        --outdir   /tmp/necroalchemy_cli
+    necroflow \
+        --nodes-dir   /tmp/necroalchemy_nodes \
+        --results-dir /tmp/necroalchemy_results \
+        examples/necroalchemy_grid.toml
 
-After the run, /tmp/necroalchemy_cli/ contains:
-  - The hash-addressed output tree  (rule/hash/file)
-  - One symlinked subfolder per grid combo, e.g.:
-      necroalchemy_grid__word+necroflow__n+2/
-      necroalchemy_grid__word+necroflow__n+5/
-      ...
-  - A manifest.toml inside each subfolder listing sink output paths,
-    keyed by Pipeline attribute name (e.g. summary, audit).
+After the run, /tmp/necroalchemy_nodes/ contains the hash-addressed node output
+tree (rule/hash/file). /tmp/necroalchemy_results/ contains one symlinked
+subfolder per grid combo, e.g.:
+    necroalchemy_grid__word+necroflow__n+2/
+    necroalchemy_grid__word+necroflow__n+5/
+    ...
+Each result subfolder has a manifest.toml listing sink output paths, keyed by
+Pipeline attribute name (e.g. summary, audit).
 
-Multiple --config flags are accepted; each expands independently and all
+Multiple job TOML files are accepted; each expands independently and all
 pipelines share the same DAG (upstream nodes common across configs run once).
 """
 from necroalchemy import alchemy_pipeline
