@@ -517,3 +517,91 @@ def test_multiple_combos(tmp_path):
     _create_link_outputs(tmp_path, combos)
     assert (tmp_path / "combo_alpha").is_dir()
     assert (tmp_path / "combo_beta").is_dir()
+
+
+# -- CLI subcommands and canonical template -----------------------------------
+
+def test_init_creates_canonical_template(tmp_path):
+    dest = tmp_path / "workflow"
+
+    main(["init", str(dest)])
+
+    assert (dest / "pipeline.py").exists()
+    assert (dest / "job.toml").exists()
+    assert (dest / "schema.py").exists()
+
+
+def test_init_refuses_non_empty_directory_without_force(tmp_path):
+    dest = tmp_path / "workflow"
+    dest.mkdir()
+    (dest / "existing.txt").write_text("keep")
+
+    with pytest.raises(SystemExit, match="not empty"):
+        main(["init", str(dest)])
+
+
+def test_init_force_allows_existing_directory(tmp_path):
+    dest = tmp_path / "workflow"
+    dest.mkdir()
+    (dest / "existing.txt").write_text("keep")
+
+    main(["init", str(dest), "--force"])
+
+    assert (dest / "pipeline.py").exists()
+    assert (dest / "existing.txt").read_text() == "keep"
+
+
+def test_canonical_template_runs(tmp_path, monkeypatch):
+    dest = tmp_path / "workflow"
+    main(["init", str(dest)])
+    monkeypatch.chdir(dest)
+
+    main([
+        "--nodes-dir", "nodes",
+        "--results-dir", "results",
+        "--validation", "schema.py:validate",
+        "job.toml",
+    ])
+
+    manifest = dest / "results" / "job" / "manifest.toml"
+    assert manifest.exists()
+    assert "summary" in manifest.read_text()
+
+
+def test_graph_subcommand_prints_dag_without_outputs(tmp_path, factory_file, capsys):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    main(["graph", "--outdir", str(tmp_path / "out"), str(job)])
+
+    captured = capsys.readouterr().out
+    assert "make_a" in captured
+    assert "make_b" in captured
+    assert not list((tmp_path / "out").rglob("a.txt"))
+
+
+def test_outputs_subcommand_lists_requested_paths_without_execution(tmp_path, factory_file, capsys):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    main(["outputs", "--nodes-dir", str(tmp_path / "nodes"), "--results-dir", str(tmp_path / "results"), str(job)])
+
+    captured = capsys.readouterr().out
+    assert "[job]" in captured
+    assert "b\tnode=" in captured
+    assert "result=" in captured
+    assert not list((tmp_path / "nodes").rglob("a.txt"))
+
+
+def test_provenance_subcommand_prints_metadata(tmp_path, factory_file, capsys):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    nodes_dir = tmp_path / "nodes"
+    main(["--nodes-dir", str(nodes_dir), "--results-dir", str(tmp_path / "results"), str(job)])
+    output = _real_output(nodes_dir, "b.txt")
+
+    main(["provenance", str(output)])
+
+    captured = capsys.readouterr().out
+    assert "rule = make_b" in captured
+    assert "v = 'hello'" in captured

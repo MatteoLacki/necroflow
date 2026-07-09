@@ -41,3 +41,11 @@ The CLI separates hashed node storage from job-facing links. `--nodes-dir DIR` c
 `Rules.text_file(name, output, input_name="text", encoding="utf-8")` registers a single-output rule that writes a string config value directly to the output file. It is intended for large tool configs that come from job TOML tables, e.g. serialize `config["sage"]` with `json.dumps(..., sort_keys=True, indent=2) + "\n"` and pass it as `text`.
 
 Text-file rules do not run a shell command. The executor calls the built-in materializer, which avoids quoting problems and command-line length limits from `printf`-style config dumping. Their fingerprints hash the stable recipe identity (`necroflow.text_file/v1:...`) instead of command text; the string payload is still included through normal node config hashing.
+
+## Canonical template and CLI inspection
+
+`necroflow init DIR` copies the packaged canonical workflow from `src/necroflow/templates/canonical`. Keep that template byte-for-byte aligned with `examples/canonical`, which is the browsable reference copy in the repo. The template demonstrates the CLI-first shape: `pipeline.py`, `job.toml`, optional `job_grid.toml`, `schema.py`, `reap.toml`, and small input fixtures.
+
+The CLI has subcommands while preserving legacy direct runs: `necroflow JOB.toml` and `necroflow --nodes-dir nodes JOB.toml` are coerced to `necroflow run ...`. Introspection commands are intentionally lightweight: `necroflow graph JOB.toml` renders the DAG, `necroflow outputs JOB.toml` lists requested node/result paths, and `necroflow provenance PATH` reads the existing `.rip/dependencies.toml` for a cached output. Rich dry-run/explain output is not implemented yet.
+
+Package version is exposed as `necroflow.__version__`; `pyproject.toml` reads it dynamically via setuptools. Packaged data must include `templates/canonical/*` so `necroflow init` works after installation.

@@ -1,0 +1,6 @@
+".pipeline" = "pipeline.py:canonical_pipeline"
+
+input__grid = ["input.txt", "input_alt.txt"]
+
+[tool]
+mode = "uppercase"

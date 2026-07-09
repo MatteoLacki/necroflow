@@ -1,0 +1,6 @@
+".pipeline" = "pipeline.py:canonical_pipeline"
+
+input = "input.txt"
+
+[tool]
+mode = "uppercase"

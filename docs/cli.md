@@ -39,3 +39,34 @@ necroflow --reap quick --reap-file reap.toml job.toml
 ```toml
 quick = ["counts", "qc"]
 ```
+
+## Project scaffolding
+
+Create a starter workflow with:
+
+```bash
+necroflow init my-workflow
+```
+
+The command copies the canonical template into `my-workflow`. It refuses to write into a non-empty directory unless `--force` is passed.
+
+## Introspection commands
+
+Render a DAG without running jobs:
+
+```bash
+necroflow graph job.toml
+necroflow graph --output graph.txt job.toml
+```
+
+List requested output paths without running jobs:
+
+```bash
+necroflow outputs job.toml
+```
+
+Print stored provenance for an existing cached output:
+
+```bash
+necroflow provenance nodes/rule/hash/file
+```

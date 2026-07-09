@@ -111,6 +111,77 @@ The same pipeline can also be assembled and executed from Python directly; see [
 
 ## Manual
 
+Start with the canonical workflow in [examples/canonical](examples/canonical/), or copy it with `necroflow init my-workflow`.
+
+### CLI subcommands
+
+The default command form is kept for convenience, but the same run can be written explicitly:
+
+```bash
+necroflow run job.toml
+```
+
+This executes the requested pipeline and creates cached outputs under `nodes/` plus job-facing links and a manifest under `results/job/`.
+
+Create a starter workflow from the canonical template:
+
+```bash
+necroflow init my-workflow
+```
+
+Example output:
+
+```text
+created my-workflow
+```
+
+Render the requested DAG without executing commands:
+
+```bash
+necroflow graph job.toml
+```
+
+Example output, abridged:
+
+```text
+DAG  4 nodes  (1 required)
+
+import_text[RawText:raw_text] (path='input.txt')
+write_tool_config[ToolConfig:tool_config] (text='{\n  "mode": "uppercase"\n}\n')
+process_text[ProcessedText:processed_text]
+summarize[Summary:summary] *
+```
+
+List requested output paths without executing commands:
+
+```bash
+necroflow outputs job.toml
+```
+
+Example output:
+
+```text
+[job]
+summary	node=nodes/summarize/d18e6af2070f14be/summary.txt	result=results/job/summarize/d18e6af2070f14be/summary.txt
+```
+
+Inspect stored metadata for an existing cached output:
+
+```bash
+necroflow provenance nodes/summarize/d18e6af2070f14be/summary.txt
+```
+
+Example output:
+
+```text
+path = nodes/summarize/d18e6af2070f14be/summary.txt
+rule = summarize
+hash = d18e6af2070f14be
+[config]
+path = 'input.txt'
+text = '{\n  "mode": "uppercase"\n}\n'
+```
+
 - [Where outputs live and caching](docs/caching.md)
 - [Command-line interface](docs/cli.md)
 - [Job TOML and parameter grids](docs/job-toml.md)
@@ -118,6 +189,7 @@ The same pipeline can also be assembled and executed from Python directly; see [
 - [Rules and typed outputs](docs/rules.md)
 - [Generated config files](docs/generated-config-files.md)
 - [Execution, scheduling, and cleanup](docs/execution.md)
+- [Release checklist](docs/release.md)
 
 ## What is not yet implemented
 

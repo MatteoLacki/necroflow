@@ -1,3 +1,5 @@
+__version__ = "0.0.2"
+
 from necroflow.dag import (
     Node,
     NodeState,
@@ -15,6 +17,7 @@ from necroflow.nodes import iter_connected_components
 from necroflow.config import JobConfig, iter_job_configs
 
 __all__ = [
+    "__version__",
     "Node",
     "NodeType",
 

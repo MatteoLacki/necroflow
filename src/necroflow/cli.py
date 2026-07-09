@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
+from importlib import resources
 from pathlib import Path
 from typing import Callable
 
@@ -114,6 +116,151 @@ def _resolve_request(pipeline, labels: list[str]) -> list:
     return [by_label[l] for l in labels]
 
 
+def _resolve_roots(args) -> tuple[Path, Path]:
+    if args.outdir is not None and (args.nodes_dir is not None or args.results_dir is not None):
+        raise SystemExit("error: --outdir cannot be combined with --nodes-dir or --results-dir")
+    if args.outdir is not None:
+        return args.outdir, args.outdir
+    return (
+        args.nodes_dir if args.nodes_dir is not None else Path("nodes"),
+        args.results_dir if args.results_dir is not None else Path("results"),
+    )
+
+
+def _build_dag_from_jobs(args, *, nodes_dir: Path):
+    invalidation_labels = _dedupe_preserve_order(
+        list(getattr(args, "invalidate", []))
+        + _load_reap_labels(getattr(args, "reap_file", Path("reap.toml")), getattr(args, "reap", []))
+    )
+    validation_specs = getattr(args, "validation", [])
+    validators = _load_validators(validation_specs) if validation_specs else []
+
+    dag = DAG(nodes_dir)
+    combos: list[tuple[str, object, list]] = []
+    forced_stale_keys: set[str] = set()
+
+    for job_path_str in args.jobs:
+        job_path = Path(job_path_str)
+        try:
+            job_configs = iter_job_configs(job_path, require_pipeline=True)
+            for job_config in job_configs:
+                if not job_config.pipeline_spec:
+                    raise SystemExit(
+                        f"error: job TOML {job_path} has no '.pipeline' key"
+                    )
+                if validators:
+                    _validate_job_config(job_config, validators, job_path)
+                factory = _load_factory(job_config.pipeline_spec)
+                pipeline = factory(job_config.config)
+                request = (
+                    _resolve_request(pipeline, job_config.request_labels)
+                    if job_config.request_labels is not None
+                    else _sinks(pipeline)
+                )
+                forced_stale_keys.update(
+                    _resolve_invalidation_keys(pipeline, invalidation_labels)
+                )
+                dag.add(pipeline, request=request)
+                combos.append((job_config.label, pipeline, request))
+        except SystemExit:
+            raise
+        except Exception as exc:
+            raise SystemExit(f"error: {exc}") from exc
+
+    return dag, combos, forced_stale_keys
+
+
+def _parse_resource_caps(args) -> dict[str, int]:
+    cores = args.cores.strip()
+    resource_caps = {"threads": os.cpu_count() or 1 if cores.lower() == "all" else int(cores)}
+    for kv in args.constraints:
+        if "=" not in kv:
+            raise SystemExit(f"error: --constraint expects KEY=VALUE, got {kv!r}")
+        k, v = kv.split("=", 1)
+        resource_caps[k.strip()] = parse_resource(v.strip())
+    return resource_caps
+
+
+def _finalize_link_outputs(combos, *, nodes_dir: Path, results_dir: Path) -> None:
+    for _label, pipeline, _nodes in combos:
+        resolve_paths(pipeline.nodes, nodes_dir)
+    _create_link_outputs(results_dir, combos, nodes_dir=nodes_dir)
+
+
+def _run(args) -> None:
+    nodes_dir, results_dir = _resolve_roots(args)
+    dag, combos, forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    dag.execute(
+        resource_caps=_parse_resource_caps(args),
+        keep_going=args.keep_going,
+        autoclean=args.autoclean,
+        dry_run=args.dry_run,
+        forced_stale_keys=forced_stale_keys,
+    )
+    if not args.dry_run:
+        _finalize_link_outputs(combos, nodes_dir=nodes_dir, results_dir=results_dir)
+
+
+def _graph(args) -> None:
+    nodes_dir, _results_dir = _resolve_roots(args)
+    dag, _combos, _forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    dag.resolve_paths(nodes_dir)
+    rendered = str(dag)
+    if args.output:
+        Path(args.output).write_text(rendered + "\n", encoding="utf-8")
+    else:
+        print(rendered)
+
+
+def _outputs(args) -> None:
+    nodes_dir, results_dir = _resolve_roots(args)
+    _dag, combos, _forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    for label, pipeline, request in combos:
+        resolve_paths(pipeline.nodes, nodes_dir)
+        print(f"[{label}]")
+        for node in request:
+            key = (
+                node.pipeline_label
+                or node.output_name
+                or (node.node_type.__name__ if node.node_type else "output")
+            )
+            rel = node.path.relative_to(nodes_dir)
+            print(f"{key}\tnode={node.path}\tresult={results_dir / label / rel}")
+
+
+def _provenance(args) -> None:
+    path = Path(args.path)
+    rip = path.parent / ".rip" / "dependencies.toml"
+    if not rip.exists():
+        raise SystemExit(f"error: provenance metadata not found: {rip}")
+    doc = tomlkit.parse(rip.read_text(encoding="utf-8"))
+    print(f"path = {path}")
+    print(f"rule = {doc.get('rule', '')}")
+    print(f"hash = {doc.get('hash', '')}")
+    config = doc.get("config", {})
+    if config:
+        print("[config]")
+        for k, v in config.items():
+            print(f"{k} = {v!r}")
+
+
+def _init(args) -> None:
+    dest = Path(args.dir)
+    if dest.exists() and any(dest.iterdir()) and not args.force:
+        raise SystemExit(f"error: {dest} is not empty; pass --force to overwrite")
+    dest.mkdir(parents=True, exist_ok=True)
+    template_root = resources.files("necroflow") / "templates" / "canonical"
+    for item in template_root.iterdir():
+        target = dest / item.name
+        if item.is_dir():
+            shutil.copytree(item, target, dirs_exist_ok=args.force)
+        else:
+            if target.exists() and not args.force:
+                raise SystemExit(f"error: {target} exists; pass --force to overwrite")
+            target.write_bytes(item.read_bytes())
+    print(f"created {dest}")
+
+
 def _create_link_outputs(
     results_dir: Path,
     combos: list[tuple[str, object, list]],
@@ -152,172 +299,73 @@ def _create_link_outputs(
         (combo_dir / "manifest.toml").write_text("".join(manifest_lines), encoding="utf-8")
 
 
-def main(argv=None) -> None:
-    parser = argparse.ArgumentParser(
-        prog="necroflow",
-        description=(
-            "Run necroflow pipelines from job TOML files. "
-            "Each TOML must contain a 'pipeline' key ('file.py:function'). "
-            "Keys ending in __grid are expanded as a parameter grid."
-        ),
-    )
+def _add_run_options(parser) -> None:
     parser.add_argument(
         "jobs",
         nargs="+",
         metavar="JOB.toml",
         help="Job TOML file(s). Each defines a pipeline, optional request, and config params.",
     )
-    parser.add_argument(
-        "--nodes-dir",
-        default=None,
-        type=Path,
-        metavar="DIR",
-        help="Directory for hashed node outputs (default: nodes).",
-    )
-    parser.add_argument(
-        "--results-dir",
-        default=None,
-        type=Path,
-        metavar="DIR",
-        help="Directory for per-job symlink outputs (default: results).",
-    )
-    parser.add_argument(
-        "--outdir", "-o",
-        default=None,
-        type=Path,
-        metavar="DIR",
-        help="Compatibility alias for using one directory for node outputs and results.",
-    )
-    parser.add_argument(
-        "-c",
-        dest="cores",
-        default="all",
-        metavar="N|all",
-        help="Thread cap: integer or 'all' (default: all available CPUs). E.g. -c16 or -call.",
-    )
-    parser.add_argument(
-        "--constraint",
-        action="append",
-        default=[],
-        dest="constraints",
-        metavar="KEY=VALUE",
-        help="Resource cap, e.g. --constraint ram=300Mi. Repeatable. Overrides -c for threads.",
-    )
-    parser.add_argument(
-        "--keep-going", "-k",
-        action="store_true",
-        help="Continue past failures and collect all errors at the end.",
-    )
-    parser.add_argument(
-        "--autoclean",
-        action="store_true",
-        help="Delete orphan outputs before execution and intermediates as soon as they are no longer needed.",
-    )
-    parser.add_argument(
-        "--dry-run", "-n",
-        action="store_true",
-        dest="dry_run",
-        help="Show what would run without executing anything.",
-    )
-    parser.add_argument(
-        "--invalidate",
-        action="append",
-        default=[],
-        metavar="LABEL",
-        help="Force an already-requested pipeline label to rerun. Repeatable.",
-    )
-    parser.add_argument(
-        "--reap",
-        action="append",
-        default=[],
-        metavar="NAME",
-        help="Force labels from NAME in reap.toml to rerun. Repeatable.",
-    )
-    parser.add_argument(
-        "--reap-file",
-        default=Path("reap.toml"),
-        type=Path,
-        metavar="PATH",
-        help="TOML file containing named invalidation label sets (default: reap.toml).",
-    )
-    parser.add_argument(
-        "--validation",
-        action="append",
-        default=[],
-        metavar="PATH.py:FUNCTION",
-        help="Validate each expanded job config with a Python callable. Repeatable.",
-    )
+    parser.add_argument("--nodes-dir", default=None, type=Path, metavar="DIR", help="Directory for hashed node outputs (default: nodes).")
+    parser.add_argument("--results-dir", default=None, type=Path, metavar="DIR", help="Directory for per-job symlink outputs (default: results).")
+    parser.add_argument("--outdir", "-o", default=None, type=Path, metavar="DIR", help="Compatibility alias for using one directory for node outputs and results.")
+    parser.add_argument("-c", dest="cores", default="all", metavar="N|all", help="Thread cap: integer or 'all' (default: all available CPUs). E.g. -c16 or -call.")
+    parser.add_argument("--constraint", action="append", default=[], dest="constraints", metavar="KEY=VALUE", help="Resource cap, e.g. --constraint ram=300Mi. Repeatable. Overrides -c for threads.")
+    parser.add_argument("--keep-going", "-k", action="store_true", help="Continue past failures and collect all errors at the end.")
+    parser.add_argument("--autoclean", action="store_true", help="Delete orphan outputs before execution and intermediates as soon as they are no longer needed.")
+    parser.add_argument("--dry-run", "-n", action="store_true", dest="dry_run", help="Show what would run without executing anything.")
+    parser.add_argument("--invalidate", action="append", default=[], metavar="LABEL", help="Force an already-requested pipeline label to rerun. Repeatable.")
+    parser.add_argument("--reap", action="append", default=[], metavar="NAME", help="Force labels from NAME in reap.toml to rerun. Repeatable.")
+    parser.add_argument("--reap-file", default=Path("reap.toml"), type=Path, metavar="PATH", help="TOML file containing named invalidation label sets (default: reap.toml).")
+    parser.add_argument("--validation", action="append", default=[], metavar="PATH.py:FUNCTION", help="Validate each expanded job config with a Python callable. Repeatable.")
 
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="necroflow",
+        description="Run necroflow pipelines from job TOML files.",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    init_parser = subparsers.add_parser("init", help="Create a starter necroflow project")
+    init_parser.add_argument("dir", nargs="?", default=".", help="Directory to create or populate")
+    init_parser.add_argument("--force", action="store_true", help="Overwrite existing template files")
+    init_parser.set_defaults(func=_init)
+
+    graph_parser = subparsers.add_parser("graph", help="Render a DAG without executing it")
+    _add_run_options(graph_parser)
+    graph_parser.add_argument("--output", help="Write graph text to a file instead of stdout")
+    graph_parser.set_defaults(func=_graph)
+
+    outputs_parser = subparsers.add_parser("outputs", help="List requested output paths without executing")
+    _add_run_options(outputs_parser)
+    outputs_parser.set_defaults(func=_outputs)
+
+    provenance_parser = subparsers.add_parser("provenance", help="Show stored provenance for an output path")
+    provenance_parser.add_argument("path", help="Path to a cached output file")
+    provenance_parser.set_defaults(func=_provenance)
+
+    run_parser = subparsers.add_parser("run", help="Run job TOML files")
+    _add_run_options(run_parser)
+    run_parser.set_defaults(func=_run)
+    return parser
+
+
+def main(argv=None) -> None:
+    argv = list(argv) if argv is not None else None
+    commands = {"init", "graph", "outputs", "provenance", "run"}
+    if argv and argv[0] not in commands:
+        argv = ["run", *argv]
+    elif argv is None:
+        import sys
+        if len(sys.argv) > 1 and sys.argv[1] not in commands:
+            argv = ["run", *sys.argv[1:]]
+    parser = _build_parser()
     args = parser.parse_args(argv)
-    if args.outdir is not None and (args.nodes_dir is not None or args.results_dir is not None):
-        raise SystemExit("error: --outdir cannot be combined with --nodes-dir or --results-dir")
-    if args.outdir is not None:
-        nodes_dir = args.outdir
-        results_dir = args.outdir
-    else:
-        nodes_dir = args.nodes_dir if args.nodes_dir is not None else Path("nodes")
-        results_dir = args.results_dir if args.results_dir is not None else Path("results")
-
-    invalidation_labels = _dedupe_preserve_order(
-        list(args.invalidate) + _load_reap_labels(args.reap_file, args.reap)
-    )
-
-    validators = _load_validators(args.validation) if args.validation else []
-
-    dag = DAG(nodes_dir)
-    combos: list[tuple[str, object, list]] = []
-    forced_stale_keys: set[str] = set()
-
-    for job_path_str in args.jobs:
-        job_path = Path(job_path_str)
-        try:
-            job_configs = iter_job_configs(job_path, require_pipeline=True)
-            for job_config in job_configs:
-                if not job_config.pipeline_spec:
-                    raise SystemExit(
-                        f"error: job TOML {job_path} has no '.pipeline' key"
-                    )
-                if validators:
-                    _validate_job_config(job_config, validators, job_path)
-                factory = _load_factory(job_config.pipeline_spec)
-                P = factory(job_config.config)
-                request = (
-                    _resolve_request(P, job_config.request_labels)
-                    if job_config.request_labels is not None
-                    else _sinks(P)
-                )
-                forced_stale_keys.update(
-                    _resolve_invalidation_keys(P, invalidation_labels)
-                )
-                dag.add(P, request=request)
-                combos.append((job_config.label, P, request))
-        except SystemExit:
-            raise
-        except Exception as exc:
-            raise SystemExit(f"error: {exc}") from exc
-
-    cores = args.cores.strip()
-    resource_caps = {"threads": os.cpu_count() or 1 if cores.lower() == "all" else int(cores)}
-    for kv in args.constraints:
-        if "=" not in kv:
-            raise SystemExit(f"error: --constraint expects KEY=VALUE, got {kv!r}")
-        k, v = kv.split("=", 1)
-        resource_caps[k.strip()] = parse_resource(v.strip())
-
-    dag.execute(
-        resource_caps=resource_caps,
-        keep_going=args.keep_going,
-        autoclean=args.autoclean,
-        dry_run=args.dry_run,
-        forced_stale_keys=forced_stale_keys,
-    )
-
-    if args.dry_run:
+    if not hasattr(args, "func"):
+        parser.print_help()
         return
-
-    for _label, pipeline, _nodes in combos:
-        resolve_paths(pipeline.nodes, nodes_dir)
-    _create_link_outputs(results_dir, combos, nodes_dir=nodes_dir)
+    args.func(args)
 
 
 if __name__ == "__main__":
