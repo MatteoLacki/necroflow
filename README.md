@@ -7,7 +7,7 @@
 
 <p align="center"><img src="images/logo.png" width="200" alt="necroflow logo"></p>
 
-Python pipeline framework inspired by Snakemake. Define rules, wire them into pipelines, run with automatic parallelism and caching.
+Python pipeline framework inspired by Snakemake. Define rules, wire them into pipelines, run with automatic parallelism and caching. All in Python. All safe. All readable.
 
 A local browser GUI for visualising pipelines and launching runs is available at [necroflow_gui](https://github.com/MatteoLacki/necroflow_gui).
 
@@ -73,7 +73,7 @@ Create a job TOML that references the factory and carries the concrete parameter
 
 ```toml
 # job.toml
-".pipeline" = "pipeline.py:rna_pipeline"
+".pipeline" = "pipeline.py:rna_pipeline" # from pipeline import rna_pipeline
 
 path = "/data/s1.fastq.gz"
 ref = "hg38"
@@ -86,7 +86,7 @@ Run it with the `necroflow` command:
 necroflow job.toml
 ```
 
-By default, real cached node outputs go under `nodes/`, while user-facing symlinks and `manifest.toml` go under `results/`. Use explicit roots when you want them elsewhere:
+By default, real cached node outputs go under `nodes/`, while user-facing results and `manifest.toml` go under `results/`; above, simply `results/job`. Use explicit roots when you want them elsewhere:
 
 ```bash
 necroflow --nodes-dir nodes --results-dir results job.toml
