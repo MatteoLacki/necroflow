@@ -28,92 +28,83 @@ make venv
 source .venv/bin/activate
 ```
 
-## Quick example
+## Quick CLI run
+
+A necroflow command-line run starts from a job TOML file. The job points at a Python pipeline factory and carries the concrete parameters for one run.
+
+```toml
+# job.toml
+".pipeline" = "pipeline.py:rna_pipeline"
+
+path = "/data/s1.fastq.gz"
+ref = "hg38"
+gene_model = "gencode_v44"
+```
+
+Run it with the `necroflow` command:
+
+```bash
+necroflow job.toml
+```
+
+By default, real cached node outputs go under `nodes/`, while user-facing symlinks and `manifest.toml` go under `results/`. Use explicit roots when you want them elsewhere:
+
+```bash
+necroflow --nodes-dir nodes --results-dir results job.toml
+```
+
+For many runs, use multiple job TOMLs or `__grid` values inside one job TOML:
+
+```toml
+".pipeline" = "pipeline.py:rna_pipeline"
+
+path__grid = ["/data/s1.fastq.gz", "/data/s2.fastq.gz"]
+ref = "hg38"
+gene_model = "gencode_v44"
+```
+
+See [Command-line interface](docs/cli.md) and [Job TOML and parameter grids](docs/job-toml.md) for the full CLI format.
+
+## Defining a pipeline
+
+The CLI job references a normal Python factory. Rules describe typed outputs and shell commands; the factory wires rule calls into a pipeline.
 
 ```python
-from necroflow import NodeType, Rules, Pipeline, DAG, Inputs, Outputs
+# pipeline.py
+from necroflow import NodeType, Rules, Pipeline
 
-# 1. Define types
 class Fastq(NodeType):
-    """Raw sequencing reads."""
     filename = "reads.fastq.gz"
 
 class Bam(NodeType):
-    """Aligned reads."""
     filename = "aligned.bam"
 
 class Counts(NodeType):
-    """Per-gene read counts."""
     filename = "counts.txt"
 
-# 2. Register rules
 r = Rules()
 
 @r.command("ln -s {path} {fastq}")
 def raw_fastq(path: str):
-    """Symlink a raw FASTQ file into the output tree."""
     return Fastq[fastq]
 
 @r.command("bwa mem {ref} {fastq} > {bam}", threads=4)
 def align(fastq: Fastq, ref: str):
-    """Align reads to a reference genome with BWA-MEM."""
     return Bam[bam]
 
 @r.command("featureCounts -a {gene_model} {bam} -o {counts}")
 def count(bam: Bam, gene_model: str):
-    """Count reads per gene using featureCounts."""
     return Counts[counts]
 
-# 3. Build a pipeline
-def rna_pipeline(config, r):
+def rna_pipeline(config):
     P = Pipeline()
-    P.fastq = r.raw_fastq(path=config.path)
-    P.bam = r.align(P.fastq, ref=config.ref)
-    P.counts = r.count(P.bam, gene_model=config.gene_model)
+    P.fastq = r.raw_fastq(path=config["path"])
+    P.bam = r.align(P.fastq, ref=config["ref"])
+    P.counts = r.count(P.bam, gene_model=config["gene_model"])
     return P
 ```
 
-The same rule can also be registered without decorators through the explicit API:
-
-```python
-r.register(
-    "count",
-    Inputs(bam=Bam, gene_model=str),
-    Outputs(counts=Counts),
-    "featureCounts -a {gene_model} {bam} -o {counts}",
-)
-```
-
-## Running one sample
-
-`DAG("results")` sets the output directory where all computed files will be written (you can use any path you like).
-
-```python
-from types import SimpleNamespace
-
-config = SimpleNamespace(path="/data/s1.fastq.gz", ref="hg38", gene_model="gencode_v44")
-dag = DAG("results")           # output directory — change to any writable path
-dag.add(rna_pipeline(config, r))
-dag.execute()
-```
-
-## Running many samples
-
-```python
-configs = [
-    SimpleNamespace(path="/data/s1.fastq.gz", ref="hg38", gene_model="gencode_v44"),
-    SimpleNamespace(path="/data/s2.fastq.gz", ref="hg38", gene_model="gencode_v44"),
-    SimpleNamespace(path="/data/s3.fastq.gz", ref="hg38", gene_model="gencode_v44"),
-]
-
-dag = DAG("results")
-for config in configs:
-    dag.add(rna_pipeline(config, r))
-
-dag.execute()   # runs all samples in parallel, skips any already-computed outputs
-```
-
-Nodes with identical upstream configs (e.g. a shared reference index) are deduplicated across samples — recognised by hash, run once.
+The same pipeline can also be assembled and executed from Python directly; see [Rules and typed outputs](docs/rules.md) and [Execution, scheduling, and cleanup](docs/execution.md).
 
 ## Where outputs live
 
