@@ -28,46 +28,9 @@ make venv
 source .venv/bin/activate
 ```
 
-## Quick CLI run
+## Define a pipeline
 
-A necroflow command-line run starts from a job TOML file. The job points at a Python pipeline factory and carries the concrete parameters for one run.
-
-```toml
-# job.toml
-".pipeline" = "pipeline.py:rna_pipeline"
-
-path = "/data/s1.fastq.gz"
-ref = "hg38"
-gene_model = "gencode_v44"
-```
-
-Run it with the `necroflow` command:
-
-```bash
-necroflow job.toml
-```
-
-By default, real cached node outputs go under `nodes/`, while user-facing symlinks and `manifest.toml` go under `results/`. Use explicit roots when you want them elsewhere:
-
-```bash
-necroflow --nodes-dir nodes --results-dir results job.toml
-```
-
-For many runs, use multiple job TOMLs or `__grid` values inside one job TOML:
-
-```toml
-".pipeline" = "pipeline.py:rna_pipeline"
-
-path__grid = ["/data/s1.fastq.gz", "/data/s2.fastq.gz"]
-ref = "hg38"
-gene_model = "gencode_v44"
-```
-
-See [Command-line interface](docs/cli.md) and [Job TOML and parameter grids](docs/job-toml.md) for the full CLI format.
-
-## Defining a pipeline
-
-The CLI job references a normal Python factory. Rules describe typed outputs and shell commands; the factory wires rule calls into a pipeline.
+A command-line run points at a Python pipeline factory. Rules describe typed outputs and shell commands; the factory wires rule calls into a pipeline.
 
 ```python
 # pipeline.py
@@ -104,7 +67,42 @@ def rna_pipeline(config):
     return P
 ```
 
-The same pipeline can also be assembled and executed from Python directly; see [Rules and typed outputs](docs/rules.md) and [Execution, scheduling, and cleanup](docs/execution.md).
+## Run from the CLI
+
+Create a job TOML that references the factory and carries the concrete parameters for one run.
+
+```toml
+# job.toml
+".pipeline" = "pipeline.py:rna_pipeline"
+
+path = "/data/s1.fastq.gz"
+ref = "hg38"
+gene_model = "gencode_v44"
+```
+
+Run it with the `necroflow` command:
+
+```bash
+necroflow job.toml
+```
+
+By default, real cached node outputs go under `nodes/`, while user-facing symlinks and `manifest.toml` go under `results/`. Use explicit roots when you want them elsewhere:
+
+```bash
+necroflow --nodes-dir nodes --results-dir results job.toml
+```
+
+For many runs, use multiple job TOMLs or `__grid` values inside one job TOML:
+
+```toml
+".pipeline" = "pipeline.py:rna_pipeline"
+
+path__grid = ["/data/s1.fastq.gz", "/data/s2.fastq.gz"]
+ref = "hg38"
+gene_model = "gencode_v44"
+```
+
+The same pipeline can also be assembled and executed from Python directly; see [Rules and typed outputs](docs/rules.md) and [Execution, scheduling, and cleanup](docs/execution.md). See [Command-line interface](docs/cli.md) and [Job TOML and parameter grids](docs/job-toml.md) for the full CLI format.
 
 ## Where outputs live
 
