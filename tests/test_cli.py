@@ -337,10 +337,22 @@ def test_main_validation_missing_function_errors(tmp_path, factory_file):
         main(["--outdir", str(tmp_path / "out"), "--validation", f"{validator}:missing", str(job)])
 
 
-def test_iter_job_configs_python_api_validates_expanded_config(tmp_path, factory_file):
+def test_iter_job_configs_python_api_yields_expanded_configs_without_validation(tmp_path, factory_file):
+    from necroflow.config import iter_job_configs
+
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv__grid = ["good", "bad"]\n')
+
+    jobs = list(iter_job_configs(job))
+
+    assert [j.config["v"] for j in jobs] == ["good", "bad"]
+
+
+def test_python_api_callers_validate_expanded_configs_in_their_own_loop(tmp_path, factory_file):
     from necroflow.config import iter_job_configs
 
     seen = []
+
     def validate(cfg):
         seen.append(cfg["v"])
         if cfg["v"] == "bad":
@@ -350,7 +362,8 @@ def test_iter_job_configs_python_api_validates_expanded_config(tmp_path, factory
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv__grid = ["good", "bad"]\n')
 
     with pytest.raises(ValueError, match="bad value"):
-        list(iter_job_configs(job, validation=[validate]))
+        for job_config in iter_job_configs(job):
+            validate(job_config.config)
 
     assert seen == ["good", "bad"]
 

@@ -1,4 +1,4 @@
-"""Job TOML loading, grid expansion, and optional config validation."""
+"""Job TOML loading and grid expansion."""
 from __future__ import annotations
 
 import importlib.util
@@ -6,14 +6,11 @@ import sys
 from functools import cache
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator
+from typing import Any, Callable, Iterator
 
 import tomlkit
 
 from necroflow.grid import iter_configs
-
-
-Validator = Callable[[dict[str, Any]], object]
 
 
 @dataclass(frozen=True)
@@ -55,49 +52,15 @@ def load_callable(spec: str, *, kind: str = "callable") -> Callable:
     return value
 
 
-def _load_validators(validation: Iterable[str | Validator]) -> list[Validator]:
-    validators: list[Validator] = []
-    for item in validation:
-        if isinstance(item, str):
-            validators.append(load_callable(item, kind="validation"))
-        else:
-            validators.append(item)
-    return validators
-
-
-def _run_validators(
-    *,
-    validators: Iterable[Validator],
-    config: dict[str, Any],
-    job_path: Path,
-    label: str,
-) -> None:
-    for validator in validators:
-        try:
-            validator(config)
-        except Exception as exc:
-            name = getattr(validator, "__name__", repr(validator))
-            raise ValueError(
-                f"validation {name!r} failed for {job_path} [{label}]: {exc}"
-            ) from exc
-
-
 def iter_job_configs(
     path: str | Path,
     *,
-    validation: Iterable[str | Validator] = (),
     require_pipeline: bool = False,
 ) -> Iterator[JobConfig]:
-    """Yield expanded job configs and run optional user validators.
-
-    Validators see the same metadata-stripped config dict that pipeline
-    factories receive. They run after ``__grid`` expansion, once per concrete
-    job config.
-    """
+    """Yield metadata-stripped job configs after TOML grid expansion."""
     job_path = Path(path)
     if not job_path.exists():
         raise FileNotFoundError(f"job file not found: {job_path}")
-    validators = _load_validators(validation)
     doc = tomlkit.parse(job_path.read_text(encoding="utf-8"))
     for label, config_dict in iter_configs(doc, base_stem=job_path.stem):
         pipeline_spec = config_dict.get(".pipeline")
@@ -107,12 +70,6 @@ def iter_job_configs(
         factory_config = {
             k: v for k, v in config_dict.items() if not str(k).startswith(".")
         }
-        _run_validators(
-            validators=validators,
-            config=factory_config,
-            job_path=job_path,
-            label=label,
-        )
         yield JobConfig(
             label=label,
             config=factory_config,

@@ -30,7 +30,7 @@ The CLI accepts repeated `--invalidate LABEL` and `--reap NAME` options. `--reap
 
 The CLI accepts repeatable `--validation PATH.py:FUNCTION` flags. Each validator is a Python callable receiving the expanded, metadata-stripped job config dict, exactly like the pipeline factory. Validators run after `__grid` expansion and before factory construction; they should raise to reject malformed configs. This is callback-based because raw job TOML can contain grids, so pre-validating the unexpanded file is not equivalent to validating the concrete configs factories receive.
 
-`necroflow.config.iter_job_configs()` provides the same behavior for Python-only callers and yields `JobConfig` objects. Cerberus is an optional extra via `necroflow[validation]`; core necroflow does not import it unless user validator code does.
+`necroflow.config.iter_job_configs()` is intentionally validation-free: it yields expanded, metadata-stripped `JobConfig` objects. Python-only callers that want validation should call their validator explicitly inside the `for job in iter_job_configs(...)` loop. Cerberus is an optional extra via `necroflow[validation]`; core necroflow does not import it unless user validator code does.
 
 ## CLI output roots
 

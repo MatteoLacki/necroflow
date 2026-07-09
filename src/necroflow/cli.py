@@ -45,6 +45,27 @@ def _load_factory(spec: str) -> Callable:
         raise SystemExit(f"error: {exc}") from exc
 
 
+def _load_validators(specs: list[str]) -> list[Callable]:
+    validators: list[Callable] = []
+    for spec in specs:
+        try:
+            validators.append(load_callable(spec, kind="validation"))
+        except Exception as exc:
+            raise SystemExit(f"error: {exc}") from exc
+    return validators
+
+
+def _validate_job_config(job_config, validators: list[Callable], job_path: Path) -> None:
+    for validator in validators:
+        try:
+            validator(job_config.config)
+        except Exception as exc:
+            name = getattr(validator, "__name__", repr(validator))
+            raise ValueError(
+                f"validation {name!r} failed for {job_path} [{job_config.label}]: {exc}"
+            ) from exc
+
+
 def _dedupe_preserve_order(labels: list[str]) -> list[str]:
     seen = set()
     result = []
@@ -241,6 +262,8 @@ def main(argv=None) -> None:
         list(args.invalidate) + _load_reap_labels(args.reap_file, args.reap)
     )
 
+    validators = _load_validators(args.validation) if args.validation else []
+
     dag = DAG(nodes_dir)
     combos: list[tuple[str, object, list]] = []
     forced_stale_keys: set[str] = set()
@@ -248,14 +271,14 @@ def main(argv=None) -> None:
     for job_path_str in args.jobs:
         job_path = Path(job_path_str)
         try:
-            job_configs = iter_job_configs(
-                job_path, validation=args.validation, require_pipeline=True
-            )
+            job_configs = iter_job_configs(job_path, require_pipeline=True)
             for job_config in job_configs:
                 if not job_config.pipeline_spec:
                     raise SystemExit(
                         f"error: job TOML {job_path} has no '.pipeline' key"
                     )
+                if validators:
+                    _validate_job_config(job_config, validators, job_path)
                 factory = _load_factory(job_config.pipeline_spec)
                 P = factory(job_config.config)
                 request = (

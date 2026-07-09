@@ -31,7 +31,7 @@ source .venv/bin/activate
 ## Quick example
 
 ```python
-from necroflow import NodeType, Rules, Pipeline, DAG
+from necroflow import NodeType, Rules, Pipeline, DAG, Inputs, Outputs
 
 # 1. Define types
 class Fastq(NodeType):
@@ -73,7 +73,16 @@ def rna_pipeline(config, r):
     return P
 ```
 
-The original `R.register(...)` API continues to work unchanged.
+The same rule can also be registered without decorators through the explicit API:
+
+```python
+r.register(
+    "count",
+    Inputs(bam=Bam, gene_model=str),
+    Outputs(counts=Counts),
+    "featureCounts -a {gene_model} {bam} -o {counts}",
+)
+```
 
 ## Running one sample
 
@@ -84,7 +93,7 @@ from types import SimpleNamespace
 
 config = SimpleNamespace(path="/data/s1.fastq.gz", ref="hg38", gene_model="gencode_v44")
 dag = DAG("results")           # output directory — change to any writable path
-dag.add(rna_pipeline(config, R))
+dag.add(rna_pipeline(config, r))
 dag.execute()
 ```
 
@@ -99,12 +108,163 @@ configs = [
 
 dag = DAG("results")
 for config in configs:
-    dag.add(rna_pipeline(config, R))
+    dag.add(rna_pipeline(config, r))
 
 dag.execute()   # runs all samples in parallel, skips any already-computed outputs
 ```
 
 Nodes with identical upstream configs (e.g. a shared reference index) are deduplicated across samples — recognised by hash, run once.
+
+## Where outputs live
+
+`DAG("some-dir")` writes the real content-addressed node outputs directly under that directory. The CLI defaults to a split layout: hashed node outputs under `nodes/`, plus one user-facing subfolder per job/grid combo under `results/`:
+
+```
+nodes/
+  {rule}/{hash16}/{file}           ← real node outputs (content-addressed)
+
+results/
+  experiment__ref+hg38__aligner+bwa/
+    {rule}/{hash16}/{file}         ← symlinks to requested node outputs only
+    manifest.toml                  ← requested output paths for this combo
+  experiment__ref+hg38__aligner+bowtie2/
+    ...
+```
+
+Only the **requested** outputs (defaults to pipeline sinks) get a symlink — intermediate ancestors are excluded. `manifest.toml` lists the same outputs keyed by the Pipeline attribute name assigned in the factory, with paths relative to the node store:
+
+```toml
+[outputs]
+counts = "count/a3f1bc92/counts.txt"
+```
+
+The key (`counts`) matches `P.counts = R.count(...)` in the factory function.
+
+See `examples/necroalchemy_grid.toml` and `examples/necroalchemy_factory.py`
+for a runnable example.
+
+## Command-line interface
+
+necroflow ships a `necroflow` command. Each positional argument is a **job TOML** — a self-contained file that specifies the pipeline factory, optional requested outputs, and user config params.
+
+```bash
+necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \
+          [--constraint KEY=VALUE ...] [--keep-going] [--autoclean] [--dry-run] \
+          [--invalidate LABEL ...] [--reap NAME ...] [--reap-file PATH] \
+          [--validation PATH.py:FUNCTION ...] \
+          JOB.toml [JOB2.toml ...]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--nodes-dir DIR` | Hashed node output store (default: `nodes`). |
+| `--results-dir DIR` | Per-job symlink and manifest directory (default: `results`). |
+| `--outdir DIR` / `-o DIR` | Compatibility alias that uses one directory for both node outputs and job links. Cannot be combined with `--nodes-dir` or `--results-dir`. |
+| `-c N` / `-call` | Thread cap — integer or `all` (default: all CPUs). |
+| `--constraint KEY=VALUE` | Additional resource cap. Repeatable. Accepts SI/binary suffixes. |
+| `--keep-going` / `-k` | Continue past failures; collect all errors at the end. |
+| `--autoclean` | Delete orphan outputs and intermediate rule-call directories, including `{workdir}` side files. |
+| `--dry-run` / `-n` | Show what would run without executing. |
+| `--invalidate LABEL` | Force an already-requested pipeline label to rerun. Repeatable. |
+| `--reap NAME` | Force labels listed under `NAME` in `reap.toml` to rerun. Repeatable. |
+| `--reap-file PATH` | TOML file for named invalidation sets (default: `reap.toml`). |
+| `--validation PATH.py:FUNCTION` | Validate each expanded job config with a Python callable. Repeatable. |
+
+```bash
+necroflow --invalidate counts job.toml
+necroflow --reap quick --reap-file reap.toml job.toml
+```
+
+`--invalidate` and `--reap` do not override `.requests` and do not request extra outputs. They only mark matching labels stale when those labels are already in the active requested subgraph. A `reap.toml` file contains top-level named label lists:
+
+```toml
+quick = ["counts", "qc"]
+```
+
+### Job TOML format
+
+```toml
+# required — path resolved from the directory where necroflow is invoked
+".pipeline" = "path/to/factory.py:function_name"
+
+# optional — pipeline_label names to request (defaults to all sinks)
+".requests" = ["counts", "qc"]
+
+# user config — passed as a plain dict to the factory
+ref    = "hg38"
+sample = "NA12878"
+```
+
+Keys starting with `.` are necroflow metadata — stripped before the dict reaches the factory. They never appear in node configs or affect output hashes. User config can freely use any name, including `pipeline` or `request`.
+
+### Config validation
+
+Use `--validation path/to/schema.py:validate` to reject malformed job configs before pipeline construction. The callable receives the same plain config dict that the pipeline factory receives and should raise an exception on invalid input:
+
+```python
+def validate(config):
+    if "sample" not in config:
+        raise ValueError("missing required key: sample")
+```
+
+```bash
+necroflow --validation schema.py:validate job.toml
+```
+
+`--validation` is repeatable and validators run in CLI order. Validation runs after `__grid` expansion and after stripping dot-prefixed necroflow metadata such as `.pipeline` and `.requests`. This callback mechanism is intentional: with `__grid`, the raw TOML file is not always the concrete config that a factory will receive, so validating the file ahead of time can miss or misreport errors in individual expanded combinations.
+
+Python-only callers can use the same loader and validate in their own loop:
+
+```python
+from necroflow import iter_job_configs
+
+def validate(config):
+    if "sample" not in config:
+        raise ValueError("missing required key: sample")
+
+for job in iter_job_configs("job.toml"):
+    validate(job.config)
+    print(job.label, job.config)
+```
+
+Cerberus is available as an optional validation extra:
+
+```bash
+pip install "necroflow[validation]"
+```
+
+A validator can then load a Cerberus schema from TOML or JSON and apply it to the expanded config:
+
+```python
+import tomllib
+from pathlib import Path
+from cerberus import Validator
+
+schema = tomllib.loads(Path("schema.toml").read_text())
+
+def validate(config):
+    validator = Validator(schema, allow_unknown=False)
+    if not validator.validate(config):
+        raise ValueError(validator.errors)
+```
+
+Cerberus handles structural checks well; branch-specific or cross-parameter domain rules can live in `check_with` hooks or in ordinary Python after the Cerberus check.
+
+### Parameter grids
+
+Any TOML key ending in `__grid` is expanded into a Cartesian product of all
+combinations. The resulting output subfolders use the same naming scheme as
+[snakemakeconfigs](https://github.com/MatteoLacki/snakemakeconfigs).
+
+```toml
+".pipeline"   = "factory.py:factory"
+ref__grid     = ["hg38", "mm10"]
+aligner__grid = ["bwa", "bowtie2"]
+```
+
+This produces four pipelines: `experiment__ref+hg38__aligner+bwa`,
+`experiment__ref+hg38__aligner+bowtie2`, etc. Grid expansion also applies to
+`pipeline` itself, so a single job TOML can fan out across different factory functions.
 
 ## Conditional pipelines
 
@@ -336,151 +496,6 @@ Or via CLI:
 necroflow --nodes-dir nodes --results-dir results --autoclean job.toml
 ```
 
-## Command-line interface
-
-necroflow ships a `necroflow` command. Each positional argument is a **job TOML** — a self-contained file that specifies the pipeline factory, optional requested outputs, and user config params.
-
-```bash
-necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \
-          [--constraint KEY=VALUE ...] [--keep-going] [--autoclean] [--dry-run] \
-          [--invalidate LABEL ...] [--reap NAME ...] [--reap-file PATH] \
-          [--validation PATH.py:FUNCTION ...] \
-          JOB.toml [JOB2.toml ...]
-```
-
-| Flag | Meaning |
-|---|---|
-| `--nodes-dir DIR` | Hashed node output store (default: `nodes`). |
-| `--results-dir DIR` | Per-job symlink and manifest directory (default: `results`). |
-| `--outdir DIR` / `-o DIR` | Compatibility alias that uses one directory for both node outputs and job links. Cannot be combined with `--nodes-dir` or `--results-dir`. |
-| `-c N` / `-call` | Thread cap — integer or `all` (default: all CPUs). |
-| `--constraint KEY=VALUE` | Additional resource cap. Repeatable. Accepts SI/binary suffixes. |
-| `--keep-going` / `-k` | Continue past failures; collect all errors at the end. |
-| `--autoclean` | Delete orphan outputs and intermediate rule-call directories, including `{workdir}` side files. |
-| `--dry-run` / `-n` | Show what would run without executing. |
-| `--invalidate LABEL` | Force an already-requested pipeline label to rerun. Repeatable. |
-| `--reap NAME` | Force labels listed under `NAME` in `reap.toml` to rerun. Repeatable. |
-| `--reap-file PATH` | TOML file for named invalidation sets (default: `reap.toml`). |
-| `--validation PATH.py:FUNCTION` | Validate each expanded job config with a Python callable. Repeatable. |
-
-```bash
-necroflow --invalidate counts job.toml
-necroflow --reap quick --reap-file reap.toml job.toml
-```
-
-`--invalidate` and `--reap` do not override `.requests` and do not request extra outputs. They only mark matching labels stale when those labels are already in the active requested subgraph. A `reap.toml` file contains top-level named label lists:
-
-```toml
-quick = ["counts", "qc"]
-```
-
-### Job TOML format
-
-```toml
-# required — path resolved from the directory where necroflow is invoked
-".pipeline" = "path/to/factory.py:function_name"
-
-# optional — pipeline_label names to request (defaults to all sinks)
-".requests" = ["counts", "qc"]
-
-# user config — passed as a plain dict to the factory
-ref    = "hg38"
-sample = "NA12878"
-```
-
-Keys starting with `.` are necroflow metadata — stripped before the dict reaches the factory. They never appear in node configs or affect output hashes. User config can freely use any name, including `pipeline` or `request`.
-
-### Config validation
-
-Use `--validation path/to/schema.py:validate` to reject malformed job configs before pipeline construction. The callable receives the same plain config dict that the pipeline factory receives and should raise an exception on invalid input:
-
-```python
-def validate(config):
-    if "sample" not in config:
-        raise ValueError("missing required key: sample")
-```
-
-```bash
-necroflow --validation schema.py:validate job.toml
-```
-
-`--validation` is repeatable and validators run in CLI order. Validation runs after `__grid` expansion and after stripping dot-prefixed necroflow metadata such as `.pipeline` and `.requests`. This callback mechanism is intentional: with `__grid`, the raw TOML file is not always the concrete config that a factory will receive, so validating the file ahead of time can miss or misreport errors in individual expanded combinations.
-
-Python-only callers can use the same loader:
-
-```python
-from necroflow import iter_job_configs
-
-for job in iter_job_configs("job.toml", validation=["schema.py:validate"]):
-    print(job.label, job.config)
-```
-
-Cerberus is available as an optional validation extra:
-
-```bash
-pip install "necroflow[validation]"
-```
-
-A validator can then load a Cerberus schema from TOML or JSON and apply it to the expanded config:
-
-```python
-import tomllib
-from pathlib import Path
-from cerberus import Validator
-
-schema = tomllib.loads(Path("schema.toml").read_text())
-
-def validate(config):
-    validator = Validator(schema, allow_unknown=False)
-    if not validator.validate(config):
-        raise ValueError(validator.errors)
-```
-
-Cerberus handles structural checks well; branch-specific or cross-parameter domain rules can live in `check_with` hooks or in ordinary Python after the Cerberus check.
-
-### Parameter grids
-
-Any TOML key ending in `__grid` is expanded into a Cartesian product of all
-combinations. The resulting output subfolders use the same naming scheme as
-[snakemakeconfigs](https://github.com/MatteoLacki/snakemakeconfigs).
-
-```toml
-".pipeline"   = "factory.py:factory"
-ref__grid     = ["hg38", "mm10"]
-aligner__grid = ["bwa", "bowtie2"]
-```
-
-This produces four pipelines: `experiment__ref+hg38__aligner+bwa`,
-`experiment__ref+hg38__aligner+bowtie2`, etc. Grid expansion also applies to
-`pipeline` itself, so a single job TOML can fan out across different factory functions.
-
-### Linked outputs
-
-After every run the CLI stores hashed node outputs under `nodes/` and creates one user-facing subfolder per grid combo under `results/`:
-
-```
-nodes/
-  {rule}/{hash16}/{file}           ← real node outputs (content-addressed)
-
-results/
-  experiment__ref+hg38__aligner+bwa/
-    {rule}/{hash16}/{file}         ← symlinks to requested node outputs only
-    manifest.toml                  ← requested output paths for this combo
-  experiment__ref+hg38__aligner+bowtie2/
-    ...
-```
-
-Only the **requested** outputs (defaults to pipeline sinks) get a symlink — intermediate ancestors are excluded. `manifest.toml` lists the same outputs keyed by the Pipeline attribute name assigned in the factory, with paths relative to the node store:
-
-```toml
-[outputs]
-counts = "count/a3f1bc92/counts.txt"
-```
-
-The key (`counts`) matches `P.counts = R.count(...)` in the factory function.
-
-See `examples/necroalchemy_grid.toml` and `examples/necroalchemy_factory.py`
-for a runnable example.
 
 ## What is not yet implemented
 
