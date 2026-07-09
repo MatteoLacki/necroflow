@@ -1,0 +1,65 @@
+# Execution, Scheduling, and Cleanup
+
+[Back to README](../README.md)
+
+## Parallelism and scheduling
+
+`execute()` runs nodes in parallel subject to resource caps. By default the thread cap is all available CPUs. Declare per-job requirements with `Constraints`; set global caps via `resource_caps` (Python API) or CLI flags.
+
+```python
+@r.command("bwa mem {ref} {fastq} > {bam}", threads=4, ram="8Gi")
+def align(fastq: Fastq, ref: str):
+    """Align reads with BWA-MEM."""
+    return Bam[bam]
+
+dag.execute(resource_caps={"threads": 16, "ram": parse_resource("64Gi")})
+```
+
+Resource values accept SI (`K M G T P` = powers of 1000) and binary (`Ki Mi Gi Ti Pi` = powers of 1024) suffixes — e.g. `"8Gi"` is 8 GiB, `"8G"` is 8 GB. A job whose requirement exceeds the cap still runs solo when nothing else is running.
+
+Rules also accept `repeat=N` in `R.register(...)`, `@r.command(...)`, and `@r.rule(...)` for Snakemake-style compatibility. Necroflow stores it as `rule.repeat` and validates that it is a positive integer, but it is currently metadata only: it does not make the executor run the command multiple times and it is not part of scheduling resources or output fingerprints.
+
+By default the scheduler prioritises nodes from the **smallest connected component** of remaining work — this tends to finish whole samples before starting new ones, keeping memory pressure low.
+
+```python
+from necroflow import fifo_scheduler
+
+dag.execute(resource_caps={"threads": 16}, scheduler=fifo_scheduler)  # topological order instead
+```
+
+Custom schedulers:
+
+```python
+def my_scheduler(ready, remaining):
+    return sorted(ready, key=lambda n: n.rule.constraints.get("threads", 1), reverse=True)
+
+dag.execute(scheduler=my_scheduler)
+```
+
+## Failure handling
+
+```python
+dag.execute(keep_going=True)   # continue independent branches past failures
+```
+
+With `keep_going=False` (default) the first failure raises immediately. With `keep_going=True` independent branches keep running and all failures are collected into an `ExceptionGroup` at the end.
+
+After each successful job, necroflow verifies that the declared output file exists. A command that exits 0 but writes no output is treated as a failure.
+
+Run state is persisted to a plain-text `state` file inside each node's `.rip/` directory between invocations. A node whose output exists on disk but whose previous run was interrupted by a signal or left in an unknown state is automatically re-executed next time.
+
+Each job's stdout/stderr is captured to the node store at `{rule}/{hash}/.rip/job.log`. On failure the log is printed to the terminal.
+
+## Cleaning orphan outputs
+
+Outputs that existed from a previous run but are no longer in the required subgraph are classified as `ORPHAN`. Pass `autoclean=True` to delete them. Intermediate rule-call directories are removed as whole directories once all downstream work is complete, so side files written under `{workdir}` are cleaned together with the declared outputs:
+
+```python
+dag.execute(autoclean=True)
+```
+
+Or via CLI:
+
+```bash
+necroflow --nodes-dir nodes --results-dir results --autoclean job.toml
+```

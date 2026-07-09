@@ -1,0 +1,35 @@
+# Job TOML and Parameter Grids
+
+[Back to README](../README.md)
+
+## Job TOML format
+
+```toml
+# required — path resolved from the directory where necroflow is invoked
+".pipeline" = "path/to/factory.py:function_name"
+
+# optional — pipeline_label names to request (defaults to all sinks)
+".requests" = ["counts", "qc"]
+
+# user config — passed as a plain dict to the factory
+ref    = "hg38"
+sample = "NA12878"
+```
+
+Keys starting with `.` are necroflow metadata — stripped before the dict reaches the factory. They never appear in node configs or affect output hashes. User config can freely use any name, including `pipeline` or `request`.
+
+## Parameter grids
+
+Any TOML key ending in `__grid` is expanded into a Cartesian product of all
+combinations. The resulting output subfolders use the same naming scheme as
+[snakemakeconfigs](https://github.com/MatteoLacki/snakemakeconfigs).
+
+```toml
+".pipeline"   = "factory.py:factory"
+ref__grid     = ["hg38", "mm10"]
+aligner__grid = ["bwa", "bowtie2"]
+```
+
+This produces four pipelines: `experiment__ref+hg38__aligner+bwa`,
+`experiment__ref+hg38__aligner+bowtie2`, etc. Grid expansion also applies to
+`pipeline` itself, so a single job TOML can fan out across different factory functions.
