@@ -183,6 +183,19 @@ def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
         node.state = NodeState.STALE if stale else NodeState.UP_TO_DATE
 
 
+
+class _ConstraintFormatter:
+    def __init__(self, constraints: dict[str, Any]):
+        self.constraints = constraints
+
+    def __format__(self, name: str) -> str:
+        if not name:
+            raise ValueError("constraint placeholder requires a name, e.g. {constraint:threads}")
+        try:
+            return str(self.constraints[name])
+        except KeyError as exc:
+            raise KeyError(f"unknown constraint placeholder: {name}") from exc
+
 def resolve_command(node: Node) -> str | list[str] | None:
     """Format node.command with input/output paths and config values.
 
@@ -196,6 +209,11 @@ def resolve_command(node: Node) -> str | list[str] | None:
     for iname, parent in zip(pos_input_names, node.parents):
         subs[iname] = parent.path
     subs.update(node.config)
+    command_constraints = {"threads": node.rule.constraints.get("threads", node.rule.resources["threads"])}
+    command_constraints.update(node.rule.constraints)
+    for name, value in command_constraints.items():
+        subs.setdefault(name, value)
+    subs["constraint"] = _ConstraintFormatter(command_constraints)
     for oname, onode in node.output_nodes.items():
         subs[oname] = onode.path
     subs["workdir"] = node.path.parent

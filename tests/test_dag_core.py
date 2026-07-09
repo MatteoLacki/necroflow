@@ -3,7 +3,7 @@ provenance, Inputs/Outputs validation, NodeType subtyping, pipeline_label."""
 import pytest
 from pathlib import Path
 import necroflow.dag as dag_core
-from necroflow import NodeType, Inputs, Outputs, Rules, Pipeline
+from necroflow import NodeType, Inputs, Outputs, Constraints, Rules, Pipeline
 from necroflow.dag import (
     _accumulated_config,
     resolve_paths, resolve_command, write_dependencies,
@@ -175,6 +175,56 @@ def test_resolve_command_none_for_no_command(tmp_path):
     txt.command = None
     resolve_paths([txt], tmp_path)
     assert resolve_command(txt) is None
+
+
+def test_resolve_command_direct_constraint_placeholders(tmp_path):
+    r = Rules()
+    r.register(
+        "constrained",
+        Inputs(word=str),
+        Outputs(txt=Txt),
+        "tool --threads {threads} --ram {ram} --gpu {constraint:gpu} --word {word} > {txt}",
+        Constraints(threads=8, ram="4Gi", gpu=2),
+    )
+    txt = r.constrained(word="hi")
+
+    resolve_paths([txt], tmp_path)
+
+    assert resolve_command(txt) == f"tool --threads 8 --ram 4Gi --gpu 2 --word hi > {txt.path}"
+
+
+def test_resolve_command_threads_defaults_to_one(tmp_path):
+    r = Rules()
+    r.register("default_threads", Inputs(word=str), Outputs(txt=Txt), "tool --threads {threads} > {txt}")
+    txt = r.default_threads(word="hi")
+
+    resolve_paths([txt], tmp_path)
+
+    assert resolve_command(txt) == f"tool --threads 1 > {txt.path}"
+
+
+def test_constraint_placeholder_forces_constraint_when_config_name_collides(tmp_path):
+    r = Rules()
+    r.register(
+        "colliding_threads",
+        Inputs(threads=int),
+        Outputs(txt=Txt),
+        "tool --arg {threads} --scheduler {constraint:threads} > {txt}",
+        Constraints(threads=8),
+    )
+    txt = r.colliding_threads(threads=2)
+
+    resolve_paths([txt], tmp_path)
+
+    assert resolve_command(txt) == f"tool --arg 2 --scheduler 8 > {txt.path}"
+
+
+def test_unknown_constraint_placeholder_is_rejected():
+    with pytest.raises(ValueError, match=r"unknown placeholders: \['ram'\]"):
+        Rules().register("bad_ram", Inputs(word=str), Outputs(txt=Txt), "tool --ram {ram} > {txt}")
+
+    with pytest.raises(ValueError, match=r"unknown constraint placeholders: \['gpu'\]"):
+        Rules().register("bad_gpu", Inputs(word=str), Outputs(txt=Txt), "tool --gpu {constraint:gpu} > {txt}")
 
 
 # ── accumulated config ────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import namedtuple
 from collections.abc import Callable
 import re
+from string import Formatter
 
 from necroflow.nodes import Node, _is_nodetype
 
@@ -92,7 +93,7 @@ class Rule:
         self._multi = len(output_names) > 1
         self._return_type = namedtuple(f"{name}_outputs", output_names) if self._multi else None
         if command is not None:
-            self._validate_command(name, inputs, outputs, command)
+            self._validate_command(name, inputs, outputs, command, self.constraints)
 
     @staticmethod
     def _validate_repeat(repeat: int) -> int:
@@ -101,15 +102,37 @@ class Rule:
         return repeat
 
     @staticmethod
-    def _validate_command(name, inputs, outputs, command):
-        text = command if isinstance(command, str) else " ".join(str(c) for c in command)
-        placeholders = set(re.findall(r'\{(\w+)\}', text))
-        all_names = set(inputs.specs) | set(outputs.specs) | BUILTIN_COMMAND_PLACEHOLDERS
+    def _validate_command(name, inputs, outputs, command, constraints):
+        pieces = [command] if isinstance(command, str) else [str(c) for c in command]
+        placeholders: set[str] = set()
+        constraint_placeholders: set[str] = set()
+        for piece in pieces:
+            for _literal, field_name, format_spec, _conversion in Formatter().parse(piece):
+                if field_name is None:
+                    continue
+                if field_name == "constraint":
+                    if format_spec:
+                        constraint_placeholders.add(format_spec)
+                    else:
+                        placeholders.add(field_name)
+                    continue
+                # Keep the top-level field name for advanced format expressions.
+                placeholders.add(field_name.split(".", 1)[0].split("[", 1)[0])
+        constraint_names = set(constraints) | {"threads"}
+        all_names = (
+            set(inputs.specs)
+            | set(outputs.specs)
+            | BUILTIN_COMMAND_PLACEHOLDERS
+            | constraint_names
+        )
         unknown = placeholders - all_names
+        unknown_constraints = constraint_placeholders - constraint_names
         missing_outputs = set(outputs.specs) - placeholders
         errors = []
         if unknown:
             errors.append(f"unknown placeholders: {sorted(unknown)}")
+        if unknown_constraints:
+            errors.append(f"unknown constraint placeholders: {sorted(unknown_constraints)}")
         if missing_outputs:
             errors.append(f"outputs not referenced in command: {sorted(missing_outputs)}")
         if errors:

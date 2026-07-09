@@ -49,3 +49,7 @@ Text-file rules do not run a shell command. The executor calls the built-in mate
 The CLI has subcommands while preserving legacy direct runs: `necroflow JOB.toml` and `necroflow --nodes-dir nodes JOB.toml` are coerced to `necroflow run ...`. Introspection commands are intentionally lightweight: `necroflow graph JOB.toml` renders the DAG, `necroflow outputs JOB.toml` lists requested node/result paths, and `necroflow provenance PATH` reads the existing `.rip/dependencies.toml` for a cached output. Rich dry-run/explain output is not implemented yet.
 
 Package version is exposed as `necroflow.__version__`; `pyproject.toml` reads it dynamically via setuptools. Packaged data must include `templates/canonical/*` so `necroflow init` works after installation.
+
+## Constraint command placeholders
+
+Rule constraints can be interpolated into command templates. `{threads}` always resolves: it uses the declared `threads` constraint or defaults to `1`. Other direct placeholders, such as `{ram}` or `{gpu}`, are allowed only when that constraint is declared. `{constraint:name}` forces a constraint lookup and is useful when a normal config input has the same name, e.g. `{threads}` can remain the config value while `{constraint:threads}` is the scheduler thread requirement. Command-facing values are raw declared constraint values (`"32Gi"` stays `"32Gi"`); executor resource accounting still uses parsed integer values via `Rule.resources`.

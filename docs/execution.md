@@ -17,6 +17,15 @@ dag.execute(resource_caps={"threads": 16, "ram": parse_resource("64Gi")})
 
 Resource values accept SI (`K M G T P` = powers of 1000) and binary (`Ki Mi Gi Ti Pi` = powers of 1024) suffixes — e.g. `"8Gi"` is 8 GiB, `"8G"` is 8 GB. A job whose requirement exceeds the cap still runs solo when nothing else is running.
 
+Rule constraints are also available to command templates. Direct placeholders such as `{threads}` and `{ram}` resolve to the declared constraint value; `{threads}` defaults to `1` when omitted. Use `{constraint:name}` to force lookup from constraints when a config input has the same name:
+
+```python
+@r.command("tool --threads {threads} --memory {ram} --gpu {constraint:gpu} -i {inp} -o {out}",
+           threads=8, ram="32Gi", gpu=1)
+def run_tool(inp: Input):
+    return Output[out]
+```
+
 Rules also accept `repeat=N` in `R.register(...)`, `@r.command(...)`, and `@r.rule(...)` for Snakemake-style compatibility. Necroflow stores it as `rule.repeat` and validates that it is a positive integer, but it is currently metadata only: it does not make the executor run the command multiple times and it is not part of scheduling resources or output fingerprints.
 
 By default the scheduler prioritises nodes from the **smallest connected component** of remaining work — this tends to finish whole samples before starting new ones, keeping memory pressure low.
