@@ -28,6 +28,26 @@ def run_tool(inp: Input):
 
 Rules also accept `repeat=N` in `R.register(...)`, `@r.command(...)`, and `@r.rule(...)` for Snakemake-style compatibility. Necroflow stores it as `rule.repeat` and validates that it is a positive integer, but it is currently metadata only: it does not make the executor run the command multiple times and it is not part of scheduling resources or output fingerprints.
 
+## Shell selection and brace expansion
+
+String commands use Python's default `shell=True` behavior unless a shell path is provided. Choose a shell explicitly when the command depends on shell-specific behavior such as Bash brace expansion. Literal shell braces must be doubled in rule templates so Python formatting leaves them intact:
+
+```python
+@r.command("printf '%s\n' {{left,right}} > {out}")
+def make_out():
+    return Out[out]
+
+execute(P, "nodes", shellpath="/bin/bash")
+```
+
+The equivalent CLI flag is:
+
+```bash
+necroflow --shellpath /bin/bash job.toml
+```
+
+An explicit `shellpath` is included in fingerprints for string commands and recorded in provenance. List-form commands and built-in materializers do not use a shell and are not affected.
+
 By default the scheduler prioritises nodes from the **smallest connected component** of remaining work — this tends to finish whole samples before starting new ones, keeping memory pressure low.
 
 ```python

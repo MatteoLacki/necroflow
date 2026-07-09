@@ -112,6 +112,8 @@ def write_dependencies(node: Node) -> None:
         "hash": node.path.parent.name,
         "config": _accumulated_config(node),
     }
+    if node.execution_context:
+        data["execution"] = dict(node.execution_context)
     rip = node.path.parent / ".rip"
     rip.mkdir(parents=True, exist_ok=True)
     (rip / "dependencies.toml").write_text(tomlkit.dumps(data))

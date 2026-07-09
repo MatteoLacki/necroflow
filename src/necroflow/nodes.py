@@ -60,6 +60,7 @@ class Node:
     state: NodeState | None = None
     info: str | None = None
     pipeline_label: str | None = None
+    execution_context: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.info is None and self.node_type is not None:
@@ -89,6 +90,8 @@ class Node:
             h.update((cmd if isinstance(cmd, str) else repr(cmd) if cmd else "").encode())
         for k, v in sorted(self.config.items()):
             h.update(f"{k}={v!r}".encode())
+        for k, v in sorted(self.execution_context.items()):
+            h.update(f"x:{k}={v!r}".encode())
         for p in self.parents:
             h.update(p.fingerprint.encode())
             h.update((p.output_name or "").encode())

@@ -1,4 +1,5 @@
 """Tests for CLI internals: _create_link_outputs, manifest keys, main()."""
+import shutil
 import textwrap
 import time
 import tomlkit
@@ -605,3 +606,42 @@ def test_provenance_subcommand_prints_metadata(tmp_path, factory_file, capsys):
     captured = capsys.readouterr().out
     assert "rule = make_b" in captured
     assert "v = 'hello'" in captured
+
+
+def test_outputs_shellpath_matches_run_shellpath_paths(tmp_path, factory_file, capsys):
+    shell = shutil.which("sh") or "/bin/sh"
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    nodes_dir = tmp_path / "nodes"
+    results_dir = tmp_path / "results"
+
+    main(["outputs", "--shellpath", shell, "--nodes-dir", str(nodes_dir), "--results-dir", str(results_dir), str(job)])
+    predicted = capsys.readouterr().out
+    predicted_node = next(part.removeprefix("node=") for part in predicted.split() if part.startswith("node="))
+
+    main(["--shellpath", shell, "--nodes-dir", str(nodes_dir), "--results-dir", str(results_dir), str(job)])
+
+    assert Path(predicted_node).exists()
+
+
+def test_provenance_prints_explicit_shellpath(tmp_path, factory_file, capsys):
+    shell = str(Path(shutil.which("sh") or "/bin/sh").resolve())
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    nodes_dir = tmp_path / "nodes"
+    main(["--shellpath", shell, "--nodes-dir", str(nodes_dir), "--results-dir", str(tmp_path / "results"), str(job)])
+    output = _real_output(nodes_dir, "b.txt")
+
+    main(["provenance", str(output)])
+
+    captured = capsys.readouterr().out
+    assert "[execution]" in captured
+    assert f"shellpath = {shell!r}" in captured
+
+
+def test_cli_invalid_shellpath_errors_cleanly(tmp_path, factory_file):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    with pytest.raises(SystemExit, match="shellpath does not exist"):
+        main(["--shellpath", str(tmp_path / "missing-shell"), str(job)])

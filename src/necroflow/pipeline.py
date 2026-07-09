@@ -278,6 +278,14 @@ class DAG(_GraphBase):
         for node in request:
             self._required.add(node.key)
 
+    def rebuild_index(self, required_nodes=None) -> None:
+        """Rebuild deduplication indexes after execution context changes keys."""
+        required_nodes = self.required_nodes if required_nodes is None else required_nodes
+        self._nodes = {}
+        for node in self._all_nodes:
+            self._nodes.setdefault(node.key, node)
+        self._required = {node.key for node in required_nodes}
+
     @property
     def nodes(self) -> list:
         return list(self._nodes.values())

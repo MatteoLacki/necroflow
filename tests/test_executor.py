@@ -1,4 +1,7 @@
 """Tests for execute(), schedulers, and thread budget."""
+import shutil
+from pathlib import Path
+
 import pytest
 from necroflow import NodeType, Inputs, Outputs, Constraints, Rules, Pipeline, DAG, execute
 from necroflow import fifo_scheduler, connected_component_scheduler
@@ -9,6 +12,8 @@ class A(NodeType): filename = "a.txt"
 class B(NodeType): filename = "b.txt"
 class C(NodeType): filename = "c.txt"
 class D(NodeType): filename = "d.txt"
+class ShellOut(NodeType): filename = "shell.txt"
+class ListOut(NodeType): filename = "list.txt"
 
 
 R = Rules()
@@ -23,6 +28,9 @@ R.register("make_c_from_b",Inputs(b=B),   Outputs(c=C),        "touch {c}")
 R.register("fail_a",       Inputs(x=str), Outputs(a=A),        "{{ : {a}; exit 1; }}")
 R.register("no_output_a",  Inputs(x=str), Outputs(a=A),        "{{ : {a}; true; }}")  # exits 0, creates nothing
 R.register("make_a_heavy", Inputs(x=str), Outputs(a=A),        "touch {a}", Constraints(threads=4))
+R.register("brace_shell", Inputs(x=str), Outputs(out=ShellOut), "printf '%s\n' {{left,right}} > {out}")
+R.register("env_shell", Inputs(x=str), Outputs(out=ShellOut), "printf '%s\n' $NF_TEST_SHELL > {out}")
+R.register("list_shell", Inputs(x=str), Outputs(out=ListOut), ["touch", "{out}"])
 
 
 # ── basic execution ───────────────────────────────────────────────────────────
@@ -50,6 +58,79 @@ def test_execute_handles_outdir_with_spaces(tmp_path):
     execute(P, outdir)
 
     assert P.a.path.exists()
+
+
+def test_explicit_shellpath_uses_selected_shell_for_brace_expansion(tmp_path):
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is not available")
+    P = Pipeline()
+    P.out = R.brace_shell(x="x")
+
+    execute(P, tmp_path, shellpath=bash)
+
+    assert P.out.path.read_text() == "left\nright\n"
+
+
+def test_explicit_shellpath_runs_custom_shell_wrapper(tmp_path, monkeypatch):
+    wrapper = tmp_path / "nf-shell"
+    wrapper.write_text("#!/bin/sh\nNF_TEST_SHELL=wrapper exec /bin/sh \"$@\"\n")
+    wrapper.chmod(0o755)
+    P = Pipeline()
+    P.out = R.env_shell(x="x")
+
+    execute(P, tmp_path / "out", shellpath=wrapper)
+
+    assert P.out.path.read_text() == "wrapper\n"
+
+
+def test_explicit_shellpath_changes_string_command_fingerprint(tmp_path):
+    shell = shutil.which("sh") or "/bin/sh"
+    P = Pipeline()
+    P.out = R.env_shell(x="x")
+    default_key = P.out.key
+
+    execute(P, tmp_path / "with-shell", shellpath=shell)
+    shell_key = P.out.key
+
+    assert shell_key != default_key
+    assert P.out.execution_context["shellpath"] == str(Path(shell).resolve())
+
+    execute(P, tmp_path / "default")
+
+    assert P.out.key == default_key
+    assert "shellpath" not in P.out.execution_context
+
+
+def test_explicit_shellpath_does_not_change_list_command_fingerprint(tmp_path):
+    shell = shutil.which("sh") or "/bin/sh"
+    P = Pipeline()
+    P.out = R.list_shell(x="x")
+    default_key = P.out.key
+
+    execute(P, tmp_path, shellpath=shell)
+
+    assert P.out.key == default_key
+    assert "shellpath" not in P.out.execution_context
+
+
+def test_invalid_shellpath_fails_before_outputs(tmp_path):
+    P = Pipeline()
+    P.out = R.make_a(x="x")
+
+    with pytest.raises(ValueError, match="shellpath does not exist"):
+        execute(P, tmp_path, shellpath=tmp_path / "missing-shell")
+
+    assert not list(tmp_path.rglob("a.txt"))
+
+
+def test_shellpath_cannot_be_combined_with_node_runner(tmp_path):
+    shell = shutil.which("sh") or "/bin/sh"
+    P = Pipeline()
+    P.out = R.make_a(x="x")
+
+    with pytest.raises(ValueError, match="shellpath cannot be combined"):
+        execute(P, tmp_path, shellpath=shell, node_runner=lambda node, log_path: None)
 
 
 def test_workdir_placeholder_resolves_to_rule_output_dir(tmp_path):

@@ -203,6 +203,16 @@ def test_resolve_command_threads_defaults_to_one(tmp_path):
     assert resolve_command(txt) == f"tool --threads 1 > {txt.path}"
 
 
+def test_resolve_command_preserves_escaped_shell_braces(tmp_path):
+    r = Rules()
+    r.register("brace", Inputs(word=str), Outputs(txt=Txt), "printf '%s\n' {{left,right}} {word} > {txt}")
+    txt = r.brace(word="hi")
+
+    resolve_paths([txt], tmp_path)
+
+    assert resolve_command(txt) == f"printf '%s\n' {{left,right}} hi > {txt.path}"
+
+
 def test_constraint_placeholder_forces_constraint_when_config_name_collides(tmp_path):
     r = Rules()
     r.register(

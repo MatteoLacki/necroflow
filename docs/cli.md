@@ -10,7 +10,7 @@ necroflow ships a `necroflow` command. Each positional argument is a **job TOML*
 necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \
           [--constraint KEY=VALUE ...] [--keep-going] [--autoclean] [--dry-run] \
           [--invalidate LABEL ...] [--reap NAME ...] [--reap-file PATH] \
-          [--validation PATH.py:FUNCTION ...] \
+          [--validation PATH.py:FUNCTION ...] [--shellpath PATH] \
           JOB.toml [JOB2.toml ...]
 ```
 
@@ -28,6 +28,7 @@ necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \
 | `--reap NAME` | Force labels listed under `NAME` in `reap.toml` to rerun. Repeatable. |
 | `--reap-file PATH` | TOML file for named invalidation sets (default: `reap.toml`). |
 | `--validation PATH.py:FUNCTION` | Validate each expanded job config with a Python callable. Repeatable. |
+| `--shellpath PATH` | Executable shell for string commands, e.g. `/bin/bash`. Defaults to Python's system shell behavior. |
 
 ```bash
 necroflow --invalidate counts job.toml
@@ -39,6 +40,15 @@ necroflow --reap quick --reap-file reap.toml job.toml
 ```toml
 quick = ["counts", "qc"]
 ```
+
+Use `--shellpath` when a command needs shell-specific syntax such as Bash brace expansion:
+
+```bash
+necroflow --shellpath /bin/bash job.toml
+necroflow outputs --shellpath /bin/bash job.toml
+```
+
+Explicit shell paths affect node hashes for string commands, so `outputs --shellpath PATH` reports the same paths that `run --shellpath PATH` will produce.
 
 ## Project scaffolding
 

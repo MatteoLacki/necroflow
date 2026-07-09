@@ -37,6 +37,7 @@ from necroflow import DAG
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import parse_resource, resolve_paths
 from necroflow.pipeline import _sinks
+from necroflow.executor import _apply_shell_execution_context, _normalize_shellpath
 
 
 def _load_factory(spec: str) -> Callable:
@@ -170,6 +171,13 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
     return dag, combos, forced_stale_keys
 
 
+def _normalize_arg_shellpath(args) -> str | None:
+    try:
+        return _normalize_shellpath(getattr(args, "shellpath", None))
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from exc
+
+
 def _parse_resource_caps(args) -> dict[str, int]:
     cores = args.cores.strip()
     resource_caps = {"threads": os.cpu_count() or 1 if cores.lower() == "all" else int(cores)}
@@ -196,6 +204,7 @@ def _run(args) -> None:
         autoclean=args.autoclean,
         dry_run=args.dry_run,
         forced_stale_keys=forced_stale_keys,
+        shellpath=_normalize_arg_shellpath(args),
     )
     if not args.dry_run:
         _finalize_link_outputs(combos, nodes_dir=nodes_dir, results_dir=results_dir)
@@ -204,6 +213,7 @@ def _run(args) -> None:
 def _graph(args) -> None:
     nodes_dir, _results_dir = _resolve_roots(args)
     dag, _combos, _forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    _apply_shell_execution_context(dag, _normalize_arg_shellpath(args))
     dag.resolve_paths(nodes_dir)
     rendered = str(dag)
     if args.output:
@@ -214,7 +224,8 @@ def _graph(args) -> None:
 
 def _outputs(args) -> None:
     nodes_dir, results_dir = _resolve_roots(args)
-    _dag, combos, _forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    dag, combos, _forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    _apply_shell_execution_context(dag, _normalize_arg_shellpath(args))
     for label, pipeline, request in combos:
         resolve_paths(pipeline.nodes, nodes_dir)
         print(f"[{label}]")
@@ -241,6 +252,11 @@ def _provenance(args) -> None:
     if config:
         print("[config]")
         for k, v in config.items():
+            print(f"{k} = {v!r}")
+    execution = doc.get("execution", {})
+    if execution:
+        print("[execution]")
+        for k, v in execution.items():
             print(f"{k} = {v!r}")
 
 
@@ -318,6 +334,7 @@ def _add_run_options(parser) -> None:
     parser.add_argument("--reap", action="append", default=[], metavar="NAME", help="Force labels from NAME in reap.toml to rerun. Repeatable.")
     parser.add_argument("--reap-file", default=Path("reap.toml"), type=Path, metavar="PATH", help="TOML file containing named invalidation label sets (default: reap.toml).")
     parser.add_argument("--validation", action="append", default=[], metavar="PATH.py:FUNCTION", help="Validate each expanded job config with a Python callable. Repeatable.")
+    parser.add_argument("--shellpath", default=None, metavar="PATH", help="Executable shell path for string commands, e.g. /bin/bash. Defaults to Python's system shell behavior.")
 
 
 def _build_parser() -> argparse.ArgumentParser:
