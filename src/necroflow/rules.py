@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections import namedtuple
 from collections.abc import Callable
 import re
+from types import UnionType
 from string import Formatter
+from typing import get_args, get_origin
 
 from necroflow.nodes import Node, _is_nodetype
 
@@ -57,6 +59,47 @@ def _pascal_to_snake(name: str) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
+def _union_members(ann) -> tuple:
+    return get_args(ann) if get_origin(ann) is UnionType else ()
+
+
+def _is_nodetype_union(ann) -> bool:
+    members = _union_members(ann)
+    return bool(members) and all(_is_nodetype(member) for member in members)
+
+
+def _is_node_input_contract(ann) -> bool:
+    return _is_nodetype(ann) or _is_nodetype_union(ann)
+
+
+def _validate_input_contracts(rule_name: str, inputs: Inputs) -> None:
+    for name, ann in inputs.specs.items():
+        members = _union_members(ann)
+        if not members:
+            continue
+        has_nodetype = any(_is_nodetype(member) for member in members)
+        if has_nodetype and not all(_is_nodetype(member) for member in members):
+            raise TypeError(
+                f"Rule {rule_name!r}: input {name!r} mixes NodeType and non-NodeType "
+                "union members; use only NodeType alternatives for positional "
+                "node inputs, or only plain types for config inputs"
+            )
+
+
+def _type_contract_name(ann) -> str:
+    members = _union_members(ann)
+    if members:
+        return " | ".join(sorted(_type_contract_name(member) for member in members))
+    return ann.__name__ if hasattr(ann, "__name__") else repr(ann)
+
+
+def _matches_node_type(actual, expected) -> bool:
+    members = _union_members(expected)
+    if members:
+        return any(_matches_node_type(actual, member) for member in members)
+    return issubclass(actual, expected)
+
+
 class Rule:
     """A registered rule: validates inputs and produces output Nodes when called."""
 
@@ -81,8 +124,13 @@ class Rule:
         self.constraints = constraints.specs if constraints else {}
         self.repeat = self._validate_repeat(repeat)
         self.info = info
-        self._pos_inputs = [(n, t) for n, t in inputs.specs.items() if _is_nodetype(t)]
-        self._kw_inputs = {n: t for n, t in inputs.specs.items() if not _is_nodetype(t)}
+        _validate_input_contracts(name, inputs)
+        self._pos_inputs = [
+            (n, t) for n, t in inputs.specs.items() if _is_node_input_contract(t)
+        ]
+        self._kw_inputs = {
+            n: t for n, t in inputs.specs.items() if not _is_node_input_contract(t)
+        }
         reserved = BUILTIN_COMMAND_PLACEHOLDERS & (
             set(inputs.specs) | set(outputs.specs)
         )
@@ -171,10 +219,10 @@ class Rule:
                 raise TypeError(
                     f"{name}: {pname!r} expected Node, got {type(val).__name__!r}"
                 )
-            if val.node_type is None or not issubclass(val.node_type, ptype):
+            if val.node_type is None or not _matches_node_type(val.node_type, ptype):
                 got = val.node_type.__name__ if val.node_type else "None"
                 raise TypeError(
-                    f"{name}: {pname!r} expected {ptype.__name__}, got {got}"
+                    f"{name}: {pname!r} expected {_type_contract_name(ptype)}, got {got}"
                 )
         for kname, val in kwargs.items():
             if kname not in self._kw_inputs:

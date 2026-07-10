@@ -32,6 +32,15 @@ The idiomatic pattern for multi-sample or multi-condition work is separate `Pipe
 
 ## Inspecting a pipeline
 
+From the command line, render the requested job DAG without executing it:
+
+```bash
+necroflow graph job.toml
+necroflow graph --output graph.txt job.toml
+```
+
+The same rendering is available from Python:
+
 ```python
 from necroflow import resolve_command
 
@@ -64,6 +73,81 @@ def sort(bam: Bam):
 def quantify(bam: SortedBam, gene_model: str):  # only accepts sorted bam
     """Count reads per gene using featureCounts."""
     return Counts[counts]
+```
+
+The same pattern is useful for format families. Define a base `NodeType` for the
+format contract, then make every concrete output subclass it. Downstream rules
+can accept the base class when they only care that the input is a valid member
+of that family:
+
+```python
+class MmappetDataset(NodeType):
+    """Base type for mmappet directory outputs."""
+
+
+class PrecursorTable(MmappetDataset):
+    filename = "precursors.mmappet"
+
+
+class FilteredPrecursors(MmappetDataset):
+    filename = "filtered.mmappet"
+
+
+class IndexedDataset(NodeType):
+    """Base type for outputs with a ready-to-query index."""
+
+
+class IndexedFilteredPrecursors(FilteredPrecursors, IndexedDataset):
+    filename = "indexed-filtered.mmappet"
+
+
+@r.command("filter-mmappet {precursors} > {filtered_precursors}")
+def filter_precursors(precursors: PrecursorTable):
+    return FilteredPrecursors[filtered_precursors]
+
+
+@r.command("index-mmappet {dataset} > {indexed_filtered_precursors}")
+def index(dataset: FilteredPrecursors):
+    return IndexedFilteredPrecursors[indexed_filtered_precursors]
+
+
+@r.command("score-mmappet {dataset} > {scores}")
+def score(dataset: MmappetDataset):
+    return Scores[scores]
+
+
+@r.command("query-index {dataset} > {report}")
+def query(dataset: IndexedDataset):
+    return Report[report]
+
+
+@r.command("import-mmappet {dataset} > {precursor_table}")
+def import_any_mmappet(dataset: PrecursorTable | FilteredPrecursors):
+    return PrecursorTable[precursor_table]
+```
+
+Here `score()` accepts `PrecursorTable`, `FilteredPrecursors`, or
+`IndexedFilteredPrecursors`, because all are `MmappetDataset` subclasses.
+`query()` accepts `IndexedFilteredPrecursors`, because it also inherits from
+`IndexedDataset`. Use multiple inheritance for combined requirements: "must be
+both filtered precursors and indexed". Use a union for alternatives:
+`PrecursorTable | FilteredPrecursors` means "either concrete contract is fine".
+Mixed unions such as `NodeType | str` are rejected because node inputs and config
+inputs are different parts of the rule API.
+
+Keep structural or semantic checks close to pipeline construction with a
+validator when a config path is imported from outside the DAG:
+
+```python
+from pathlib import Path
+
+
+def validate(config):
+    path = Path(config["precursors"])
+    if path.suffix != ".mmappet" or not path.is_dir():
+        raise ValueError("precursors must be a .mmappet directory")
+    if not (path / "precursors.parquet").exists():
+        raise ValueError("invalid mmappet dataset: missing precursors.parquet")
 ```
 
 ## Multi-output rules

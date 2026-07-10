@@ -4,6 +4,8 @@ necroflow feature tree
 necroflow
 ├── Core model
 │   ├── NodeType typed file/artifact classes
+│   ├── NodeType subtype families for format contracts
+│   ├── NodeType union inputs for alternative type contracts
 │   ├── Node objects with parents, config, command, output path, state
 │   ├── Rules container
 │   │   ├── decorator API: @R.command(...)

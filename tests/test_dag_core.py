@@ -381,6 +381,85 @@ def test_subtype_accepted():
     assert result is not None
 
 
+def test_nodetype_union_accepts_either_member():
+    r = Rules()
+    r.register(
+        "use_txt_or_upper", Inputs(data=Txt | Upper), Outputs(log=Log), "touch {log}"
+    )
+
+    txt = R.make_txt(word="hi")
+    upper, _ = R.to_upper(txt, n=1)
+
+    assert r.use_txt_or_upper(txt) is not None
+    assert r.use_txt_or_upper(upper) is not None
+
+
+def test_nodetype_union_accepts_subclass_of_member():
+    r = Rules()
+    r.register(
+        "use_txt_or_upper", Inputs(data=Txt | Upper), Outputs(log=Log), "touch {log}"
+    )
+    stxt = R.make_sorted_txt(word="hi")
+
+    assert r.use_txt_or_upper(stxt) is not None
+
+
+def test_nodetype_union_rejects_unrelated_type():
+    r = Rules()
+    r.register(
+        "use_txt_or_upper", Inputs(data=Txt | Upper), Outputs(log=Log), "touch {log}"
+    )
+    txt = R.make_txt(word="hi")
+    log = r.use_txt_or_upper(txt)
+
+    with pytest.raises(TypeError, match=r"expected Txt \| Upper"):
+        r.use_txt_or_upper(log)
+
+
+def test_mixed_nodetype_union_rejected_at_registration():
+    with pytest.raises(TypeError, match="mixes NodeType and non-NodeType union"):
+        Rules().register(
+            "bad_union", Inputs(data=Txt | str), Outputs(log=Log), "touch {log}"
+        )
+
+
+def test_config_union_still_supported():
+    r = Rules()
+    r.register(
+        "config_union",
+        Inputs(value=str | int),
+        Outputs(txt=Txt),
+        "echo {value} > {txt}",
+    )
+
+    assert r.config_union(value="hi") is not None
+    assert r.config_union(value=3) is not None
+    with pytest.raises(TypeError):
+        r.config_union(value=object())
+
+
+def test_fingerprint_changes_for_nodetype_union_contract():
+    r_single = Rules()
+    r_single.register("consume", Inputs(data=Txt), Outputs(log=Log), "touch {log}")
+    r_union = Rules()
+    r_union.register(
+        "consume", Inputs(data=Txt | Upper), Outputs(log=Log), "touch {log}"
+    )
+    txt = R.make_txt(word="hi")
+
+    assert r_single.consume(txt).fingerprint != r_union.consume(txt).fingerprint
+
+
+def test_nodetype_union_fingerprint_order_is_stable():
+    r_ab = Rules()
+    r_ab.register("consume", Inputs(data=Txt | Upper), Outputs(log=Log), "touch {log}")
+    r_ba = Rules()
+    r_ba.register("consume", Inputs(data=Upper | Txt), Outputs(log=Log), "touch {log}")
+    txt = R.make_txt(word="hi")
+
+    assert r_ab.consume(txt).fingerprint == r_ba.consume(txt).fingerprint
+
+
 # ── pipeline_label ────────────────────────────────────────────────────────────
 
 

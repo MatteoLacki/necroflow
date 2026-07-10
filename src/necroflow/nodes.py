@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+from types import UnionType
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args, get_origin
 
 _COMPROMISED_STATES = {"running", "failed", "interrupted"}
 
@@ -44,6 +45,11 @@ class NodeType(metaclass=NodeTypeMeta):
 
     @staticmethod
     def _type_name(ann) -> str:
+        origin = get_origin(ann)
+        if origin is UnionType:
+            return "|".join(
+                sorted(NodeType._type_name(member) for member in get_args(ann))
+            )
         return ann.__name__ if hasattr(ann, "__name__") else repr(ann)
 
 
