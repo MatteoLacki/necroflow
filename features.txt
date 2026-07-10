@@ -96,8 +96,10 @@ necroflow
 │   │   ├── --invalidate
 │   │   ├── --reap
 │   │   └── --reap-file
-│   └── config validation option
-│       └── --validation path.py:function
+│   ├── config validation option
+│   │   └── --validation path.py:function
+│   └── companion config tool
+│       └── necroflow-config-set for TOML/JSON open-update-save steps
 │
 ├── Job TOML
 │   ├── .pipeline factory reference
@@ -139,6 +141,7 @@ necroflow
 ├── Packaging
 │   ├── pyproject setuptools package
 │   ├── console script: necroflow
+│   ├── console script: necroflow-config-set
 │   ├── dynamic version from necroflow.__version__
 │   ├── package data for canonical templates
 │   └── optional validation/dev extras

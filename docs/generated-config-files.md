@@ -38,4 +38,34 @@ P.sage_out, P.run_info = R.run_sage(P.spectra, P.fasta, P.sage_config)
 
 `Rules.text_file(name, output, input_name="text")` creates a normal cached node. The text value participates in the node fingerprint, and the built-in writer recipe (`necroflow.text_file/v1`) is hashed in place of shell command text.
 
+## Updating one config from another
+
+When a downstream tool needs a normal config file with one field filled from an
+upstream result, keep that dependency as a file dependency and use the packaged
+helper tool to perform the open-update-save step:
+
+```bash
+necroflow-config-set template.toml updated.toml \
+  --target sage.precursor_tolerance \
+  --source derived.toml \
+  --source-field calibration.precursor_tolerance
+```
+
+The command copies `template.toml`, reads `calibration.precursor_tolerance` from
+`derived.toml`, writes that value to `sage.precursor_tolerance`, and saves the
+result as `updated.toml`. JSON uses the same interface:
+
+```bash
+necroflow-config-set template.json updated.json \
+  --target sage.precursor_tolerance \
+  --source derived.json \
+  --source-field calibration.precursor_tolerance
+```
+
+The output extension must match the copied input extension, so TOML stays TOML
+and JSON stays JSON. Source and target fields use dotted paths. Missing target
+tables are created; missing source fields are errors. This keeps dynamic values
+inside ordinary rule inputs and outputs instead of interleaving Python DAG
+construction with execution.
+
 [Previous: Rules and Typed Outputs](rules.md) | [README](../README.md) | [Next: Execution, Scheduling, and Cleanup](execution.md)

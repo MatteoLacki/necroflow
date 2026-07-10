@@ -44,6 +44,10 @@ The CLI separates hashed node storage from job-facing links. `--nodes-dir DIR` c
 
 Text-file rules do not run a shell command. The executor calls the built-in materializer, which avoids quoting problems and command-line length limits from `printf`-style config dumping. Their fingerprints hash the stable recipe identity (`necroflow.text_file/v1:...`) instead of command text; the string payload is still included through normal node config hashing.
 
+## Config update helper tool
+
+`necroflow-config-set` is a packaged console script implemented in `necroflow.tools.config_set`. It copies a `.toml` or `.json` config, reads a dotted source field from another TOML/JSON config, writes that value to a dotted target field, and saves using the same extension as the copied input. Missing target tables are created; missing source fields and input/output extension mismatches fail. Use this as a normal rule command when runtime file content should influence a downstream tool config without dynamic Python DAG expansion.
+
 ## Canonical template and CLI inspection
 
 `necroflow init DIR` copies the packaged canonical workflow from `src/necroflow/templates/canonical`. Keep that template byte-for-byte aligned with `examples/canonical`, which is the browsable reference copy in the repo. The template demonstrates the CLI-first shape: `pipeline.py`, `job.toml`, optional `job_grid.toml`, `schema.py`, `reap.toml`, and small input fixtures.
