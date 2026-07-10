@@ -12,7 +12,11 @@ from necroflow.dag import (
 from necroflow.rules import Inputs, Outputs, Constraints, Rules
 from necroflow.pipeline import Pipeline, DAG
 from necroflow.executor import execute
-from necroflow.schedulers import fifo_scheduler, connected_component_scheduler, ConnectedComponentScheduler
+from necroflow.schedulers import (
+    fifo_scheduler,
+    connected_component_scheduler,
+    ConnectedComponentScheduler,
+)
 from necroflow.nodes import iter_connected_components
 from necroflow.config import JobConfig, iter_job_configs
 
@@ -20,7 +24,6 @@ __all__ = [
     "__version__",
     "Node",
     "NodeType",
-
     "Inputs",
     "Outputs",
     "Constraints",

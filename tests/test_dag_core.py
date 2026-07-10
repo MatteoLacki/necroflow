@@ -1,38 +1,60 @@
 """Tests for dag.py core: path generation, command resolution, hashing,
 provenance, Inputs/Outputs validation, NodeType subtyping, pipeline_label."""
+
 import pytest
 from pathlib import Path
 import necroflow.dag as dag_core
 from necroflow import NodeType, Inputs, Outputs, Constraints, Rules, Pipeline
 from necroflow.dag import (
     _accumulated_config,
-    resolve_paths, resolve_command, write_dependencies,
+    resolve_paths,
+    resolve_command,
+    write_dependencies,
 )
 
-
 # ── fixtures ──────────────────────────────────────────────────────────────────
+
 
 class Txt(NodeType):
     filename = "out.txt"
 
+
 class Upper(NodeType):
     filename = "upper.txt"
 
+
 class Log(NodeType):
     filename = "log.txt"
+
 
 class SortedTxt(Txt):
     filename = "sorted.txt"
 
 
 R = Rules()
-R.register("make_txt",       Inputs(word=str),       Outputs(txt=Txt),                    "echo {word} > {txt}")
-R.register("make_sorted_txt",Inputs(word=str),       Outputs(stxt=SortedTxt),             "echo {word} | sort > {stxt}")
-R.register("to_upper",       Inputs(txt=Txt, n=int), Outputs(upper=Upper, log=Log),       "tr a-z A-Z < {txt} | head -{n} | tee {log} > {upper}")
-R.register("sort_txt",       Inputs(txt=SortedTxt),  Outputs(sorted_txt=SortedTxt),       "sort {txt} > {sorted_txt}")
+R.register("make_txt", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}")
+R.register(
+    "make_sorted_txt",
+    Inputs(word=str),
+    Outputs(stxt=SortedTxt),
+    "echo {word} | sort > {stxt}",
+)
+R.register(
+    "to_upper",
+    Inputs(txt=Txt, n=int),
+    Outputs(upper=Upper, log=Log),
+    "tr a-z A-Z < {txt} | head -{n} | tee {log} > {upper}",
+)
+R.register(
+    "sort_txt",
+    Inputs(txt=SortedTxt),
+    Outputs(sorted_txt=SortedTxt),
+    "sort {txt} > {sorted_txt}",
+)
 
 
 # ── path generation ───────────────────────────────────────────────────────────
+
 
 def test_resolve_paths_structure(tmp_path):
     txt = R.make_txt(word="hi")
@@ -59,7 +81,9 @@ def test_resolve_paths_rejects_component_over_name_max(tmp_path, monkeypatch):
         filename = "x" * 11
 
     r = Rules()
-    r.register("make_long_name", Inputs(word=str), Outputs(out=LongName), "echo {word} > {out}")
+    r.register(
+        "make_long_name", Inputs(word=str), Outputs(out=LongName), "echo {word} > {out}"
+    )
     node = r.make_long_name(word="hi")
     monkeypatch.setattr(dag_core, "_filesystem_limits", lambda path: (10, 4096))
 
@@ -76,6 +100,7 @@ def test_resolve_paths_rejects_total_path_over_path_max(tmp_path, monkeypatch):
 
 
 # ── fingerprinting ────────────────────────────────────────────────────────────
+
 
 def test_fingerprint_stable():
     txt1 = R.make_txt(word="hi")
@@ -99,8 +124,12 @@ def test_fingerprint_differs_on_parent():
 
 def test_fingerprint_changes_on_inputs_type_change():
     """Changing the declared Inputs NodeType must change the fingerprint."""
-    class FastqA(NodeType): pass
-    class FastqB(NodeType): pass
+
+    class FastqA(NodeType):
+        pass
+
+    class FastqB(NodeType):
+        pass
 
     Ra = Rules()
     Ra.register("raw", Inputs(path=str), Outputs(fastq=FastqA), "touch {fastq}")
@@ -117,8 +146,12 @@ def test_fingerprint_changes_on_inputs_type_change():
 
 def test_fingerprint_changes_on_outputs_type_change():
     """Changing the declared Outputs NodeType must change the fingerprint."""
-    class BamA(NodeType): filename = "aligned.bam"
-    class BamB(NodeType): filename = "aligned.bam"
+
+    class BamA(NodeType):
+        filename = "aligned.bam"
+
+    class BamB(NodeType):
+        filename = "aligned.bam"
 
     Ra = Rules()
     Ra.register("align", Inputs(path=str), Outputs(bam=BamA), "touch {bam}")
@@ -144,6 +177,7 @@ def test_node_key_contains_rule_and_filename():
 
 
 # ── command resolution ────────────────────────────────────────────────────────
+
 
 def test_resolve_command_input_substitution(tmp_path):
     txt = R.make_txt(word="hi")
@@ -190,12 +224,20 @@ def test_resolve_command_direct_constraint_placeholders(tmp_path):
 
     resolve_paths([txt], tmp_path)
 
-    assert resolve_command(txt) == f"tool --threads 8 --ram 4Gi --gpu 2 --word hi > {txt.path}"
+    assert (
+        resolve_command(txt)
+        == f"tool --threads 8 --ram 4Gi --gpu 2 --word hi > {txt.path}"
+    )
 
 
 def test_resolve_command_threads_defaults_to_one(tmp_path):
     r = Rules()
-    r.register("default_threads", Inputs(word=str), Outputs(txt=Txt), "tool --threads {threads} > {txt}")
+    r.register(
+        "default_threads",
+        Inputs(word=str),
+        Outputs(txt=Txt),
+        "tool --threads {threads} > {txt}",
+    )
     txt = r.default_threads(word="hi")
 
     resolve_paths([txt], tmp_path)
@@ -205,7 +247,12 @@ def test_resolve_command_threads_defaults_to_one(tmp_path):
 
 def test_resolve_command_preserves_escaped_shell_braces(tmp_path):
     r = Rules()
-    r.register("brace", Inputs(word=str), Outputs(txt=Txt), "printf '%s\n' {{left,right}} {word} > {txt}")
+    r.register(
+        "brace",
+        Inputs(word=str),
+        Outputs(txt=Txt),
+        "printf '%s\n' {{left,right}} {word} > {txt}",
+    )
     txt = r.brace(word="hi")
 
     resolve_paths([txt], tmp_path)
@@ -231,13 +278,21 @@ def test_constraint_placeholder_forces_constraint_when_config_name_collides(tmp_
 
 def test_unknown_constraint_placeholder_is_rejected():
     with pytest.raises(ValueError, match=r"unknown placeholders: \['ram'\]"):
-        Rules().register("bad_ram", Inputs(word=str), Outputs(txt=Txt), "tool --ram {ram} > {txt}")
+        Rules().register(
+            "bad_ram", Inputs(word=str), Outputs(txt=Txt), "tool --ram {ram} > {txt}"
+        )
 
     with pytest.raises(ValueError, match=r"unknown constraint placeholders: \['gpu'\]"):
-        Rules().register("bad_gpu", Inputs(word=str), Outputs(txt=Txt), "tool --gpu {constraint:gpu} > {txt}")
+        Rules().register(
+            "bad_gpu",
+            Inputs(word=str),
+            Outputs(txt=Txt),
+            "tool --gpu {constraint:gpu} > {txt}",
+        )
 
 
 # ── accumulated config ────────────────────────────────────────────────────────
+
 
 def test_accumulated_config_single_node():
     txt = R.make_txt(word="hello")
@@ -254,6 +309,7 @@ def test_accumulated_config_multi_hop():
 
 
 # ── provenance ────────────────────────────────────────────────────────────────
+
 
 def test_write_dependencies_creates_file(tmp_path):
     txt = R.make_txt(word="hi")
@@ -277,22 +333,23 @@ def test_write_dependencies_content(tmp_path):
 
 # ── Inputs/Outputs validation ─────────────────────────────────────────────────
 
+
 def test_wrong_nodetype_raises():
     txt = R.make_txt(word="hi")
     upper, _ = R.to_upper(txt, n=1)
     with pytest.raises(TypeError):
-        R.to_upper(upper, n=1)   # Upper passed where Txt expected
+        R.to_upper(upper, n=1)  # Upper passed where Txt expected
 
 
 def test_wrong_config_type_raises():
     txt = R.make_txt(word="hi")
     with pytest.raises(TypeError):
-        R.to_upper(txt, n="not_an_int")   # str passed where int expected
+        R.to_upper(txt, n="not_an_int")  # str passed where int expected
 
 
 def test_missing_positional_input_raises():
     with pytest.raises(TypeError, match="missing required inputs"):
-        R.to_upper(n=1)   # txt input omitted
+        R.to_upper(n=1)  # txt input omitted
 
 
 def test_missing_config_input_raises():
@@ -302,7 +359,7 @@ def test_missing_config_input_raises():
     during command formatting or execution.
     """
     with pytest.raises(TypeError, match="missing required inputs"):
-        R.make_txt()   # word config omitted
+        R.make_txt()  # word config omitted
 
 
 def test_extra_positional_input_raises():
@@ -325,6 +382,7 @@ def test_subtype_accepted():
 
 
 # ── pipeline_label ────────────────────────────────────────────────────────────
+
 
 def test_pipeline_label_stamped():
     P = Pipeline()
@@ -349,22 +407,32 @@ def test_pipeline_duplicate_raises():
 
 # ── command placeholder validation ────────────────────────────────────────────
 
+
 def test_register_unknown_placeholder_raises():
     r = Rules()
     with pytest.raises(ValueError, match="unknown placeholders"):
-        r.register("bad", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt} {typo}")
+        r.register(
+            "bad", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt} {typo}"
+        )
 
 
 def test_register_missing_output_raises():
     r = Rules()
     with pytest.raises(ValueError, match="outputs not referenced in command"):
-        r.register("bad", Inputs(word=str), Outputs(txt=Txt, log=Log), "echo {word} > {txt}")
+        r.register(
+            "bad", Inputs(word=str), Outputs(txt=Txt, log=Log), "echo {word} > {txt}"
+        )
 
 
 def test_register_list_command_missing_output_raises():
     r = Rules()
     with pytest.raises(ValueError, match="outputs not referenced in command"):
-        r.register("bad", Inputs(word=str), Outputs(txt=Txt, log=Log), ["echo {word} > {txt}", "echo done"])
+        r.register(
+            "bad",
+            Inputs(word=str),
+            Outputs(txt=Txt, log=Log),
+            ["echo {word} > {txt}", "echo done"],
+        )
 
 
 def test_register_unreferenced_input_is_allowed():
@@ -381,7 +449,13 @@ def test_register_valid_command_ok():
 
 def test_register_repeat_metadata():
     r = Rules()
-    r.register("repeat_rule", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=3)
+    r.register(
+        "repeat_rule",
+        Inputs(word=str),
+        Outputs(txt=Txt),
+        "echo {word} > {txt}",
+        repeat=3,
+    )
     assert r.repeat_rule.repeat == 3
     assert "repeat" not in r.repeat_rule.resources
 
@@ -389,20 +463,37 @@ def test_register_repeat_metadata():
 def test_register_repeat_must_be_positive_int():
     r = Rules()
     with pytest.raises(ValueError, match="repeat must be a positive integer"):
-        r.register("bad_repeat", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=0)
+        r.register(
+            "bad_repeat",
+            Inputs(word=str),
+            Outputs(txt=Txt),
+            "echo {word} > {txt}",
+            repeat=0,
+        )
     with pytest.raises(ValueError, match="repeat must be a positive integer"):
-        r.register("bad_repeat_bool", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=True)
+        r.register(
+            "bad_repeat_bool",
+            Inputs(word=str),
+            Outputs(txt=Txt),
+            "echo {word} > {txt}",
+            repeat=True,
+        )
 
 
 def test_repeat_does_not_affect_fingerprint():
     r1 = Rules()
-    r1.register("make", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=1)
+    r1.register(
+        "make", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=1
+    )
     r2 = Rules()
-    r2.register("make", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=3)
+    r2.register(
+        "make", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=3
+    )
     assert r1.make(word="hi").fingerprint == r2.make(word="hi").fingerprint
 
 
 # ── body return style ─────────────────────────────────────────────────────────
+
 
 def test_command_decorator_body_return_single():
     r = Rules()
@@ -468,6 +559,7 @@ def test_command_unannotated_input_raises():
     """Unannotated input is invisible to the decorator → unknown placeholder → ValueError."""
     r = Rules()
     with pytest.raises(ValueError, match="unknown placeholders"):
+
         @r.command("echo {word} > {txt}")
-        def make_txt(word):   # missing annotation — word absent from inputs_specs
+        def make_txt(word):  # missing annotation — word absent from inputs_specs
             return Txt[txt]

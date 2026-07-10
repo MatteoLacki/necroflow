@@ -1,5 +1,7 @@
 # necroflow AI Notes
 
+For a compact map of the current software surface, start with `features.txt`.
+
 ## Rule command placeholders
 
 Rule commands are validated when a `Rule` is registered. Placeholders are limited to declared input names, declared output names, and built-in command placeholders.

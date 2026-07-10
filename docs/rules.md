@@ -1,6 +1,6 @@
 # Rules and Typed Outputs
 
-[Back to README](../README.md)
+[Previous: Config Validation](config-validation.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)
 
 ## Conditional pipelines
 
@@ -80,3 +80,5 @@ P = Pipeline()
 P.fastq = R.raw_fastq(path=config.path)
 P.bam, P.log = R.align(P.fastq, ref="hg38")
 ```
+
+[Previous: Config Validation](config-validation.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)

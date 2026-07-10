@@ -1,6 +1,6 @@
 # Release Checklist
 
-[Back to README](../README.md)
+[Previous: Execution, Scheduling, and Cleanup](execution.md) | [README](../README.md) | [Next: README](../README.md)
 
 1. Update `__version__` in `src/necroflow/__init__.py`.
 2. Run the full test suite:
@@ -23,3 +23,5 @@ twine check dist/*
 
 5. Verify template files are present in the wheel or installed package.
 6. Upload to the selected package index.
+
+[Previous: Execution, Scheduling, and Cleanup](execution.md) | [README](../README.md) | [Next: README](../README.md)

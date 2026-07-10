@@ -3,13 +3,28 @@ import pytest
 from pathlib import Path
 
 from necroflow import (
-    Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState, classify_nodes,
+    Rules,
+    Inputs,
+    Outputs,
+    Pipeline,
+    DAG,
+    NodeType,
+    NodeState,
+    classify_nodes,
 )
 
 
-class Fastq(NodeType): pass
-class Bam(NodeType): pass
-class Log(NodeType): pass
+class Fastq(NodeType):
+    pass
+
+
+class Bam(NodeType):
+    pass
+
+
+class Log(NodeType):
+    pass
+
 
 R = Rules()
 R.register("raw_fastq", Inputs(path=str), Outputs(fastq=Fastq), "touch {fastq}")
@@ -32,6 +47,7 @@ def make_pipeline(path="/data/s.fastq", ref="hg38"):
 
 # --- _node_key / _folder_hash ---
 
+
 def test_cooutputs_distinct_node_keys():
     P = make_pipeline()
     assert P.bam.key != P.log.key
@@ -45,8 +61,12 @@ def test_cooutputs_share_fingerprint():
 def test_command_change_changes_fingerprint():
     R2 = Rules()
     R2.register("raw_fastq", Inputs(path=str), Outputs(fastq=Fastq), "touch {fastq}")
-    R2.register("align", Inputs(fastq=Fastq, ref=str), Outputs(bam=Bam),
-                "bwa mem {ref} {fastq} > {bam}")  # different command
+    R2.register(
+        "align",
+        Inputs(fastq=Fastq, ref=str),
+        Outputs(bam=Bam),
+        "bwa mem {ref} {fastq} > {bam}",
+    )  # different command
     R2.register("sort_bam", Inputs(bam=Bam), Outputs(bam=Bam), "touch {bam}")
 
     P1 = make_pipeline()  # uses original R with "touch {bam}"
@@ -68,6 +88,7 @@ def test_dag_contains_all_cooutputs(tmp_path):
 
 
 # --- classify_nodes states ---
+
 
 def test_missing(tmp_path):
     P = make_pipeline()
@@ -105,7 +126,9 @@ def test_stale_direct(tmp_path):
     raw_node.path.write_bytes(b"updated content")  # content change → different hash
 
     classify_nodes(dag.nodes, dag.required_nodes)
-    align_bam = next(n for n in dag.nodes if n.rule.__name__ == "align" and n.output_name == "bam")
+    align_bam = next(
+        n for n in dag.nodes if n.rule.__name__ == "align" and n.output_name == "bam"
+    )
     assert align_bam.state == NodeState.STALE
 
 
@@ -190,5 +213,7 @@ def test_content_unchanged_parent_not_stale(tmp_path):
     raw_node.path.touch()  # mtime newer but content unchanged
 
     classify_nodes(dag.nodes, dag.required_nodes)
-    align_bam = next(n for n in dag.nodes if n.rule.__name__ == "align" and n.output_name == "bam")
+    align_bam = next(
+        n for n in dag.nodes if n.rule.__name__ == "align" and n.output_name == "bam"
+    )
     assert align_bam.state == NodeState.UP_TO_DATE

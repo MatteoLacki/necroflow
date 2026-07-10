@@ -1,4 +1,5 @@
 """Tests for CLI internals: _create_link_outputs, manifest keys, main()."""
+
 import shutil
 import textwrap
 import time
@@ -11,13 +12,17 @@ from necroflow.cli import _create_link_outputs, main
 from necroflow.pipeline import _sinks
 
 
-class Out(NodeType): filename = "out.txt"
-class Log(NodeType): filename = "run.log"
+class Out(NodeType):
+    filename = "out.txt"
+
+
+class Log(NodeType):
+    filename = "run.log"
 
 
 R = Rules()
-R.register("step1", Inputs(v=str),     Outputs(out=Out),      "echo {v} > {out}")
-R.register("step2", Inputs(out=Out),   Outputs(log=Log),      "cat {out} > {log}")
+R.register("step1", Inputs(v=str), Outputs(out=Out), "echo {v} > {out}")
+R.register("step2", Inputs(out=Out), Outputs(log=Log), "cat {out} > {log}")
 
 
 def _make_pipeline_with_outputs(tmp_path) -> tuple[Pipeline, Path]:
@@ -33,6 +38,7 @@ def _make_pipeline_with_outputs(tmp_path) -> tuple[Pipeline, Path]:
 
 
 # ── symlink creation ──────────────────────────────────────────────────────────
+
 
 def test_combo_dir_created(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
@@ -89,6 +95,7 @@ def test_link_outputs_can_use_separate_nodes_and_results_dirs(tmp_path):
 
 
 # ── manifest ─────────────────────────────────────────────────────────────────
+
 
 def test_manifest_created(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
@@ -226,7 +233,9 @@ def test_main_reap_file_expands_invalidation_labels(tmp_path, factory_file):
     b_mtime = b_path.stat().st_mtime
 
     time.sleep(0.05)
-    main(["--outdir", str(outdir), "--reap", "quick", "--reap-file", str(reap), str(job)])
+    main(
+        ["--outdir", str(outdir), "--reap", "quick", "--reap-file", str(reap), str(job)]
+    )
 
     assert a_path.stat().st_mtime == a_mtime
     assert b_path.stat().st_mtime > b_mtime
@@ -245,7 +254,17 @@ def test_main_reap_missing_group_errors(tmp_path, factory_file):
     reap = tmp_path / "reap.toml"
     reap.write_text('other = ["a"]\n')
     with pytest.raises(SystemExit, match="not found"):
-        main(["--outdir", str(tmp_path / "out"), "--reap", "quick", "--reap-file", str(reap), str(job)])
+        main(
+            [
+                "--outdir",
+                str(tmp_path / "out"),
+                "--reap",
+                "quick",
+                "--reap-file",
+                str(reap),
+                str(job),
+            ]
+        )
 
 
 def test_main_reap_invalid_group_errors(tmp_path, factory_file):
@@ -254,7 +273,17 @@ def test_main_reap_invalid_group_errors(tmp_path, factory_file):
     reap = tmp_path / "reap.toml"
     reap.write_text('quick = "a"\n')
     with pytest.raises(SystemExit, match="list of strings"):
-        main(["--outdir", str(tmp_path / "out"), "--reap", "quick", "--reap-file", str(reap), str(job)])
+        main(
+            [
+                "--outdir",
+                str(tmp_path / "out"),
+                "--reap",
+                "quick",
+                "--reap-file",
+                str(reap),
+                str(job),
+            ]
+        )
 
 
 def test_main_validation_rejects_config_before_execution(tmp_path, factory_file):
@@ -269,7 +298,9 @@ def test_main_validation_rejects_config_before_execution(tmp_path, factory_file)
     outdir = tmp_path / "out"
 
     with pytest.raises(SystemExit, match="v must be ok"):
-        main(["--outdir", str(outdir), "--validation", f"{validator}:validate", str(job)])
+        main(
+            ["--outdir", str(outdir), "--validation", f"{validator}:validate", str(job)]
+        )
 
     assert not list(outdir.rglob("a.txt"))
 
@@ -288,12 +319,17 @@ def test_main_validation_is_repeatable_and_ordered(tmp_path, factory_file):
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
 
-    main([
-        "--outdir", str(tmp_path / "out"),
-        "--validation", f"{validator}:first",
-        "--validation", f"{validator}:second",
-        str(job),
-    ])
+    main(
+        [
+            "--outdir",
+            str(tmp_path / "out"),
+            "--validation",
+            f"{validator}:first",
+            "--validation",
+            f"{validator}:second",
+            str(job),
+        ]
+    )
 
     assert log.read_text() == "first\nsecond\n"
 
@@ -315,7 +351,15 @@ def test_main_validation_sees_expanded_metadata_stripped_config(tmp_path, factor
         f'".pipeline" = "{factory_file}:factory"\n".requests" = ["a"]\nv__grid = ["one", "two"]\n'
     )
 
-    main(["--outdir", str(tmp_path / "out"), "--validation", f"{validator}:validate", str(job)])
+    main(
+        [
+            "--outdir",
+            str(tmp_path / "out"),
+            "--validation",
+            f"{validator}:validate",
+            str(job),
+        ]
+    )
 
     assert log.read_text().splitlines() == ["one", "two"]
 
@@ -325,7 +369,15 @@ def test_main_validation_bad_spec_errors(tmp_path, factory_file):
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
 
     with pytest.raises(SystemExit, match="validation spec must be"):
-        main(["--outdir", str(tmp_path / "out"), "--validation", "validator.py", str(job)])
+        main(
+            [
+                "--outdir",
+                str(tmp_path / "out"),
+                "--validation",
+                "validator.py",
+                str(job),
+            ]
+        )
 
 
 def test_main_validation_missing_function_errors(tmp_path, factory_file):
@@ -335,21 +387,35 @@ def test_main_validation_missing_function_errors(tmp_path, factory_file):
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
 
     with pytest.raises(SystemExit, match="validation function 'missing' not found"):
-        main(["--outdir", str(tmp_path / "out"), "--validation", f"{validator}:missing", str(job)])
+        main(
+            [
+                "--outdir",
+                str(tmp_path / "out"),
+                "--validation",
+                f"{validator}:missing",
+                str(job),
+            ]
+        )
 
 
-def test_iter_job_configs_python_api_yields_expanded_configs_without_validation(tmp_path, factory_file):
+def test_iter_job_configs_python_api_yields_expanded_configs_without_validation(
+    tmp_path, factory_file
+):
     from necroflow.config import iter_job_configs
 
     job = tmp_path / "job.toml"
-    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv__grid = ["good", "bad"]\n')
+    job.write_text(
+        f'".pipeline" = "{factory_file}:factory"\nv__grid = ["good", "bad"]\n'
+    )
 
     jobs = list(iter_job_configs(job))
 
     assert [j.config["v"] for j in jobs] == ["good", "bad"]
 
 
-def test_python_api_callers_validate_expanded_configs_in_their_own_loop(tmp_path, factory_file):
+def test_python_api_callers_validate_expanded_configs_in_their_own_loop(
+    tmp_path, factory_file
+):
     from necroflow.config import iter_job_configs
 
     seen = []
@@ -360,7 +426,9 @@ def test_python_api_callers_validate_expanded_configs_in_their_own_loop(tmp_path
             raise ValueError("bad value")
 
     job = tmp_path / "job.toml"
-    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv__grid = ["good", "bad"]\n')
+    job.write_text(
+        f'".pipeline" = "{factory_file}:factory"\nv__grid = ["good", "bad"]\n'
+    )
 
     with pytest.raises(ValueError, match="bad value"):
         for job_config in iter_job_configs(job):
@@ -369,7 +437,9 @@ def test_python_api_callers_validate_expanded_configs_in_their_own_loop(tmp_path
     assert seen == ["good", "bad"]
 
 
-def test_main_runs_pipeline_with_default_nodes_and_results_dirs(tmp_path, factory_file, monkeypatch):
+def test_main_runs_pipeline_with_default_nodes_and_results_dirs(
+    tmp_path, factory_file, monkeypatch
+):
     """main() defaults hashed outputs to nodes/ and job links to results/."""
     monkeypatch.chdir(tmp_path)
     job = tmp_path / "job.toml"
@@ -394,10 +464,14 @@ def test_main_runs_pipeline_with_split_nodes_and_results_dirs(tmp_path, factory_
 
     assert _real_output(nodes_dir, "a.txt").exists()
     real_b = _real_output(nodes_dir, "b.txt")
-    assert not list(results_dir.rglob("*.txt")) or all(p.is_symlink() for p in results_dir.rglob("*.txt"))
+    assert not list(results_dir.rglob("*.txt")) or all(
+        p.is_symlink() for p in results_dir.rglob("*.txt")
+    )
     assert not list((results_dir / "job").rglob("a.txt"))
     b_links = list((results_dir / "job").rglob("b.txt"))
-    assert len(b_links) == 1 and b_links[0].is_symlink() and b_links[0].resolve() == real_b
+    assert (
+        len(b_links) == 1 and b_links[0].is_symlink() and b_links[0].resolve() == real_b
+    )
 
 
 def test_main_outdir_keeps_single_root_compatibility(tmp_path, factory_file):
@@ -416,7 +490,15 @@ def test_main_outdir_cannot_be_combined_with_split_dirs(tmp_path, factory_file):
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
 
     with pytest.raises(SystemExit, match="--outdir cannot be combined"):
-        main(["--outdir", str(tmp_path / "out"), "--nodes-dir", str(tmp_path / "nodes"), str(job)])
+        main(
+            [
+                "--outdir",
+                str(tmp_path / "out"),
+                "--nodes-dir",
+                str(tmp_path / "nodes"),
+                str(job),
+            ]
+        )
 
 
 def test_main_request_limits_execution(tmp_path, factory_file):
@@ -493,11 +575,12 @@ def test_narrow_request_combo_excludes_prior_outputs(tmp_path, factory_file):
     main(["--outdir", str(outdir), str(job_narrow)])
 
     combo_dir = outdir / "job_narrow"
-    assert any(combo_dir.rglob("a.txt"))       # requested output symlinked
-    assert not any(combo_dir.rglob("b.txt"))   # unrequested output excluded
+    assert any(combo_dir.rglob("a.txt"))  # requested output symlinked
+    assert not any(combo_dir.rglob("b.txt"))  # unrequested output excluded
 
 
 # ── multiple combos ───────────────────────────────────────────────────────────
+
 
 def test_multiple_combos(tmp_path):
     P1 = Pipeline()
@@ -521,6 +604,7 @@ def test_multiple_combos(tmp_path):
 
 
 # -- CLI subcommands and canonical template -----------------------------------
+
 
 def test_init_creates_canonical_template(tmp_path):
     dest = tmp_path / "workflow"
@@ -557,12 +641,17 @@ def test_canonical_template_runs(tmp_path, monkeypatch):
     main(["init", str(dest)])
     monkeypatch.chdir(dest)
 
-    main([
-        "--nodes-dir", "nodes",
-        "--results-dir", "results",
-        "--validation", "schema.py:validate",
-        "job.toml",
-    ])
+    main(
+        [
+            "--nodes-dir",
+            "nodes",
+            "--results-dir",
+            "results",
+            "--validation",
+            "schema.py:validate",
+            "job.toml",
+        ]
+    )
 
     manifest = dest / "results" / "job" / "manifest.toml"
     assert manifest.exists()
@@ -581,11 +670,22 @@ def test_graph_subcommand_prints_dag_without_outputs(tmp_path, factory_file, cap
     assert not list((tmp_path / "out").rglob("a.txt"))
 
 
-def test_outputs_subcommand_lists_requested_paths_without_execution(tmp_path, factory_file, capsys):
+def test_outputs_subcommand_lists_requested_paths_without_execution(
+    tmp_path, factory_file, capsys
+):
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
 
-    main(["outputs", "--nodes-dir", str(tmp_path / "nodes"), "--results-dir", str(tmp_path / "results"), str(job)])
+    main(
+        [
+            "outputs",
+            "--nodes-dir",
+            str(tmp_path / "nodes"),
+            "--results-dir",
+            str(tmp_path / "results"),
+            str(job),
+        ]
+    )
 
     captured = capsys.readouterr().out
     assert "[job]" in captured
@@ -598,7 +698,15 @@ def test_provenance_subcommand_prints_metadata(tmp_path, factory_file, capsys):
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
     nodes_dir = tmp_path / "nodes"
-    main(["--nodes-dir", str(nodes_dir), "--results-dir", str(tmp_path / "results"), str(job)])
+    main(
+        [
+            "--nodes-dir",
+            str(nodes_dir),
+            "--results-dir",
+            str(tmp_path / "results"),
+            str(job),
+        ]
+    )
     output = _real_output(nodes_dir, "b.txt")
 
     main(["provenance", str(output)])
@@ -615,11 +723,36 @@ def test_outputs_shellpath_matches_run_shellpath_paths(tmp_path, factory_file, c
     nodes_dir = tmp_path / "nodes"
     results_dir = tmp_path / "results"
 
-    main(["outputs", "--shellpath", shell, "--nodes-dir", str(nodes_dir), "--results-dir", str(results_dir), str(job)])
+    main(
+        [
+            "outputs",
+            "--shellpath",
+            shell,
+            "--nodes-dir",
+            str(nodes_dir),
+            "--results-dir",
+            str(results_dir),
+            str(job),
+        ]
+    )
     predicted = capsys.readouterr().out
-    predicted_node = next(part.removeprefix("node=") for part in predicted.split() if part.startswith("node="))
+    predicted_node = next(
+        part.removeprefix("node=")
+        for part in predicted.split()
+        if part.startswith("node=")
+    )
 
-    main(["--shellpath", shell, "--nodes-dir", str(nodes_dir), "--results-dir", str(results_dir), str(job)])
+    main(
+        [
+            "--shellpath",
+            shell,
+            "--nodes-dir",
+            str(nodes_dir),
+            "--results-dir",
+            str(results_dir),
+            str(job),
+        ]
+    )
 
     assert Path(predicted_node).exists()
 
@@ -629,7 +762,17 @@ def test_provenance_prints_explicit_shellpath(tmp_path, factory_file, capsys):
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
     nodes_dir = tmp_path / "nodes"
-    main(["--shellpath", shell, "--nodes-dir", str(nodes_dir), "--results-dir", str(tmp_path / "results"), str(job)])
+    main(
+        [
+            "--shellpath",
+            shell,
+            "--nodes-dir",
+            str(nodes_dir),
+            "--results-dir",
+            str(tmp_path / "results"),
+            str(job),
+        ]
+    )
     output = _real_output(nodes_dir, "b.txt")
 
     main(["provenance", str(output)])

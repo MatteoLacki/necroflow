@@ -1,6 +1,6 @@
 # Job TOML and Parameter Grids
 
-[Back to README](../README.md)
+[Previous: Command-Line Interface](cli.md) | [README](../README.md) | [Next: Config Validation](config-validation.md)
 
 ## Job TOML format
 
@@ -33,3 +33,5 @@ aligner__grid = ["bwa", "bowtie2"]
 This produces four pipelines: `experiment__ref+hg38__aligner+bwa`,
 `experiment__ref+hg38__aligner+bowtie2`, etc. Grid expansion also applies to
 `pipeline` itself, so a single job TOML can fan out across different factory functions.
+
+[Previous: Command-Line Interface](cli.md) | [README](../README.md) | [Next: Config Validation](config-validation.md)

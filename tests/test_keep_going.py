@@ -1,10 +1,22 @@
 import pytest
 from necroflow import Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState
 
-class A(NodeType): pass
-class B(NodeType): pass
-class C(NodeType): pass
-class D(NodeType): pass
+
+class A(NodeType):
+    pass
+
+
+class B(NodeType):
+    pass
+
+
+class C(NodeType):
+    pass
+
+
+class D(NodeType):
+    pass
+
 
 R = Rules()
 R.register("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")

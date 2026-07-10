@@ -54,7 +54,7 @@ class Constraints:
 
 
 def _pascal_to_snake(name: str) -> str:
-    return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
 class Rule:
@@ -83,7 +83,9 @@ class Rule:
         self.info = info
         self._pos_inputs = [(n, t) for n, t in inputs.specs.items() if _is_nodetype(t)]
         self._kw_inputs = {n: t for n, t in inputs.specs.items() if not _is_nodetype(t)}
-        reserved = BUILTIN_COMMAND_PLACEHOLDERS & (set(inputs.specs) | set(outputs.specs))
+        reserved = BUILTIN_COMMAND_PLACEHOLDERS & (
+            set(inputs.specs) | set(outputs.specs)
+        )
         if reserved:
             raise ValueError(
                 f"Rule {name!r}: reserved command placeholder name used as input/output: "
@@ -91,7 +93,9 @@ class Rule:
             )
         output_names = list(outputs.specs.keys())
         self._multi = len(output_names) > 1
-        self._return_type = namedtuple(f"{name}_outputs", output_names) if self._multi else None
+        self._return_type = (
+            namedtuple(f"{name}_outputs", output_names) if self._multi else None
+        )
         if command is not None:
             self._validate_command(name, inputs, outputs, command, self.constraints)
 
@@ -107,7 +111,9 @@ class Rule:
         placeholders: set[str] = set()
         constraint_placeholders: set[str] = set()
         for piece in pieces:
-            for _literal, field_name, format_spec, _conversion in Formatter().parse(piece):
+            for _literal, field_name, format_spec, _conversion in Formatter().parse(
+                piece
+            ):
                 if field_name is None:
                     continue
                 if field_name == "constraint":
@@ -132,9 +138,13 @@ class Rule:
         if unknown:
             errors.append(f"unknown placeholders: {sorted(unknown)}")
         if unknown_constraints:
-            errors.append(f"unknown constraint placeholders: {sorted(unknown_constraints)}")
+            errors.append(
+                f"unknown constraint placeholders: {sorted(unknown_constraints)}"
+            )
         if missing_outputs:
-            errors.append(f"outputs not referenced in command: {sorted(missing_outputs)}")
+            errors.append(
+                f"outputs not referenced in command: {sorted(missing_outputs)}"
+            )
         if errors:
             raise ValueError(f"Rule {name!r}: " + "; ".join(errors))
 
@@ -147,7 +157,7 @@ class Rule:
     def __call__(self, *args, **kwargs):
         name = self.__name__
         if len(args) < len(self._pos_inputs):
-            missing = [pname for pname, _ in self._pos_inputs[len(args):]]
+            missing = [pname for pname, _ in self._pos_inputs[len(args) :]]
             raise TypeError(f"{name}: missing required inputs: {missing!r}")
         if len(args) > len(self._pos_inputs):
             raise TypeError(
@@ -158,10 +168,14 @@ class Rule:
             raise TypeError(f"{name}: missing required inputs: {missing_kw!r}")
         for (pname, ptype), val in zip(self._pos_inputs, args):
             if not isinstance(val, Node):
-                raise TypeError(f"{name}: {pname!r} expected Node, got {type(val).__name__!r}")
+                raise TypeError(
+                    f"{name}: {pname!r} expected Node, got {type(val).__name__!r}"
+                )
             if val.node_type is None or not issubclass(val.node_type, ptype):
                 got = val.node_type.__name__ if val.node_type else "None"
-                raise TypeError(f"{name}: {pname!r} expected {ptype.__name__}, got {got}")
+                raise TypeError(
+                    f"{name}: {pname!r} expected {ptype.__name__}, got {got}"
+                )
         for kname, val in kwargs.items():
             if kname not in self._kw_inputs:
                 continue
@@ -171,10 +185,14 @@ class Rule:
             except TypeError:
                 ok = True
             if not ok:
-                raise TypeError(f"{name}: {kname!r} expected {ktype}, got {type(val).__name__!r}")
+                raise TypeError(
+                    f"{name}: {kname!r} expected {ktype}, got {type(val).__name__!r}"
+                )
 
         parents = [a for a in args if isinstance(a, Node)]
-        nodes = Node.make_outputs(self, parents, kwargs, self.command, self.outputs.specs)
+        nodes = Node.make_outputs(
+            self, parents, kwargs, self.command, self.outputs.specs
+        )
         return self._return_type(*nodes) if self._multi else nodes[0]
 
 
@@ -208,7 +226,7 @@ def _parse_rule_fn(fn) -> tuple:
     raw_anns = fn.__annotations__
     inputs_specs = {}
     for pname, ann in raw_anns.items():
-        if pname == 'return':
+        if pname == "return":
             continue
         if isinstance(ann, str):
             ann = eval(ann, fn.__globals__)  # noqa: PGH001
@@ -221,7 +239,8 @@ def _parse_rule_fn(fn) -> tuple:
         src = textwrap.dedent(inspect.getsource(fn))
         func_tree = ast.parse(src)
         func_def = next(
-            n for n in ast.walk(func_tree)
+            n
+            for n in ast.walk(func_tree)
             if isinstance(n, ast.FunctionDef) and n.name == rule_name
         )
         for stmt in func_def.body:
@@ -232,16 +251,18 @@ def _parse_rule_fn(fn) -> tuple:
         pass
 
     if body_return is not None:
-        items = body_return.elts if isinstance(body_return, ast.Tuple) else [body_return]
+        items = (
+            body_return.elts if isinstance(body_return, ast.Tuple) else [body_return]
+        )
         outputs_specs = _parse_output_items(items)
     else:
-        return_ann = raw_anns.get('return')
+        return_ann = raw_anns.get("return")
         if return_ann is not None:
             if not isinstance(return_ann, str):
                 outputs_specs[_pascal_to_snake(return_ann.__name__)] = return_ann
             else:
                 try:
-                    expr_tree = ast.parse(return_ann.strip(), mode='eval')
+                    expr_tree = ast.parse(return_ann.strip(), mode="eval")
                 except SyntaxError:
                     raise ValueError(
                         f"rule {rule_name!r}: cannot parse return annotation {return_ann!r}"
@@ -357,6 +378,7 @@ class Rules:
                 repeat,
             )
             return self.__dict__[rule_name]
+
         return decorator
 
     def rule(self, fn=None, **constraints):
@@ -389,7 +411,8 @@ class Rules:
             src = textwrap.dedent(inspect.getsource(fn))
             func_tree = ast.parse(src)
             func_def = next(
-                n for n in ast.walk(func_tree)
+                n
+                for n in ast.walk(func_tree)
                 if isinstance(n, ast.FunctionDef) and n.name == rule_name
             )
             cmd = None
@@ -398,15 +421,19 @@ class Rules:
                     isinstance(stmt, ast.Assign)
                     and len(stmt.targets) == 1
                     and isinstance(stmt.targets[0], ast.Name)
-                    and stmt.targets[0].id == 'command'
+                    and stmt.targets[0].id == "command"
                 ):
                     expr = ast.Expression(body=stmt.value)
                     ast.fix_missing_locations(expr)
-                    cmd = eval(compile(expr, '<rule>', 'eval'), fn.__globals__)  # noqa: PGH001
+                    cmd = eval(
+                        compile(expr, "<rule>", "eval"), fn.__globals__
+                    )  # noqa: PGH001
                     break
 
             if cmd is None:
-                raise ValueError(f"rule {rule_name!r}: no 'command = ...' found in body")
+                raise ValueError(
+                    f"rule {rule_name!r}: no 'command = ...' found in body"
+                )
 
             constraints_obj = Constraints(**constraints) if constraints else None
             self.register(

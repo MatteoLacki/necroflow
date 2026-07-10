@@ -1,6 +1,6 @@
 # Generated Config Files
 
-[Back to README](../README.md)
+[Previous: Rules and Typed Outputs](rules.md) | [README](../README.md) | [Next: Execution, Scheduling, and Cleanup](execution.md)
 
 ## Generated config files
 
@@ -37,3 +37,5 @@ P.sage_out, P.run_info = R.run_sage(P.spectra, P.fasta, P.sage_config)
 ```
 
 `Rules.text_file(name, output, input_name="text")` creates a normal cached node. The text value participates in the node fingerprint, and the built-in writer recipe (`necroflow.text_file/v1`) is hashed in place of shell command text.
+
+[Previous: Rules and Typed Outputs](rules.md) | [README](../README.md) | [Next: Execution, Scheduling, and Cleanup](execution.md)

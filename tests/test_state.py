@@ -8,9 +8,17 @@ from necroflow import Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState
 from necroflow.nodes import Node
 
 
-class A(NodeType): pass
-class B(NodeType): pass
-class C(NodeType): pass
+class A(NodeType):
+    pass
+
+
+class B(NodeType):
+    pass
+
+
+class C(NodeType):
+    pass
+
 
 R = Rules()
 R.register("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
@@ -35,6 +43,7 @@ def simple_dag(tmp_path):
 
 
 # --- unit tests for state file helpers ---
+
 
 def test_fresh_state_not_compromised(tmp_path):
     assert not _node(tmp_path).is_compromised
@@ -69,6 +78,7 @@ def test_mark_done_interrupted_is_compromised(tmp_path):
 
 # --- integration: successful run writes up_to_date ---
 
+
 def test_successful_run_not_compromised(tmp_path):
     dag, P = simple_dag(tmp_path)
     dag.execute()
@@ -79,6 +89,7 @@ def test_successful_run_not_compromised(tmp_path):
 
 
 # --- integration: simulated crash → nodes re-run ---
+
 
 def test_simulated_crash_reruns_node(tmp_path):
     dag, P = simple_dag(tmp_path)
@@ -98,6 +109,7 @@ def test_simulated_crash_reruns_node(tmp_path):
 
 # --- integration: failed node → FAILED state + re-run next time ---
 
+
 def test_failed_node_state(tmp_path):
     P = Pipeline()
     P.c = R.fail_c(x="x")
@@ -113,6 +125,7 @@ def test_failed_node_state(tmp_path):
 
 
 # --- integration: interrupted node (signal) → INTERRUPTED state ---
+
 
 def test_interrupted_node_state(tmp_path):
     P = Pipeline()
@@ -130,13 +143,19 @@ def test_interrupted_node_state(tmp_path):
 
 # --- integration: retry after failure / interruption ---
 
-class X(NodeType): pass
-class Y(NodeType): pass
+
+class X(NodeType):
+    pass
+
+
+class Y(NodeType):
+    pass
+
 
 R2 = Rules()
-R2.register("make_x",        Inputs(v=str), Outputs(x=X), "touch {x}")
-R2.register("make_y_fail",   Inputs(x=X),   Outputs(y=Y), "touch {y} && exit 1")
-R2.register("make_y_signal", Inputs(x=X),   Outputs(y=Y), "touch {y}; kill -TERM $$")
+R2.register("make_x", Inputs(v=str), Outputs(x=X), "touch {x}")
+R2.register("make_y_fail", Inputs(x=X), Outputs(y=Y), "touch {y} && exit 1")
+R2.register("make_y_signal", Inputs(x=X), Outputs(y=Y), "touch {y}; kill -TERM $$")
 
 
 def _xy_dag(tmp_path, y_rule="make_y_fail"):
@@ -194,6 +213,7 @@ def test_interrupted_node_reruns_on_retry(tmp_path):
 
 # --- integration: NodeType invalidators ---
 
+
 def _sha256_file(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -240,7 +260,12 @@ def test_nodetype_invalidator_output_file_change_reruns_node(tmp_path):
         invalidator = output_hash
 
     r = Rules()
-    r.register("make_output_hash", Inputs(text=str), Outputs(out=OutputHashInvalidated), "echo {text} > {out}")
+    r.register(
+        "make_output_hash",
+        Inputs(text=str),
+        Outputs(out=OutputHashInvalidated),
+        "echo {text} > {out}",
+    )
     P = Pipeline()
     P.out = r.make_output_hash(text="payload")
     dag = DAG(outdir=tmp_path)
@@ -264,7 +289,12 @@ def test_nodetype_invalidator_missing_metadata_reruns_node(tmp_path):
         invalidator = output_hash
 
     r = Rules()
-    r.register("make_output", Inputs(text=str), Outputs(out=OutputInvalidated), "echo {text} > {out}")
+    r.register(
+        "make_output",
+        Inputs(text=str),
+        Outputs(out=OutputInvalidated),
+        "echo {text} > {out}",
+    )
     P = Pipeline()
     P.out = r.make_output(text="payload")
     dag = DAG(outdir=tmp_path)
@@ -294,7 +324,12 @@ def test_nodetype_invalidator_exception_fails_fast(tmp_path):
         invalidator = maybe_raise
 
     r = Rules()
-    r.register("make_raising", Inputs(text=str), Outputs(out=RaisingInvalidator), "echo {text} > {out}")
+    r.register(
+        "make_raising",
+        Inputs(text=str),
+        Outputs(out=RaisingInvalidator),
+        "echo {text} > {out}",
+    )
     P = Pipeline()
     P.out = r.make_raising(text="payload")
     dag = DAG(outdir=tmp_path)

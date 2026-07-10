@@ -16,40 +16,58 @@ from necroflow import (
 
 # --- node types ---
 
+
 class Fastq(NodeType):
     """Raw sequencing reads (FASTQ format)."""
+
     filename = "reads.fastq.gz"
+
 
 class Bam(NodeType):
     """Aligned reads in BAM format."""
+
     filename = "aligned.bam"
+
 
 class SortedBam(Bam):
     """Coordinate-sorted BAM; required before quantification or variant calling."""
+
     filename = "sorted.bam"
+
 
 class Log(NodeType):
     """Aligner log capturing mapping statistics."""
+
     filename = "align.log"
+
 
 class Counts(NodeType):
     """Per-gene read counts produced by featureCounts."""
+
     filename = "counts.txt"
+
 
 class QcReport(NodeType):
     """Alignment QC summary from featureCounts."""
+
     filename = "qc.txt"
+
 
 class Vcf(NodeType):
     """Raw variant calls in VCF format."""
+
     filename = "variants.vcf.gz"
+
 
 class AnnotatedVcf(NodeType):
     """Variant calls enriched with database annotations."""
+
     filename = "annotated.vcf.gz"
+
 
 class MergedVcf(NodeType):
     """SNP and indel calls merged into a single VCF."""
+
     filename = "merged.vcf.gz"
 
 
@@ -57,35 +75,42 @@ class MergedVcf(NodeType):
 
 r = Rules()
 
+
 @r.command("ln -s {path} {fastq}")
 def raw_fastq(path: str):
     """Symlink a raw FASTQ file into the output tree."""
     return Fastq[fastq]
+
 
 @r.command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
 def align(fastq: Fastq, ref: str):
     """Align reads to a reference genome with BWA-MEM."""
     return Bam[bam], Log[log]
 
+
 @r.command("samtools sort {bam} -o {sorted_bam}")
 def sort_bam(bam: Bam):
     """Sort BAM by coordinate with samtools."""
     return SortedBam[sorted_bam]
+
 
 @r.command("featureCounts -a {gene_model} {bam} -o {counts}")
 def quantify(bam: SortedBam, gene_model: str):
     """Count reads per gene using featureCounts."""
     return Counts[counts]
 
+
 @r.command("gatk HaplotypeCaller -I {bam} -O {vcf} --caller {caller}")
 def call_variants(bam: SortedBam, caller: str):
     """Call germline SNPs and indels with GATK HaplotypeCaller."""
     return Vcf[vcf]
 
+
 @r.command("bcftools annotate -a {db} {vcf} -o {annotated_vcf}")
 def annotate(vcf: Vcf, db: str):
     """Annotate variants against a reference database with bcftools."""
     return AnnotatedVcf[annotated_vcf]
+
 
 @r.command("bcftools merge {snp_ann} {indel_ann} -o {merged_vcf}")
 def merge_annotations(snp_ann: AnnotatedVcf, indel_ann: AnnotatedVcf):
@@ -94,6 +119,7 @@ def merge_annotations(snp_ann: AnnotatedVcf, indel_ann: AnnotatedVcf):
 
 
 # --- pipeline definitions ---
+
 
 def basic_pipeline(config, r):
     P = Pipeline()
@@ -119,7 +145,9 @@ def diamond_pipeline(config, r):
 
 # --- single-pipeline inspection ---
 
-config = SimpleNamespace(path="/data/sample1.fastq.gz", ref="hg38", gene_model="gencode_v44")
+config = SimpleNamespace(
+    path="/data/sample1.fastq.gz", ref="hg38", gene_model="gencode_v44"
+)
 P = basic_pipeline(config, r)
 print(P)
 P.save("/tmp/simple_dag_pipeline.txt")
@@ -132,14 +160,18 @@ for node in P.nodes:
 # --- multi-sample DAG: basic pipeline ---
 
 basic_configs = [
-    SimpleNamespace(path="/data/sample1.fastq.gz", ref="hg38", gene_model="gencode_v44"),
-    SimpleNamespace(path="/data/sample2.fastq.gz", ref="hg38", gene_model="gencode_v44"),
+    SimpleNamespace(
+        path="/data/sample1.fastq.gz", ref="hg38", gene_model="gencode_v44"
+    ),
+    SimpleNamespace(
+        path="/data/sample2.fastq.gz", ref="hg38", gene_model="gencode_v44"
+    ),
 ]
 
 dag = DAG("results")
 for config in basic_configs:
     P = basic_pipeline(config, r)
-    dag.add(P, request=[P.counts])   # only run up to counts, skip qc
+    dag.add(P, request=[P.counts])  # only run up to counts, skip qc
 
 print(dag)
 dag.save("/tmp/simple_dag_basic.txt")

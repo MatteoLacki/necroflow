@@ -3,6 +3,7 @@
 Source: github.com/MatteoLacki/snakemakeconfigs
 Added at the bottom: iter_configs(), _to_plain_dict().
 """
+
 from __future__ import annotations
 
 import copy
@@ -15,7 +16,6 @@ from typing import Any, Iterator
 
 import tomlkit
 from tomlkit.items import AoT
-
 
 # ── patch / grid extraction ───────────────────────────────────────────────────
 
@@ -32,7 +32,9 @@ def apply_patch(base_doc, patch_doc, grid_suffixes):
                     if isinstance(value, AoT):
                         all_variants = []
                         for elem in value:
-                            all_variants.extend(_expand_aot_element(elem, grid_suffixes))
+                            all_variants.extend(
+                                _expand_aot_element(elem, grid_suffixes)
+                            )
                         grid_params[actual_path] = all_variants
                         target[actual_key] = all_variants[0]
                     elif isinstance(value, list):
@@ -123,7 +125,9 @@ def extract_grids_from_doc(doc, grid_suffixes):
                     if isinstance(value, AoT):
                         all_variants = []
                         for elem in value:
-                            all_variants.extend(_expand_aot_element(elem, grid_suffixes))
+                            all_variants.extend(
+                                _expand_aot_element(elem, grid_suffixes)
+                            )
                         grid_params[actual_path] = all_variants
                         table[actual_key] = all_variants[0]
                         del table[key]
@@ -174,9 +178,20 @@ def get_nested_value(doc, path):
 def sanitize_for_filename(s):
     s = str(s)
     for old, new in {
-        "[": "", "]": "", " ": "", ",": "-", ".": "p", "/": "_",
-        "\\": "_", ":": "_", "*": "star", "?": "", '"': "",
-        "<": "", ">": "", "|": "_",
+        "[": "",
+        "]": "",
+        " ": "",
+        ",": "-",
+        ".": "p",
+        "/": "_",
+        "\\": "_",
+        ":": "_",
+        "*": "star",
+        "?": "",
+        '"': "",
+        "<": "",
+        ">": "",
+        "|": "_",
     }.items():
         s = s.replace(old, new)
     return s
@@ -201,7 +216,9 @@ def _find_auto_label(vals):
         common_keys &= set(v.keys())
     for key in sorted(common_keys):
         values = [v[key] for v in vals]
-        if all(isinstance(val, str) for val in values) and len(set(values)) == len(vals):
+        if all(isinstance(val, str) for val in values) and len(set(values)) == len(
+            vals
+        ):
             return {id(v): sanitize_for_filename(v[key]) for v in vals}
     return None
 
@@ -218,7 +235,11 @@ def diff_strings(str_a, str_b):
 
 
 def value_to_string(value, base_value=None):
-    if base_value is not None and isinstance(value, str) and isinstance(base_value, str):
+    if (
+        base_value is not None
+        and isinstance(value, str)
+        and isinstance(base_value, str)
+    ):
         diff = diff_strings(base_value, value)
         if diff:
             return sanitize_for_filename(diff)
@@ -241,8 +262,13 @@ def truncate_to_bytes(s, max_bytes):
 
 
 def make_config_name(
-    params, base_stem, base_values,
-    short_names=False, equal_sign="=", grid_indices=None, value_only_keys=None,
+    params,
+    base_stem,
+    base_values,
+    short_names=False,
+    equal_sign="=",
+    grid_indices=None,
+    value_only_keys=None,
 ):
     parts = []
     for key, value in params.items():
@@ -288,12 +314,16 @@ def _build_grid_indices(grid_params):
         else:
             auto = _find_auto_label(vals)
             result[name] = (
-                auto if auto is not None else {id(v): str(i) for i, v in enumerate(vals)}
+                auto
+                if auto is not None
+                else {id(v): str(i) for i, v in enumerate(vals)}
             )
     return result
 
 
-def _compute_value_only_keys(grid_params, grid_indices, base_scalar_values, short_names):
+def _compute_value_only_keys(
+    grid_params, grid_indices, base_scalar_values, short_names
+):
     if not short_names:
         return set()
     candidate_label_sets = {}
@@ -340,7 +370,9 @@ def iter_configs(
         yield base_stem, _to_plain_dict(result_doc)
         return
 
-    base_scalar_values = {name: get_nested_value(result_doc, name) for name in grid_params}
+    base_scalar_values = {
+        name: get_nested_value(result_doc, name) for name in grid_params
+    }
     grid_indices = _build_grid_indices(grid_params)
     value_only_keys = _compute_value_only_keys(
         grid_params, grid_indices, base_scalar_values, short_names
@@ -360,7 +392,9 @@ def iter_configs(
         for k, v in params.items():
             set_nested_value(variant, k, v)
         filename = make_config_name(
-            params, base_stem, base_scalar_values,
+            params,
+            base_stem,
+            base_scalar_values,
             grid_indices=grid_indices,
             value_only_keys=value_only_keys,
             short_names=short_names,

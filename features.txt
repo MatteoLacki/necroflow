@@ -1,0 +1,145 @@
+necroflow feature tree
+======================
+
+necroflow
+├── Core model
+│   ├── NodeType typed file/artifact classes
+│   ├── Node objects with parents, config, command, output path, state
+│   ├── Rules container
+│   │   ├── decorator API: @R.command(...)
+│   │   ├── explicit API: R.register(...)
+│   │   ├── function-body command API: @R.rule
+│   │   ├── typed Inputs / Outputs
+│   │   ├── multi-output rules
+│   │   ├── co-output execution once per rule call
+│   │   ├── Constraints: threads, ram, custom resources
+│   │   ├── repeat=N compatibility metadata
+│   │   └── built-in text_file rules for generated config files
+│   ├── Pipeline
+│   │   ├── attribute-based node registration
+│   │   ├── pipeline labels for manifests and requests
+│   │   └── conditional Python pipeline construction
+│   └── DAG
+│       ├── multi-pipeline aggregation
+│       ├── shared-node deduplication
+│       ├── requested target nodes
+│       └── ASCII graph rendering / save
+│
+├── Command templates
+│   ├── input/output path placeholders
+│   ├── config placeholders
+│   ├── {workdir} retained side-output directory
+│   ├── constraint placeholders
+│   │   ├── {threads}, default 1
+│   │   ├── {ram} and other declared constraints
+│   │   └── {constraint:name} forced constraint lookup
+│   ├── escaped literal shell braces via {{...}}
+│   ├── string shell commands
+│   ├── list-form subprocess commands
+│   └── configurable shellpath for string commands
+│
+├── Caching and paths
+│   ├── content-addressed node paths
+│   ├── 16-char rule-call fingerprints
+│   ├── filesystem cache as source of truth
+│   ├── parent/content/config/type-aware fingerprints
+│   ├── explicit shellpath included in string-command fingerprints
+│   ├── path length validation
+│   ├── output content hashes
+│   ├── invalidator tokens on NodeType
+│   └── .rip metadata directories
+│
+├── Execution engine
+│   ├── parallel execution
+│   ├── resource caps
+│   │   ├── threads cap
+│   │   ├── ram/custom resource caps
+│   │   └── SI/binary resource parsing
+│   ├── scheduler protocol
+│   ├── connected-component scheduler
+│   ├── FIFO scheduler
+│   ├── custom schedulers
+│   ├── dry-run mode
+│   ├── keep-going failure mode
+│   ├── failed/interrupted state tracking
+│   ├── compromised-output reruns
+│   ├── missing-output detection
+│   ├── job logs
+│   ├── output/provenance graph writing
+│   ├── file locking per output root
+│   └── autoclean
+│       ├── orphan cleanup
+│       └── intermediate cleanup
+│
+├── CLI
+│   ├── legacy/default run form: necroflow job.toml
+│   ├── explicit run subcommand
+│   ├── init subcommand
+│   │   └── canonical starter workflow scaffold
+│   ├── graph subcommand
+│   ├── outputs subcommand
+│   ├── provenance subcommand
+│   ├── output root options
+│   │   ├── --nodes-dir
+│   │   ├── --results-dir
+│   │   └── --outdir compatibility alias
+│   ├── execution options
+│   │   ├── -c / --cores
+│   │   ├── --constraint
+│   │   ├── --keep-going
+│   │   ├── --autoclean
+│   │   ├── --dry-run
+│   │   └── --shellpath
+│   ├── invalidation options
+│   │   ├── --invalidate
+│   │   ├── --reap
+│   │   └── --reap-file
+│   └── config validation option
+│       └── --validation path.py:function
+│
+├── Job TOML
+│   ├── .pipeline factory reference
+│   ├── .requests target selection
+│   ├── metadata-stripped config passed to factory
+│   ├── __grid expansion
+│   ├── multiple job files
+│   └── stable combo labels
+│
+├── Validation
+│   ├── repeatable CLI validators
+│   ├── validators run after grid expansion
+│   ├── validators receive concrete config dict
+│   └── Python API leaves validation to caller loop
+│
+├── Outputs and provenance
+│   ├── real node outputs under node store
+│   ├── per-job result symlink folders
+│   ├── manifest.toml for requested outputs
+│   ├── dependencies.toml
+│   ├── content hash files
+│   ├── invalidation token files
+│   ├── job.log
+│   ├── graph.txt ancestor view
+│   └── provenance CLI display
+│
+├── Examples and docs
+│   ├── canonical workflow
+│   ├── packaged init template
+│   ├── CLI manual
+│   ├── caching manual
+│   ├── job TOML/grid manual
+│   ├── config validation manual
+│   ├── generated config files manual
+│   ├── rules/manual API docs
+│   ├── execution/scheduling docs
+│   └── release checklist
+│
+├── Packaging
+│   ├── pyproject setuptools package
+│   ├── console script: necroflow
+│   ├── dynamic version from necroflow.__version__
+│   ├── package data for canonical templates
+│   └── optional validation/dev extras
+│
+└── Not implemented
+    └── cluster / cloud backends

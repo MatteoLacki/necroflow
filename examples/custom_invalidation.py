@@ -19,7 +19,6 @@ from pathlib import Path
 
 from necroflow import DAG, Inputs, NodeType, Outputs, Pipeline, Rules
 
-
 WORK = Path("/tmp/necroflow_custom_invalidation")
 OUTDIR = WORK / "results"
 DEPENDENCY = WORK / "dependency.txt"

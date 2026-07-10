@@ -1,6 +1,6 @@
 # Where Outputs Live and Caching
 
-[Back to README](../README.md)
+[Previous: README](../README.md) | [README](../README.md) | [Next: Command-Line Interface](cli.md)
 
 ## Where outputs live
 
@@ -82,3 +82,5 @@ Invalidators are evaluated during the initial node classification at the start o
 ## Concurrency
 
 **Only one necroflow instance may run against a given node store at a time.** `execute()` acquires an exclusive lock on `nodes/.rip/necroflow.lock` (via `fcntl.flock`) at startup and releases it on exit. A second instance targeting the same node store will fail immediately with a clear error. Running two instances against *overlapping* node stores (e.g. `nodes` and `nodes/sub`) is unsupported — there is no OS primitive to detect this, so avoid it.
+
+[Previous: README](../README.md) | [README](../README.md) | [Next: Command-Line Interface](cli.md)

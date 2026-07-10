@@ -1,6 +1,6 @@
 # Config Validation
 
-[Back to README](../README.md)
+[Previous: Job TOML and Parameter Grids](job-toml.md) | [README](../README.md) | [Next: Rules and Typed Outputs](rules.md)
 
 ## Config validation
 
@@ -54,3 +54,5 @@ def validate(config):
 ```
 
 Cerberus handles structural checks well; branch-specific or cross-parameter domain rules can live in `check_with` hooks or in ordinary Python after the Cerberus check.
+
+[Previous: Job TOML and Parameter Grids](job-toml.md) | [README](../README.md) | [Next: Rules and Typed Outputs](rules.md)

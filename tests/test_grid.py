@@ -1,4 +1,5 @@
 """Tests for iter_configs() / __grid expansion."""
+
 import pytest
 import tomlkit
 from necroflow.grid import iter_configs
@@ -10,6 +11,7 @@ def parse(toml_str: str):
 
 # ── no-grid passthrough ───────────────────────────────────────────────────────
 
+
 def test_no_grid_yields_one():
     doc = parse('word = "hello"\nn = 3\n')
     results = list(iter_configs(doc, base_stem="exp"))
@@ -18,17 +20,18 @@ def test_no_grid_yields_one():
 
 def test_no_grid_label_is_base_stem():
     doc = parse('word = "hello"\n')
-    (label, cfg), = iter_configs(doc, base_stem="myexp")
+    ((label, cfg),) = iter_configs(doc, base_stem="myexp")
     assert label == "myexp"
 
 
 def test_no_grid_plain_dict():
     doc = parse('word = "hello"\nn = 3\n')
-    (_, cfg), = iter_configs(doc, base_stem="exp")
+    ((_, cfg),) = iter_configs(doc, base_stem="exp")
     assert cfg == {"word": "hello", "n": 3}
 
 
 # ── 1-D grid ─────────────────────────────────────────────────────────────────
+
 
 def test_1d_grid_count():
     doc = parse('word__grid = ["a", "b", "c"]\n')
@@ -52,6 +55,7 @@ def test_1d_grid_label_contains_value():
 
 # ── 2-D grid (Cartesian product) ──────────────────────────────────────────────
 
+
 def test_2d_grid_count():
     doc = parse('word__grid = ["a", "b"]\nn__grid = [1, 2, 3]\n')
     results = list(iter_configs(doc, base_stem="exp"))
@@ -72,15 +76,17 @@ def test_2d_grid_unique_labels():
 
 # ── plain types in output ─────────────────────────────────────────────────────
 
+
 def test_plain_types_returned():
     doc = parse('word__grid = ["hello"]\nn__grid = [5]\n')
-    (_, cfg), = iter_configs(doc, base_stem="exp")
+    ((_, cfg),) = iter_configs(doc, base_stem="exp")
     # tomlkit proxies are subclasses of built-in types; isinstance checks what factory code uses
     assert isinstance(cfg["word"], str)
     assert isinstance(cfg["n"], int)
 
 
 # ── base_stem in label ────────────────────────────────────────────────────────
+
 
 def test_base_stem_in_label():
     doc = parse('word__grid = ["a", "b"]\n')

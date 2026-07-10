@@ -1,6 +1,6 @@
 # Command-Line Interface
 
-[Back to README](../README.md)
+[Previous: Where Outputs Live and Caching](caching.md) | [README](../README.md) | [Next: Job TOML and Parameter Grids](job-toml.md)
 
 ## Command-line interface
 
@@ -80,3 +80,5 @@ Print stored provenance for an existing cached output:
 ```bash
 necroflow provenance nodes/rule/hash/file
 ```
+
+[Previous: Where Outputs Live and Caching](caching.md) | [README](../README.md) | [Next: Job TOML and Parameter Grids](job-toml.md)

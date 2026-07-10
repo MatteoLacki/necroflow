@@ -127,7 +127,9 @@ class _GraphBase:
             layers[d].append(nid)
 
         labels = {nid: self._node_label(id_to_node[nid]) for nid in node_ids}
-        raw_edges = [(id(p), id(n)) for n in nodes for p in n.parents if id(p) in node_ids]
+        raw_edges = [
+            (id(p), id(n)) for n in nodes for p in n.parents if id(p) in node_ids
+        ]
 
         # Insert dummy pass-through nodes for long-range edges (span > 1 layer)
         dummy_ids: set[int] = set()
@@ -196,6 +198,7 @@ class _GraphBase:
     def save(self, path) -> None:
         """Write the ASCII DAG render to a file."""
         from pathlib import Path
+
         Path(path).write_text(str(self) + "\n", encoding="utf-8")
 
 
@@ -263,8 +266,9 @@ class DAG(_GraphBase):
 
     def __init__(self, outdir=None):
         from pathlib import Path
-        self._nodes: dict[str, object] = {}   # key -> canonical Node
-        self._all_nodes: list = []            # all nodes including duplicates
+
+        self._nodes: dict[str, object] = {}  # key -> canonical Node
+        self._all_nodes: list = []  # all nodes including duplicates
         self._required: set[str] = set()
         self.outdir = Path(outdir) if outdir is not None else Path.cwd()
 
@@ -280,7 +284,9 @@ class DAG(_GraphBase):
 
     def rebuild_index(self, required_nodes=None) -> None:
         """Rebuild deduplication indexes after execution context changes keys."""
-        required_nodes = self.required_nodes if required_nodes is None else required_nodes
+        required_nodes = (
+            self.required_nodes if required_nodes is None else required_nodes
+        )
         self._nodes = {}
         for node in self._all_nodes:
             self._nodes.setdefault(node.key, node)
@@ -310,4 +316,5 @@ class DAG(_GraphBase):
 
     def execute(self, **kwargs) -> None:
         from necroflow.executor import execute
+
         execute(self, self.outdir, **kwargs)

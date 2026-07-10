@@ -1,4 +1,5 @@
 """Job TOML loading and grid expansion."""
+
 from __future__ import annotations
 
 import importlib.util

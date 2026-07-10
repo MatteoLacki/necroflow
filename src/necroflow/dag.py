@@ -8,9 +8,15 @@ from typing import Any
 
 import tomlkit
 
-from necroflow.nodes import Node, NodeState, NodeType, NodeTypeMeta, _is_nodetype, _topo_sort
+from necroflow.nodes import (
+    Node,
+    NodeState,
+    NodeType,
+    NodeTypeMeta,
+    _is_nodetype,
+    _topo_sort,
+)
 from necroflow.rules import Inputs, Outputs, Constraints, Rule, Rules, parse_resource
-
 
 
 def _filesystem_limits(path: Path) -> tuple[int | None, int | None]:
@@ -44,9 +50,7 @@ def _check_path_limits(path: Path) -> None:
     if path_max is not None:
         length = len(os.fsencode(os.fspath(path)))
         if length > path_max:
-            raise ValueError(
-                f"path too long ({length} > PATH_MAX {path_max}): {path}"
-            )
+            raise ValueError(f"path too long ({length} > PATH_MAX {path_max}): {path}")
 
 
 def _content_hash(path: Path) -> str:
@@ -133,7 +137,6 @@ def _output_mtime(path: Path) -> float:
     return path.stat().st_mtime
 
 
-
 def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
     """Set node.state for each node. Requires resolve_paths() to have been called first.
 
@@ -155,7 +158,11 @@ def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
     # by the executor unless autoclean=True, in which case it gets deleted
     for node in nodes:
         if node.key not in required:
-            node.state = NodeState.ORPHAN if (node.path is not None and node.path.exists()) else None
+            node.state = (
+                NodeState.ORPHAN
+                if (node.path is not None and node.path.exists())
+                else None
+            )
 
     # Classify in topological order so STALE propagates naturally in one pass
     for node in _topo_sort(list(required.values())):
@@ -176,7 +183,10 @@ def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
                 if _output_mtime(p.path) <= node_mtime:
                     continue  # fast path: parent not newer
                 hash_file = p.path.parent / ".rip" / (p.path.name + ".hash")
-                if hash_file.exists() and _content_hash(p.path) == hash_file.read_text().strip():
+                if (
+                    hash_file.exists()
+                    and _content_hash(p.path) == hash_file.read_text().strip()
+                ):
                     continue  # parent re-ran but content unchanged
                 stale = True
                 break
@@ -185,18 +195,20 @@ def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
         node.state = NodeState.STALE if stale else NodeState.UP_TO_DATE
 
 
-
 class _ConstraintFormatter:
     def __init__(self, constraints: dict[str, Any]):
         self.constraints = constraints
 
     def __format__(self, name: str) -> str:
         if not name:
-            raise ValueError("constraint placeholder requires a name, e.g. {constraint:threads}")
+            raise ValueError(
+                "constraint placeholder requires a name, e.g. {constraint:threads}"
+            )
         try:
             return str(self.constraints[name])
         except KeyError as exc:
             raise KeyError(f"unknown constraint placeholder: {name}") from exc
+
 
 def resolve_command(node: Node) -> str | list[str] | None:
     """Format node.command with input/output paths and config values.
@@ -211,7 +223,9 @@ def resolve_command(node: Node) -> str | list[str] | None:
     for iname, parent in zip(pos_input_names, node.parents):
         subs[iname] = parent.path
     subs.update(node.config)
-    command_constraints = {"threads": node.rule.constraints.get("threads", node.rule.resources["threads"])}
+    command_constraints = {
+        "threads": node.rule.constraints.get("threads", node.rule.resources["threads"])
+    }
     command_constraints.update(node.rule.constraints)
     for name, value in command_constraints.items():
         subs.setdefault(name, value)
@@ -221,7 +235,9 @@ def resolve_command(node: Node) -> str | list[str] | None:
     subs["workdir"] = node.path.parent
     if isinstance(node.command, list):
         return [c.format(**subs) for c in node.command]
-    quoted = {k: shlex.quote(str(v)) if isinstance(v, Path) else v for k, v in subs.items()}
+    quoted = {
+        k: shlex.quote(str(v)) if isinstance(v, Path) else v for k, v in subs.items()
+    }
     return node.command.format(**quoted)
 
 
@@ -236,6 +252,3 @@ def resolve_paths(nodes: list[Node], outdir: Path | str) -> None:
         path = outdir / node.key
         _check_path_limits(path)
         node.path = path
-
-
-

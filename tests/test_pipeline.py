@@ -1,24 +1,38 @@
 """Tests for Pipeline, DAG, and _sinks."""
+
 import pytest
 from pathlib import Path
 from necroflow import NodeType, Inputs, Outputs, Rules, Pipeline, DAG
 from necroflow.pipeline import _sinks
 
 
-class A(NodeType): filename = "a.txt"
-class B(NodeType): filename = "b.txt"
-class C(NodeType): filename = "c.txt"
-class D(NodeType): filename = "d.txt"
-class E(NodeType): filename = "e.txt"
+class A(NodeType):
+    filename = "a.txt"
+
+
+class B(NodeType):
+    filename = "b.txt"
+
+
+class C(NodeType):
+    filename = "c.txt"
+
+
+class D(NodeType):
+    filename = "d.txt"
+
+
+class E(NodeType):
+    filename = "e.txt"
 
 
 R = Rules()
-R.register("make_a",        Inputs(x=str),      Outputs(a=A), "touch {a}")
-R.register("make_b",        Inputs(a=A),         Outputs(b=B), "touch {b}")
-R.register("make_c",        Inputs(a=A),         Outputs(c=C), "touch {c}")
-R.register("make_d",        Inputs(b=B, c=C),    Outputs(d=D), "touch {d}")
-R.register("make_c_from_b", Inputs(b=B),         Outputs(c=C), "touch {c}")
-R.register("make_e_from_ac",Inputs(a=A, c=C),    Outputs(e=E), "touch {e}")
+R.register("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
+R.register("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
+R.register("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
+R.register("make_d", Inputs(b=B, c=C), Outputs(d=D), "touch {d}")
+R.register("make_c_from_b", Inputs(b=B), Outputs(c=C), "touch {c}")
+R.register("make_e_from_ac", Inputs(a=A, c=C), Outputs(e=E), "touch {e}")
 
 
 def diamond():
@@ -32,6 +46,7 @@ def diamond():
 
 
 # ── _sinks ────────────────────────────────────────────────────────────────────
+
 
 def test_sinks_source_node():
     # single node with no parents and no children — must be a sink
@@ -71,6 +86,7 @@ def test_sinks_excludes_intermediate():
 
 # ── Pipeline attribute assignment ─────────────────────────────────────────────
 
+
 def test_pipeline_nodes_accumulate():
     P = Pipeline()
     P.a = R.make_a(x="x")
@@ -83,7 +99,6 @@ def test_pipeline_dot_prefix_raises():
     P = Pipeline()
     with pytest.raises(ValueError, match=r"must not start with '\.'"):
         setattr(P, ".hidden", R.make_a(x="x"))
-
 
 
 def test_pipeline_duplicate_raises():
@@ -111,10 +126,13 @@ def test_workdir_is_reserved_input_output_name():
     with pytest.raises(ValueError, match="reserved command placeholder"):
         Rules().register("bad_input", Inputs(workdir=str), Outputs(a=A), "touch {a}")
     with pytest.raises(ValueError, match="reserved command placeholder"):
-        Rules().register("bad_output", Inputs(x=str), Outputs(workdir=A), "touch {workdir}")
+        Rules().register(
+            "bad_output", Inputs(x=str), Outputs(workdir=A), "touch {workdir}"
+        )
 
 
 # ── DAG deduplication ─────────────────────────────────────────────────────────
+
 
 def test_dag_deduplicates_shared_nodes():
     P1 = Pipeline()
@@ -180,9 +198,12 @@ def test_str_long_range_edge():
         assert label in rendered
     # dummy pass-throughs add an extra │ to the mid row of intermediate layers,
     # e.g. "│ make_b[B:b] │   │" has 3 pipe chars vs 2 for a plain box row
-    rows_with_dummy = [l for l in rendered.splitlines()
-                       if "make_" in l and l.count("│") >= 3]
-    assert len(rows_with_dummy) > 0, "expected dummy │ pass-through in intermediate layer rows"
+    rows_with_dummy = [
+        l for l in rendered.splitlines() if "make_" in l and l.count("│") >= 3
+    ]
+    assert (
+        len(rows_with_dummy) > 0
+    ), "expected dummy │ pass-through in intermediate layer rows"
 
 
 def test_dag_save(tmp_path):

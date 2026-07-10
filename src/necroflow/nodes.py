@@ -87,7 +87,9 @@ class Node:
             h.update(f"recipe:{recipe}".encode())
         else:
             cmd = self.command
-            h.update((cmd if isinstance(cmd, str) else repr(cmd) if cmd else "").encode())
+            h.update(
+                (cmd if isinstance(cmd, str) else repr(cmd) if cmd else "").encode()
+            )
         for k, v in sorted(self.config.items()):
             h.update(f"{k}={v!r}".encode())
         for k, v in sorted(self.execution_context.items()):
@@ -114,14 +116,16 @@ class Node:
         )
         return f"{rule_name}/{self.fingerprint}/{filename}"
 
-
     @property
     def state_file(self) -> Path:
         return self.path.parent / ".rip" / "state"
 
     @property
     def is_compromised(self) -> bool:
-        return self.state_file.exists() and self.state_file.read_text().strip() in _COMPROMISED_STATES
+        return (
+            self.state_file.exists()
+            and self.state_file.read_text().strip() in _COMPROMISED_STATES
+        )
 
     def mark_running(self) -> None:
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -131,7 +135,9 @@ class Node:
         self.state_file.write_text(state)
 
     @classmethod
-    def make_outputs(cls, rule, parents: list[Node], config: dict, command, outputs_specs: dict) -> list[Node]:
+    def make_outputs(
+        cls, rule, parents: list[Node], config: dict, command, outputs_specs: dict
+    ) -> list[Node]:
         nodes = [
             cls(
                 output_name=oname,

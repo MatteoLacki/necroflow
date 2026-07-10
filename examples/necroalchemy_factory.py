@@ -22,6 +22,7 @@ Pipeline attribute name (e.g. summary, audit).
 Multiple job TOML files are accepted; each expands independently and all
 pipelines share the same DAG (upstream nodes common across configs run once).
 """
+
 from necroalchemy import alchemy_pipeline
 
 

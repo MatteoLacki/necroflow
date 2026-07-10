@@ -1,39 +1,90 @@
 """Tests for execute(), schedulers, and thread budget."""
+
 import shutil
 from pathlib import Path
 
 import pytest
-from necroflow import NodeType, Inputs, Outputs, Constraints, Rules, Pipeline, DAG, execute
+from necroflow import (
+    NodeType,
+    Inputs,
+    Outputs,
+    Constraints,
+    Rules,
+    Pipeline,
+    DAG,
+    execute,
+)
 from necroflow import fifo_scheduler, connected_component_scheduler
 from necroflow.schedulers import ConnectedComponentScheduler
 
 
-class A(NodeType): filename = "a.txt"
-class B(NodeType): filename = "b.txt"
-class C(NodeType): filename = "c.txt"
-class D(NodeType): filename = "d.txt"
-class ShellOut(NodeType): filename = "shell.txt"
-class ListOut(NodeType): filename = "list.txt"
+class A(NodeType):
+    filename = "a.txt"
+
+
+class B(NodeType):
+    filename = "b.txt"
+
+
+class C(NodeType):
+    filename = "c.txt"
+
+
+class D(NodeType):
+    filename = "d.txt"
+
+
+class ShellOut(NodeType):
+    filename = "shell.txt"
+
+
+class ListOut(NodeType):
+    filename = "list.txt"
 
 
 R = Rules()
-R.register("make_a",       Inputs(x=str), Outputs(a=A),        "touch {a}")
-R.register("make_a_workdir", Inputs(x=str), Outputs(a=A),       "mkdir -p {workdir}/scratch; echo {x} > {workdir}/scratch/value.txt; touch {a}")
-R.register("make_a_from_workdir", Inputs(x=str), Outputs(a=A),  "mkdir -p {workdir}/tool-results; echo {x} > {workdir}/tool-results/a.txt; mv {workdir}/tool-results/a.txt {a}")
-R.register("make_ab",      Inputs(x=str), Outputs(a=A, b=B),   "touch {a} {b}")
-R.register("make_only_a",  Inputs(x=str), Outputs(a=A, b=B),   "touch {a} {b}; rm {b}")
-R.register("make_b",       Inputs(a=A),   Outputs(b=B),        "touch {b}")
-R.register("make_c",       Inputs(a=A),   Outputs(c=C),        "touch {c}")
-R.register("make_c_from_b",Inputs(b=B),   Outputs(c=C),        "touch {c}")
-R.register("fail_a",       Inputs(x=str), Outputs(a=A),        "{{ : {a}; exit 1; }}")
-R.register("no_output_a",  Inputs(x=str), Outputs(a=A),        "{{ : {a}; true; }}")  # exits 0, creates nothing
-R.register("make_a_heavy", Inputs(x=str), Outputs(a=A),        "touch {a}", Constraints(threads=4))
-R.register("brace_shell", Inputs(x=str), Outputs(out=ShellOut), "printf '%s\n' {{left,right}} > {out}")
-R.register("env_shell", Inputs(x=str), Outputs(out=ShellOut), "printf '%s\n' $NF_TEST_SHELL > {out}")
+R.register("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
+R.register(
+    "make_a_workdir",
+    Inputs(x=str),
+    Outputs(a=A),
+    "mkdir -p {workdir}/scratch; echo {x} > {workdir}/scratch/value.txt; touch {a}",
+)
+R.register(
+    "make_a_from_workdir",
+    Inputs(x=str),
+    Outputs(a=A),
+    "mkdir -p {workdir}/tool-results; echo {x} > {workdir}/tool-results/a.txt; mv {workdir}/tool-results/a.txt {a}",
+)
+R.register("make_ab", Inputs(x=str), Outputs(a=A, b=B), "touch {a} {b}")
+R.register("make_only_a", Inputs(x=str), Outputs(a=A, b=B), "touch {a} {b}; rm {b}")
+R.register("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
+R.register("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
+R.register("make_c_from_b", Inputs(b=B), Outputs(c=C), "touch {c}")
+R.register("fail_a", Inputs(x=str), Outputs(a=A), "{{ : {a}; exit 1; }}")
+R.register(
+    "no_output_a", Inputs(x=str), Outputs(a=A), "{{ : {a}; true; }}"
+)  # exits 0, creates nothing
+R.register(
+    "make_a_heavy", Inputs(x=str), Outputs(a=A), "touch {a}", Constraints(threads=4)
+)
+R.register(
+    "brace_shell",
+    Inputs(x=str),
+    Outputs(out=ShellOut),
+    "printf '%s\n' {{left,right}} > {out}",
+)
+R.register(
+    "env_shell",
+    Inputs(x=str),
+    Outputs(out=ShellOut),
+    "printf '%s\n' $NF_TEST_SHELL > {out}",
+)
 R.register("list_shell", Inputs(x=str), Outputs(out=ListOut), ["touch", "{out}"])
 
 
 # ── basic execution ───────────────────────────────────────────────────────────
+
 
 def test_execute_creates_outputs(tmp_path):
     P = Pipeline()
@@ -74,7 +125,7 @@ def test_explicit_shellpath_uses_selected_shell_for_brace_expansion(tmp_path):
 
 def test_explicit_shellpath_runs_custom_shell_wrapper(tmp_path, monkeypatch):
     wrapper = tmp_path / "nf-shell"
-    wrapper.write_text("#!/bin/sh\nNF_TEST_SHELL=wrapper exec /bin/sh \"$@\"\n")
+    wrapper.write_text('#!/bin/sh\nNF_TEST_SHELL=wrapper exec /bin/sh "$@"\n')
     wrapper.chmod(0o755)
     P = Pipeline()
     P.out = R.env_shell(x="x")
@@ -180,6 +231,7 @@ def test_execute_idempotent(tmp_path):
 
 def test_forced_stale_parent_propagates_to_child(tmp_path):
     import time
+
     P = Pipeline()
     P.a = R.make_a(x="x")
     P.b = R.make_b(P.a)
@@ -196,6 +248,7 @@ def test_forced_stale_parent_propagates_to_child(tmp_path):
 
 def test_compromised_parent_propagates_to_child(tmp_path):
     import time
+
     P = Pipeline()
     P.a = R.make_a(x="x")
     P.b = R.make_b(P.a)
@@ -221,11 +274,11 @@ def test_conditional_pipeline(tmp_path):
     """
     P1 = Pipeline()
     P1.a = R.make_a(x="x")
-    P1.result = R.make_b(P1.a)   # branch "b"
+    P1.result = R.make_b(P1.a)  # branch "b"
 
     P2 = Pipeline()
     P2.a = R.make_a(x="x")
-    P2.result = R.make_c(P2.a)   # branch "c"
+    P2.result = R.make_c(P2.a)  # branch "c"
 
     dag = DAG(tmp_path)
     dag.add(P1)
@@ -332,7 +385,7 @@ def test_shared_node_path_set_on_first_pipeline(tmp_path):
 
     assert P1.a.path is not None
     assert P1.a.path.exists()
-    assert P2.a.path == P1.a.path   # duplicate node gets same path as canonical
+    assert P2.a.path == P1.a.path  # duplicate node gets same path as canonical
 
 
 def test_single_node_pipeline_executes(tmp_path):
@@ -346,6 +399,7 @@ def test_single_node_pipeline_executes(tmp_path):
 
 
 # ── schedulers ────────────────────────────────────────────────────────────────
+
 
 def test_fifo_scheduler(tmp_path):
     P = Pipeline()
@@ -380,29 +434,34 @@ def test_custom_scheduler_invoked(tmp_path):
 
 # ── connected-component scheduler ordering ────────────────────────────────────
 
-class Step(NodeType): pass  # reused across all chain rules below
+
+class Step(NodeType):
+    pass  # reused across all chain rules below
+
 
 Rchain = Rules()
-Rchain.register("c2_s1", Inputs(x=str),    Outputs(s=Step), "touch {s}")
-Rchain.register("c2_s2", Inputs(s=Step),   Outputs(s=Step), "touch {s}")
-Rchain.register("c3_s1", Inputs(x=str),    Outputs(s=Step), "touch {s}")
-Rchain.register("c3_s2", Inputs(s=Step),   Outputs(s=Step), "touch {s}")
-Rchain.register("c3_s3", Inputs(s=Step),   Outputs(s=Step), "touch {s}")
-Rchain.register("c4_s1", Inputs(x=str),    Outputs(s=Step), "touch {s}")
-Rchain.register("c4_s2", Inputs(s=Step),   Outputs(s=Step), "touch {s}")
-Rchain.register("c4_s3", Inputs(s=Step),   Outputs(s=Step), "touch {s}")
-Rchain.register("c4_s4", Inputs(s=Step),   Outputs(s=Step), "touch {s}")
+Rchain.register("c2_s1", Inputs(x=str), Outputs(s=Step), "touch {s}")
+Rchain.register("c2_s2", Inputs(s=Step), Outputs(s=Step), "touch {s}")
+Rchain.register("c3_s1", Inputs(x=str), Outputs(s=Step), "touch {s}")
+Rchain.register("c3_s2", Inputs(s=Step), Outputs(s=Step), "touch {s}")
+Rchain.register("c3_s3", Inputs(s=Step), Outputs(s=Step), "touch {s}")
+Rchain.register("c4_s1", Inputs(x=str), Outputs(s=Step), "touch {s}")
+Rchain.register("c4_s2", Inputs(s=Step), Outputs(s=Step), "touch {s}")
+Rchain.register("c4_s3", Inputs(s=Step), Outputs(s=Step), "touch {s}")
+Rchain.register("c4_s4", Inputs(s=Step), Outputs(s=Step), "touch {s}")
 
 
 def _recording(sched):
     """Return (scheduler_fn, started_list). started_list records rule name of
     first node returned per scheduler call (= submission order with threads=1)."""
     started = []
+
     def fn(ready, remaining):
         result = sched(ready, remaining)
         if result:
             started.append(result[0].rule.__name__)
         return result
+
     return fn, started
 
 
@@ -411,9 +470,15 @@ def test_scheduler_exhausts_smallest_chain_first(tmp_path):
     must finish the size-2 chain before starting the size-3, and the size-3
     before the size-4."""
     P = Pipeline()
-    P.c2a = Rchain.c2_s1(x="c2");  P.c2b = Rchain.c2_s2(P.c2a)
-    P.c3a = Rchain.c3_s1(x="c3");  P.c3b = Rchain.c3_s2(P.c3a);  P.c3c = Rchain.c3_s3(P.c3b)
-    P.c4a = Rchain.c4_s1(x="c4");  P.c4b = Rchain.c4_s2(P.c4a);  P.c4c = Rchain.c4_s3(P.c4b);  P.c4d = Rchain.c4_s4(P.c4c)
+    P.c2a = Rchain.c2_s1(x="c2")
+    P.c2b = Rchain.c2_s2(P.c2a)
+    P.c3a = Rchain.c3_s1(x="c3")
+    P.c3b = Rchain.c3_s2(P.c3a)
+    P.c3c = Rchain.c3_s3(P.c3b)
+    P.c4a = Rchain.c4_s1(x="c4")
+    P.c4b = Rchain.c4_s2(P.c4a)
+    P.c4c = Rchain.c4_s3(P.c4b)
+    P.c4d = Rchain.c4_s4(P.c4c)
 
     fn, started = _recording(ConnectedComponentScheduler())
     execute(P, tmp_path, scheduler=fn, resource_caps={"threads": 1})
@@ -426,22 +491,42 @@ def test_scheduler_exhausts_smallest_chain_first(tmp_path):
     assert max(idx[n] for n in chain3) < min(idx[n] for n in chain4)
 
 
-class FA(NodeType): pass
-class FB(NodeType): pass
-class FC(NodeType): pass
-class FD(NodeType): pass
-class FE(NodeType): pass
-class FF(NodeType): pass
-class FG(NodeType): pass
+class FA(NodeType):
+    pass
+
+
+class FB(NodeType):
+    pass
+
+
+class FC(NodeType):
+    pass
+
+
+class FD(NodeType):
+    pass
+
+
+class FE(NodeType):
+    pass
+
+
+class FF(NodeType):
+    pass
+
+
+class FG(NodeType):
+    pass
+
 
 Rfork = Rules()
 Rfork.register("ra", Inputs(x=str), Outputs(a=FA), "touch {a}")
-Rfork.register("rb", Inputs(a=FA),  Outputs(b=FB), "touch {b}")
-Rfork.register("rc", Inputs(b=FB),  Outputs(c=FC), "touch {c}")
-Rfork.register("rd", Inputs(b=FB),  Outputs(d=FD), "touch {d}")
-Rfork.register("re", Inputs(c=FC),  Outputs(e=FE), "touch {e}")
-Rfork.register("rf", Inputs(d=FD),  Outputs(f=FF), "touch {f}")
-Rfork.register("rg", Inputs(f=FF),  Outputs(g=FG), "touch {g}")
+Rfork.register("rb", Inputs(a=FA), Outputs(b=FB), "touch {b}")
+Rfork.register("rc", Inputs(b=FB), Outputs(c=FC), "touch {c}")
+Rfork.register("rd", Inputs(b=FB), Outputs(d=FD), "touch {d}")
+Rfork.register("re", Inputs(c=FC), Outputs(e=FE), "touch {e}")
+Rfork.register("rf", Inputs(d=FD), Outputs(f=FF), "touch {f}")
+Rfork.register("rg", Inputs(f=FF), Outputs(g=FG), "touch {g}")
 
 
 def test_scheduler_fork_prefers_smaller_branch(tmp_path):
@@ -464,6 +549,7 @@ def test_scheduler_fork_prefers_smaller_branch(tmp_path):
 
 
 # ── thread budget ─────────────────────────────────────────────────────────────
+
 
 def test_single_thread_budget(tmp_path):
     P = Pipeline()
@@ -547,6 +633,7 @@ def test_dry_run_autoclean_does_not_delete_orphans(tmp_path):
 def test_dry_run_shows_missing(tmp_path, caplog):
     """dry_run=True must log MISSING nodes that would run."""
     import logging
+
     P = Pipeline()
     P.a = R.make_a(x="x")
     with caplog.at_level(logging.INFO, logger="necroflow"):
@@ -559,6 +646,7 @@ def test_dry_run_shows_missing(tmp_path, caplog):
 def test_dry_run_shows_stale(tmp_path, caplog):
     """dry_run=True must log STALE nodes after an input is updated."""
     import logging, time
+
     P = Pipeline()
     P.a = R.make_a(x="x")
     P.b = R.make_b(P.a)
@@ -574,6 +662,7 @@ def test_dry_run_shows_stale(tmp_path, caplog):
 def test_dry_run_all_up_to_date(tmp_path, caplog):
     """dry_run=True on a complete pipeline must report 0 would-run."""
     import logging
+
     P = Pipeline()
     P.a = R.make_a(x="x")
     execute(P, tmp_path)
@@ -631,9 +720,11 @@ def test_heavy_job_runs_solo(tmp_path):
 
 from necroflow.dag import parse_resource
 
+
 def test_parse_resource_plain_int():
     assert parse_resource(8) == 8
     assert parse_resource("8") == 8
+
 
 def test_parse_resource_si():
     assert parse_resource("1K") == 1_000
@@ -642,22 +733,29 @@ def test_parse_resource_si():
     assert parse_resource("1T") == 1_000_000_000_000
     assert parse_resource("1P") == 1_000_000_000_000_000
 
+
 def test_parse_resource_binary():
     assert parse_resource("1Ki") == 1024
-    assert parse_resource("1Mi") == 1024 ** 2
-    assert parse_resource("1Gi") == 1024 ** 3
-    assert parse_resource("1Ti") == 1024 ** 4
-    assert parse_resource("1Pi") == 1024 ** 5
+    assert parse_resource("1Mi") == 1024**2
+    assert parse_resource("1Gi") == 1024**3
+    assert parse_resource("1Ti") == 1024**4
+    assert parse_resource("1Pi") == 1024**5
+
 
 def test_parse_resource_si_ne_binary():
     assert parse_resource("1M") != parse_resource("1Mi")
+
 
 def test_resource_cap_respected(tmp_path):
     """A custom resource cap is enforced: two jobs declaring ram=250Mi each cannot
     run simultaneously under a 300Mi cap."""
     R2 = Rules()
-    R2.register("make_a", Inputs(x=str), Outputs(a=A), "touch {a}", Constraints(ram="250Mi"))
-    R2.register("make_b", Inputs(x=str), Outputs(b=B), "touch {b}", Constraints(ram="250Mi"))
+    R2.register(
+        "make_a", Inputs(x=str), Outputs(a=A), "touch {a}", Constraints(ram="250Mi")
+    )
+    R2.register(
+        "make_b", Inputs(x=str), Outputs(b=B), "touch {b}", Constraints(ram="250Mi")
+    )
     P = Pipeline()
     P.a = R2.make_a(x="1")
     P.b = R2.make_b(x="2")
@@ -667,6 +765,7 @@ def test_resource_cap_respected(tmp_path):
 
 
 # -- built-in text file rules -------------------------------------------------
+
 
 def test_text_file_rule_writes_exact_text(tmp_path):
     class ConfigFile(NodeType):

@@ -22,6 +22,7 @@ request       — the subset of Pipeline nodes that the DAG must produce for a
                 Overridden by '.requests' in the job TOML (list of
                 pipeline_label strings).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -58,7 +59,9 @@ def _load_validators(specs: list[str]) -> list[Callable]:
     return validators
 
 
-def _validate_job_config(job_config, validators: list[Callable], job_path: Path) -> None:
+def _validate_job_config(
+    job_config, validators: list[Callable], job_path: Path
+) -> None:
     for validator in validators:
         try:
             validator(job_config.config)
@@ -118,8 +121,12 @@ def _resolve_request(pipeline, labels: list[str]) -> list:
 
 
 def _resolve_roots(args) -> tuple[Path, Path]:
-    if args.outdir is not None and (args.nodes_dir is not None or args.results_dir is not None):
-        raise SystemExit("error: --outdir cannot be combined with --nodes-dir or --results-dir")
+    if args.outdir is not None and (
+        args.nodes_dir is not None or args.results_dir is not None
+    ):
+        raise SystemExit(
+            "error: --outdir cannot be combined with --nodes-dir or --results-dir"
+        )
     if args.outdir is not None:
         return args.outdir, args.outdir
     return (
@@ -131,7 +138,9 @@ def _resolve_roots(args) -> tuple[Path, Path]:
 def _build_dag_from_jobs(args, *, nodes_dir: Path):
     invalidation_labels = _dedupe_preserve_order(
         list(getattr(args, "invalidate", []))
-        + _load_reap_labels(getattr(args, "reap_file", Path("reap.toml")), getattr(args, "reap", []))
+        + _load_reap_labels(
+            getattr(args, "reap_file", Path("reap.toml")), getattr(args, "reap", [])
+        )
     )
     validation_specs = getattr(args, "validation", [])
     validators = _load_validators(validation_specs) if validation_specs else []
@@ -180,7 +189,9 @@ def _normalize_arg_shellpath(args) -> str | None:
 
 def _parse_resource_caps(args) -> dict[str, int]:
     cores = args.cores.strip()
-    resource_caps = {"threads": os.cpu_count() or 1 if cores.lower() == "all" else int(cores)}
+    resource_caps = {
+        "threads": os.cpu_count() or 1 if cores.lower() == "all" else int(cores)
+    }
     for kv in args.constraints:
         if "=" not in kv:
             raise SystemExit(f"error: --constraint expects KEY=VALUE, got {kv!r}")
@@ -312,7 +323,9 @@ def _create_link_outputs(
                 )
                 manifest_lines.append(f'{key} = "{rel.as_posix()}"\n')
         combo_dir.mkdir(parents=True, exist_ok=True)
-        (combo_dir / "manifest.toml").write_text("".join(manifest_lines), encoding="utf-8")
+        (combo_dir / "manifest.toml").write_text(
+            "".join(manifest_lines), encoding="utf-8"
+        )
 
 
 def _add_run_options(parser) -> None:
@@ -322,19 +335,95 @@ def _add_run_options(parser) -> None:
         metavar="JOB.toml",
         help="Job TOML file(s). Each defines a pipeline, optional request, and config params.",
     )
-    parser.add_argument("--nodes-dir", default=None, type=Path, metavar="DIR", help="Directory for hashed node outputs (default: nodes).")
-    parser.add_argument("--results-dir", default=None, type=Path, metavar="DIR", help="Directory for per-job symlink outputs (default: results).")
-    parser.add_argument("--outdir", "-o", default=None, type=Path, metavar="DIR", help="Compatibility alias for using one directory for node outputs and results.")
-    parser.add_argument("-c", dest="cores", default="all", metavar="N|all", help="Thread cap: integer or 'all' (default: all available CPUs). E.g. -c16 or -call.")
-    parser.add_argument("--constraint", action="append", default=[], dest="constraints", metavar="KEY=VALUE", help="Resource cap, e.g. --constraint ram=300Mi. Repeatable. Overrides -c for threads.")
-    parser.add_argument("--keep-going", "-k", action="store_true", help="Continue past failures and collect all errors at the end.")
-    parser.add_argument("--autoclean", action="store_true", help="Delete orphan outputs before execution and intermediates as soon as they are no longer needed.")
-    parser.add_argument("--dry-run", "-n", action="store_true", dest="dry_run", help="Show what would run without executing anything.")
-    parser.add_argument("--invalidate", action="append", default=[], metavar="LABEL", help="Force an already-requested pipeline label to rerun. Repeatable.")
-    parser.add_argument("--reap", action="append", default=[], metavar="NAME", help="Force labels from NAME in reap.toml to rerun. Repeatable.")
-    parser.add_argument("--reap-file", default=Path("reap.toml"), type=Path, metavar="PATH", help="TOML file containing named invalidation label sets (default: reap.toml).")
-    parser.add_argument("--validation", action="append", default=[], metavar="PATH.py:FUNCTION", help="Validate each expanded job config with a Python callable. Repeatable.")
-    parser.add_argument("--shellpath", default=None, metavar="PATH", help="Executable shell path for string commands, e.g. /bin/bash. Defaults to Python's system shell behavior.")
+    parser.add_argument(
+        "--nodes-dir",
+        default=None,
+        type=Path,
+        metavar="DIR",
+        help="Directory for hashed node outputs (default: nodes).",
+    )
+    parser.add_argument(
+        "--results-dir",
+        default=None,
+        type=Path,
+        metavar="DIR",
+        help="Directory for per-job symlink outputs (default: results).",
+    )
+    parser.add_argument(
+        "--outdir",
+        "-o",
+        default=None,
+        type=Path,
+        metavar="DIR",
+        help="Compatibility alias for using one directory for node outputs and results.",
+    )
+    parser.add_argument(
+        "-c",
+        dest="cores",
+        default="all",
+        metavar="N|all",
+        help="Thread cap: integer or 'all' (default: all available CPUs). E.g. -c16 or -call.",
+    )
+    parser.add_argument(
+        "--constraint",
+        action="append",
+        default=[],
+        dest="constraints",
+        metavar="KEY=VALUE",
+        help="Resource cap, e.g. --constraint ram=300Mi. Repeatable. Overrides -c for threads.",
+    )
+    parser.add_argument(
+        "--keep-going",
+        "-k",
+        action="store_true",
+        help="Continue past failures and collect all errors at the end.",
+    )
+    parser.add_argument(
+        "--autoclean",
+        action="store_true",
+        help="Delete orphan outputs before execution and intermediates as soon as they are no longer needed.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        "-n",
+        action="store_true",
+        dest="dry_run",
+        help="Show what would run without executing anything.",
+    )
+    parser.add_argument(
+        "--invalidate",
+        action="append",
+        default=[],
+        metavar="LABEL",
+        help="Force an already-requested pipeline label to rerun. Repeatable.",
+    )
+    parser.add_argument(
+        "--reap",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Force labels from NAME in reap.toml to rerun. Repeatable.",
+    )
+    parser.add_argument(
+        "--reap-file",
+        default=Path("reap.toml"),
+        type=Path,
+        metavar="PATH",
+        help="TOML file containing named invalidation label sets (default: reap.toml).",
+    )
+    parser.add_argument(
+        "--validation",
+        action="append",
+        default=[],
+        metavar="PATH.py:FUNCTION",
+        help="Validate each expanded job config with a Python callable. Repeatable.",
+    )
+    parser.add_argument(
+        "--shellpath",
+        default=None,
+        metavar="PATH",
+        help="Executable shell path for string commands, e.g. /bin/bash. Defaults to Python's system shell behavior.",
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -344,21 +433,35 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    init_parser = subparsers.add_parser("init", help="Create a starter necroflow project")
-    init_parser.add_argument("dir", nargs="?", default=".", help="Directory to create or populate")
-    init_parser.add_argument("--force", action="store_true", help="Overwrite existing template files")
+    init_parser = subparsers.add_parser(
+        "init", help="Create a starter necroflow project"
+    )
+    init_parser.add_argument(
+        "dir", nargs="?", default=".", help="Directory to create or populate"
+    )
+    init_parser.add_argument(
+        "--force", action="store_true", help="Overwrite existing template files"
+    )
     init_parser.set_defaults(func=_init)
 
-    graph_parser = subparsers.add_parser("graph", help="Render a DAG without executing it")
+    graph_parser = subparsers.add_parser(
+        "graph", help="Render a DAG without executing it"
+    )
     _add_run_options(graph_parser)
-    graph_parser.add_argument("--output", help="Write graph text to a file instead of stdout")
+    graph_parser.add_argument(
+        "--output", help="Write graph text to a file instead of stdout"
+    )
     graph_parser.set_defaults(func=_graph)
 
-    outputs_parser = subparsers.add_parser("outputs", help="List requested output paths without executing")
+    outputs_parser = subparsers.add_parser(
+        "outputs", help="List requested output paths without executing"
+    )
     _add_run_options(outputs_parser)
     outputs_parser.set_defaults(func=_outputs)
 
-    provenance_parser = subparsers.add_parser("provenance", help="Show stored provenance for an output path")
+    provenance_parser = subparsers.add_parser(
+        "provenance", help="Show stored provenance for an output path"
+    )
     provenance_parser.add_argument("path", help="Path to a cached output file")
     provenance_parser.set_defaults(func=_provenance)
 
@@ -375,6 +478,7 @@ def main(argv=None) -> None:
         argv = ["run", *argv]
     elif argv is None:
         import sys
+
         if len(sys.argv) > 1 and sys.argv[1] not in commands:
             argv = ["run", *sys.argv[1:]]
     parser = _build_parser()

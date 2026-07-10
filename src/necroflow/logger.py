@@ -11,7 +11,9 @@ def setup() -> None:
     if _log.handlers:
         return
     handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S"))
+    handler.setFormatter(
+        logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S")
+    )
     _log.addHandler(handler)
     _log.setLevel(logging.INFO)
 
@@ -21,7 +23,11 @@ def job_start(node) -> None:
     desc = node.rule.__name__ if node.rule else "?"
     if cfg:
         desc += f" ({cfg})"
-    threads = node.rule.constraints.get("threads", 1) if node.rule and node.rule.constraints else 1
+    threads = (
+        node.rule.constraints.get("threads", 1)
+        if node.rule and node.rule.constraints
+        else 1
+    )
     thread_str = f" [{threads} threads]" if threads > 1 else ""
     _log.info("start  %s → %s%s", desc, node.path, thread_str)
 

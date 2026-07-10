@@ -18,7 +18,11 @@ from necroflow.dag import (
     write_dependencies,
 )
 from necroflow.pipeline import write_ancestor_graph
-from necroflow.schedulers import Scheduler, connected_component_scheduler, fifo_scheduler
+from necroflow.schedulers import (
+    Scheduler,
+    connected_component_scheduler,
+    fifo_scheduler,
+)
 from necroflow import logger as _logger
 
 if TYPE_CHECKING:
@@ -55,6 +59,7 @@ def _apply_shell_execution_context(pipeline, shellpath: str | None) -> dict[str,
     if rebuild is not None:
         rebuild(required_nodes=required_nodes)
     return {old: node.key for node in nodes if (old := old_keys[id(node)]) != node.key}
+
 
 @contextmanager
 def _acquire_lock(outdir: Path):
@@ -108,7 +113,9 @@ def _remove_output_path(node) -> bool:
     return True
 
 
-def _can_remove_parent_dir(parent, children: dict, final_keys: set, active_keys: set) -> bool:
+def _can_remove_parent_dir(
+    parent, children: dict, final_keys: set, active_keys: set
+) -> bool:
     """Return True when every active co-output in a rule-call is cleanable."""
     siblings = [n for n in parent.output_nodes.values() if n.key in active_keys]
     if not siblings:
@@ -116,8 +123,7 @@ def _can_remove_parent_dir(parent, children: dict, final_keys: set, active_keys:
     if any(s.key in final_keys for s in siblings):
         return False
     return all(
-        all(c.state == NodeState.UP_TO_DATE for c in children[s.key])
-        for s in siblings
+        all(c.state == NodeState.UP_TO_DATE for c in children[s.key]) for s in siblings
     )
 
 
@@ -126,7 +132,11 @@ def _cleanup_parents(node, children: dict, final_keys: set, active_keys: set) ->
     n_cleaned = 0
     seen_dirs: set[Path] = set()
     for parent in node.parents:
-        if parent.key not in active_keys or parent.key in final_keys or parent.path is None:
+        if (
+            parent.key not in active_keys
+            or parent.key in final_keys
+            or parent.path is None
+        ):
             continue
         output_dir = parent.path.parent
         if output_dir in seen_dirs:
@@ -146,7 +156,10 @@ def _propagate_stale(active: list, active_keys: set) -> None:
         for node in active:
             if node.state != NodeState.UP_TO_DATE:
                 continue
-            if any(p.key in active_keys and p.state == NodeState.STALE for p in node.parents):
+            if any(
+                p.key in active_keys and p.state == NodeState.STALE
+                for p in node.parents
+            ):
                 node.state = NodeState.STALE
                 changed = True
 
@@ -227,8 +240,14 @@ def _promote_states(active: list) -> None:
                 n.state = NodeState.READY
 
 
-def _on_job_done(node, active_keys: set, needs_run: set, autoclean: bool,
-                 children: dict, final_keys: set) -> int:
+def _on_job_done(
+    node,
+    active_keys: set,
+    needs_run: set,
+    autoclean: bool,
+    children: dict,
+    final_keys: set,
+) -> int:
     """Handle a successful job completion. Returns number of intermediate outputs cleaned."""
     for conode in node.output_nodes.values():
         if conode.key in active_keys and not conode.path.exists():
@@ -237,7 +256,11 @@ def _on_job_done(node, active_keys: set, needs_run: set, autoclean: bool,
     write_ancestor_graph(node)
     n_cleaned = 0
     for conode in node.output_nodes.values():
-        if conode is not node and conode.key in active_keys and conode.state in needs_run:
+        if (
+            conode is not node
+            and conode.key in active_keys
+            and conode.state in needs_run
+        ):
             conode.mark_done("up_to_date")
             conode.state = NodeState.UP_TO_DATE
             if autoclean:
@@ -286,7 +309,11 @@ def execute(
     key_map = _apply_shell_execution_context(pipeline, shellpath)
     if forced_stale_keys:
         forced_stale_keys = {key_map.get(key, key) for key in forced_stale_keys}
-    _run = node_runner if node_runner is not None else partial(_run_node, shellpath=shellpath)
+    _run = (
+        node_runner
+        if node_runner is not None
+        else partial(_run_node, shellpath=shellpath)
+    )
     _logger.setup()
     caps: dict[str, int] = {"threads": os.cpu_count() or 1}
     if resource_caps:
@@ -298,7 +325,9 @@ def execute(
         )
 
         if dry_run:
-            n_would_run = sum(1 for n in active if n.state in (NodeState.MISSING, NodeState.STALE))
+            n_would_run = sum(
+                1 for n in active if n.state in (NodeState.MISSING, NodeState.STALE)
+            )
             n_up_to_date = sum(1 for n in active if n.state == NodeState.UP_TO_DATE)
             for n in active:
                 if n.state in (NodeState.MISSING, NodeState.STALE):
@@ -312,7 +341,12 @@ def execute(
         n_run = n_failed = 0
         n_skipped = sum(1 for n in active if n.state == NodeState.UP_TO_DATE)
 
-        needs_run = {NodeState.MISSING, NodeState.STALE, NodeState.READY, NodeState.RUNNING}
+        needs_run = {
+            NodeState.MISSING,
+            NodeState.STALE,
+            NodeState.READY,
+            NodeState.RUNNING,
+        }
 
         if autoclean:
             children: dict[str, list] = {n.key: [] for n in active}
@@ -325,7 +359,9 @@ def execute(
             children, final_keys = {}, set()
 
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(active) or 1) as pool:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=len(active) or 1
+            ) as pool:
                 while any(n.state in needs_run for n in active):
                     _promote_states(active)
 
@@ -333,7 +369,11 @@ def execute(
                     remaining = [n for n in active if n.state in needs_run]
                     for node in scheduler(ready, remaining):
                         # skip co-outputs whose sibling is already running
-                        coouts = [c for c in node.output_nodes.values() if c.key in active_keys and c is not node]
+                        coouts = [
+                            c
+                            for c in node.output_nodes.values()
+                            if c.key in active_keys and c is not node
+                        ]
                         if any(c.state == NodeState.RUNNING for c in coouts):
                             continue
                         job_res = node.rule.resources
@@ -365,7 +405,14 @@ def execute(
                         elapsed = time.monotonic() - start
                         try:
                             f.result()
-                            n_cleaned += _on_job_done(node, active_keys, needs_run, autoclean, children, final_keys)
+                            n_cleaned += _on_job_done(
+                                node,
+                                active_keys,
+                                needs_run,
+                                autoclean,
+                                children,
+                                final_keys,
+                            )
                             _logger.job_done(node, elapsed)
                             n_run += 1
                         except Exception as exc:
@@ -400,7 +447,6 @@ def execute(
         )
 
 
-
 def _run_node(node, log_path, *, shellpath: str | None = None) -> None:
     node.path.parent.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -413,6 +459,13 @@ def _run_node(node, log_path, *, shellpath: str | None = None) -> None:
         if isinstance(cmd, list):
             subprocess.run(cmd, check=True, stdout=log, stderr=log)
         elif shellpath is not None:
-            subprocess.run(cmd, shell=True, executable=shellpath, check=True, stdout=log, stderr=log)
+            subprocess.run(
+                cmd,
+                shell=True,
+                executable=shellpath,
+                check=True,
+                stdout=log,
+                stderr=log,
+            )
         else:
             subprocess.run(cmd, shell=True, check=True, stdout=log, stderr=log)

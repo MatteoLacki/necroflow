@@ -115,7 +115,9 @@ class ConnectedComponentScheduler:
                 self._remove(key)
             self._prev_keys = current_keys
 
-        return sorted(ready, key=lambda n: self._sizes.get(self._component_of.get(n.key, -1), 0))
+        return sorted(
+            ready, key=lambda n: self._sizes.get(self._component_of.get(n.key, -1), 0)
+        )
 
 
 connected_component_scheduler = ConnectedComponentScheduler()
