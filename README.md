@@ -192,6 +192,7 @@ text = '{\n  "mode": "uppercase"\n}\n'
 - [Generated config files](docs/generated-config-files.md)
 - [Execution, scheduling, and cleanup](docs/execution.md)
 - [Release checklist](docs/release.md)
+- [Development](docs/development.md)
 
 ## What is not yet implemented
 
