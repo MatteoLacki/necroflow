@@ -210,6 +210,12 @@ class _ConstraintFormatter:
             raise KeyError(f"unknown constraint placeholder: {name}") from exc
 
 
+def _quote_command_substitution(value: Any) -> Any:
+    if isinstance(value, _ConstraintFormatter):
+        return value
+    return shlex.quote(str(value))
+
+
 def resolve_command(node: Node) -> str | list[str] | None:
     """Format node.command with input/output paths and config values.
 
@@ -235,9 +241,7 @@ def resolve_command(node: Node) -> str | list[str] | None:
     subs["workdir"] = node.path.parent
     if isinstance(node.command, list):
         return [c.format(**subs) for c in node.command]
-    quoted = {
-        k: shlex.quote(str(v)) if isinstance(v, Path) else v for k, v in subs.items()
-    }
+    quoted = {k: _quote_command_substitution(v) for k, v in subs.items()}
     return node.command.format(**quoted)
 
 

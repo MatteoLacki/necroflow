@@ -194,6 +194,52 @@ def test_resolve_command_config_substitution(tmp_path):
     assert "hello" in cmd
 
 
+def test_resolve_command_quotes_string_config_for_shell_commands(tmp_path):
+    r = Rules()
+    r.register(
+        "filter_txt",
+        Inputs(filter=str),
+        Outputs(txt=Txt),
+        "tool --filter {filter} > {txt}",
+    )
+    txt = r.filter_txt(filter="a > b")
+
+    resolve_paths([txt], tmp_path)
+
+    assert resolve_command(txt) == f"tool --filter 'a > b' > {txt.path}"
+
+
+def test_resolve_command_scalar_config_stays_bare_when_shell_safe(tmp_path):
+    r = Rules()
+    r.register("number_txt", Inputs(n=int), Outputs(txt=Txt), "tool -n {n} > {txt}")
+    txt = r.number_txt(n=5)
+
+    resolve_paths([txt], tmp_path)
+
+    assert resolve_command(txt) == f"tool -n 5 > {txt.path}"
+
+
+def test_resolve_command_list_commands_are_not_shell_quoted(tmp_path):
+    r = Rules()
+    r.register(
+        "list_filter",
+        Inputs(filter=str),
+        Outputs(txt=Txt),
+        ["tool", "--filter", "{filter}", "--out", "{txt}"],
+    )
+    txt = r.list_filter(filter="a > b")
+
+    resolve_paths([txt], tmp_path)
+
+    assert resolve_command(txt) == [
+        "tool",
+        "--filter",
+        "a > b",
+        "--out",
+        str(txt.path),
+    ]
+
+
 def test_resolve_command_output_substitution(tmp_path):
     txt = R.make_txt(word="hi")
     upper, log = R.to_upper(txt, n=1)
