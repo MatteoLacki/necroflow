@@ -26,6 +26,8 @@ request       — the subset of Pipeline nodes that the DAG must produce for a
 from __future__ import annotations
 
 import argparse
+import fcntl
+import json
 import os
 import shutil
 from importlib import resources
@@ -36,9 +38,21 @@ import tomlkit
 
 from necroflow import DAG
 from necroflow.config import iter_job_configs, load_callable
-from necroflow.dag import parse_resource, resolve_paths
+from necroflow.dag import (
+    NodeState,
+    _content_hash,
+    _has_changed_invalidation,
+    _output_mtime,
+    parse_resource,
+    resolve_command,
+    resolve_paths,
+)
 from necroflow.pipeline import _sinks
-from necroflow.executor import _apply_shell_execution_context, _normalize_shellpath
+from necroflow.executor import (
+    _apply_shell_execution_context,
+    _normalize_shellpath,
+    _prepare_active,
+)
 
 
 def _load_factory(spec: str) -> Callable:
@@ -200,6 +214,307 @@ def _parse_resource_caps(args) -> dict[str, int]:
     return resource_caps
 
 
+def _json_ready(value):
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(k): _json_ready(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    try:
+        return value.unwrap()
+    except AttributeError:
+        return str(value)
+
+
+def _emit_json(payload) -> None:
+    print(json.dumps(_json_ready(payload), indent=2, sort_keys=True))
+
+
+def _node_display_label(node) -> str:
+    return (
+        node.pipeline_label
+        or node.output_name
+        or (node.node_type.__name__ if node.node_type else "output")
+    )
+
+
+def _node_json(node, *, nodes_dir: Path | None = None) -> dict:
+    data = {
+        "key": node.key,
+        "label": node.pipeline_label,
+        "output_name": node.output_name,
+        "rule": node.rule.__name__ if node.rule else "unknown",
+        "node_type": node.node_type.__name__ if node.node_type else None,
+        "state": node.state.value if isinstance(node.state, NodeState) else node.state,
+        "path": str(node.path) if node.path is not None else None,
+        "resources": dict(getattr(node.rule, "resources", {})) if node.rule else {},
+        "constraints": dict(getattr(node.rule, "constraints", {})) if node.rule else {},
+        "config": dict(node.config),
+    }
+    if nodes_dir is not None and node.path is not None:
+        try:
+            data["relative_path"] = node.path.relative_to(nodes_dir).as_posix()
+        except ValueError:
+            data["relative_path"] = str(node.path)
+    return data
+
+
+def _edge_json(nodes: list) -> list[dict]:
+    node_keys = {node.key for node in nodes}
+    return [
+        {"from": parent.key, "to": node.key}
+        for node in nodes
+        for parent in node.parents
+        if parent.key in node_keys
+    ]
+
+
+def _outputs_payload(combos, *, nodes_dir: Path, results_dir: Path) -> dict:
+    jobs = []
+    for label, pipeline, request in combos:
+        resolve_paths(pipeline.nodes, nodes_dir)
+        requested = []
+        for node in request:
+            rel = node.path.relative_to(nodes_dir)
+            requested.append(
+                {
+                    "label": _node_display_label(node),
+                    "node_key": node.key,
+                    "rule": node.rule.__name__ if node.rule else "unknown",
+                    "node_path": str(node.path),
+                    "result_path": str(results_dir / label / rel),
+                    "relative_path": rel.as_posix(),
+                }
+            )
+        jobs.append({"label": label, "requested": requested})
+    return {"jobs": jobs}
+
+
+def _graph_payload(dag, combos, *, nodes_dir: Path) -> dict:
+    dag.resolve_paths(nodes_dir)
+    requested = {node.key for node in dag.required_nodes}
+    return {
+        "nodes": [
+            {
+                **_node_json(node, nodes_dir=nodes_dir),
+                "requested": node.key in requested,
+            }
+            for node in dag.nodes
+        ],
+        "edges": _edge_json(dag.nodes),
+        "jobs": [
+            {
+                "label": label,
+                "requested": [node.key for node in request],
+            }
+            for label, _pipeline, request in combos
+        ],
+    }
+
+
+def _provenance_payload(path: Path) -> dict:
+    rip = path.parent / ".rip" / "dependencies.toml"
+    if not rip.exists():
+        raise SystemExit(f"error: provenance metadata not found: {rip}")
+    doc = tomlkit.parse(rip.read_text(encoding="utf-8"))
+    return {
+        "path": str(path),
+        "rule": doc.get("rule", ""),
+        "hash": doc.get("hash", ""),
+        "config": _json_ready(doc.get("config", {})),
+        "execution": _json_ready(doc.get("execution", {})),
+    }
+
+
+def _classification_reasons(node, forced_stale_keys: set[str]) -> list[dict]:
+    if node.state == NodeState.MISSING:
+        return [{"kind": "output_missing", "path": str(node.path)}]
+    if node.state == NodeState.UP_TO_DATE:
+        return [{"kind": "up_to_date"}]
+    if node.state == NodeState.FAILED:
+        return [{"kind": "blocked_by_failed_parent"}]
+    reasons: list[dict] = []
+    if node.key in forced_stale_keys:
+        reasons.append({"kind": "forced_invalidation"})
+    if node.is_compromised:
+        reasons.append({"kind": "compromised_prior_state"})
+    try:
+        if _has_changed_invalidation(node):
+            reasons.append({"kind": "invalidator_changed"})
+    except Exception as exc:
+        reasons.append({"kind": "invalidator_error", "error": str(exc)})
+    for parent in node.parents:
+        if parent.state in (NodeState.MISSING, NodeState.STALE):
+            reasons.append(
+                {
+                    "kind": "parent_not_up_to_date",
+                    "parent_key": parent.key,
+                    "parent_label": parent.pipeline_label,
+                    "parent_state": parent.state.value if parent.state else None,
+                }
+            )
+        elif node.path is not None and parent.path is not None and parent.path.exists():
+            try:
+                if _output_mtime(parent.path) > _output_mtime(node.path):
+                    hash_file = (
+                        parent.path.parent / ".rip" / (parent.path.name + ".hash")
+                    )
+                    content_changed = not (
+                        hash_file.exists()
+                        and _content_hash(parent.path) == hash_file.read_text().strip()
+                    )
+                    if content_changed:
+                        reasons.append(
+                            {
+                                "kind": "parent_content_changed",
+                                "parent_key": parent.key,
+                                "parent_label": parent.pipeline_label,
+                            }
+                        )
+            except OSError as exc:
+                reasons.append(
+                    {
+                        "kind": "parent_check_error",
+                        "parent_key": parent.key,
+                        "error": str(exc),
+                    }
+                )
+    if node.state == NodeState.STALE and not reasons:
+        reasons.append({"kind": "stale"})
+    return reasons
+
+
+def _explain_payload(args) -> dict:
+    nodes_dir, _results_dir = _resolve_roots(args)
+    dag, combos, forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    shellpath = _normalize_arg_shellpath(args)
+    key_map = _apply_shell_execution_context(dag, shellpath)
+    forced_stale_keys = {key_map.get(key, key) for key in forced_stale_keys}
+    active, _active_keys, _n_cleaned = _prepare_active(
+        dag,
+        nodes_dir,
+        autoclean=False,
+        dry_run=True,
+        forced_stale_keys=forced_stale_keys,
+    )
+    labels = {node.pipeline_label: node for node in active if node.pipeline_label}
+    if args.node:
+        if args.node not in labels:
+            raise SystemExit(f"error: explain label not found: {args.node}")
+        wanted = {labels[args.node].key}
+        active = [node for node in active if node.key in wanted]
+    nodes = []
+    for node in sorted(active, key=lambda n: n.key):
+        command = None
+        try:
+            command = resolve_command(node)
+        except Exception as exc:
+            command = f"<error: {exc}>"
+        nodes.append(
+            {
+                **_node_json(node, nodes_dir=nodes_dir),
+                "will_run": node.state in (NodeState.MISSING, NodeState.STALE),
+                "command": command,
+                "reasons": _classification_reasons(node, forced_stale_keys),
+            }
+        )
+    return {
+        "jobs": [
+            {"label": label, "requested": [node.key for node in request]}
+            for label, _pipeline, request in combos
+        ],
+        "nodes": nodes,
+    }
+
+
+def _issue(code: str, severity: str, message: str, **extra) -> dict:
+    issue = {"code": code, "severity": severity, "message": message}
+    issue.update({k: v for k, v in extra.items() if v is not None})
+    return issue
+
+
+def _doctor_payload(args) -> dict:
+    issues: list[dict] = []
+    nodes_dir, results_dir = _resolve_roots(args)
+    try:
+        _normalize_arg_shellpath(args)
+    except SystemExit as exc:
+        issues.append(
+            _issue(
+                "NF_SHELLPATH_INVALID",
+                "error",
+                str(exc).removeprefix("error: "),
+                suggestion="Use an existing executable shell path or omit --shellpath.",
+            )
+        )
+    try:
+        _parse_resource_caps(args)
+    except Exception as exc:
+        issues.append(
+            _issue(
+                "NF_RESOURCE_INVALID",
+                "error",
+                str(exc).removeprefix("error: "),
+                suggestion="Use integer resource caps or supported SI/binary suffixes.",
+            )
+        )
+    try:
+        dag, combos, forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    except SystemExit as exc:
+        message = str(exc).removeprefix("error: ")
+        code = "NF_PIPELINE_IMPORT_FAILED"
+        if "has no '.pipeline'" in message:
+            code = "NF_CONFIG_MISSING_PIPELINE"
+        elif "request labels not found" in message:
+            code = "NF_REQUEST_LABEL_NOT_FOUND"
+        elif "validation" in message and "failed" in message:
+            code = "NF_VALIDATION_FAILED"
+        issues.append(_issue(code, "error", message))
+        return {"ok": False, "issues": issues}
+    except Exception as exc:
+        issues.append(_issue("NF_CONFIG_PARSE_FAILED", "error", str(exc)))
+        return {"ok": False, "issues": issues}
+
+    try:
+        dag.resolve_paths(nodes_dir)
+    except ValueError as exc:
+        issues.append(_issue("NF_OUTPUT_PATH_TOO_LONG", "error", str(exc)))
+    for directory, label in ((nodes_dir, "nodes_dir"), (results_dir, "results_dir")):
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            probe = directory / ".necroflow-doctor-write-test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+        except OSError as exc:
+            issues.append(
+                _issue(
+                    "NF_OUTPUT_ROOT_NOT_WRITABLE",
+                    "error",
+                    f"{label} is not writable: {directory}: {exc}",
+                    path=str(directory),
+                )
+            )
+    lock_path = nodes_dir / ".rip" / "necroflow.lock"
+    if lock_path.exists():
+        try:
+            with open(lock_path, "a") as fh:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fh, fcntl.LOCK_UN)
+        except OSError:
+            issues.append(
+                _issue(
+                    "NF_NODESTORE_LOCKED",
+                    "error",
+                    f"node store is locked: {nodes_dir}",
+                    path=str(lock_path),
+                )
+            )
+    return {"ok": not any(i["severity"] == "error" for i in issues), "issues": issues}
+
+
 def _finalize_link_outputs(combos, *, nodes_dir: Path, results_dir: Path) -> None:
     for _label, pipeline, _nodes in combos:
         resolve_paths(pipeline.nodes, nodes_dir)
@@ -231,8 +546,11 @@ def _run(args) -> None:
 
 def _graph(args) -> None:
     nodes_dir, _results_dir = _resolve_roots(args)
-    dag, _combos, _forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    dag, combos, _forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
     _apply_shell_execution_context(dag, _normalize_arg_shellpath(args))
+    if args.json:
+        _emit_json(_graph_payload(dag, combos, nodes_dir=nodes_dir))
+        return
     dag.resolve_paths(nodes_dir)
     rendered = str(dag)
     if args.output:
@@ -245,6 +563,11 @@ def _outputs(args) -> None:
     nodes_dir, results_dir = _resolve_roots(args)
     dag, combos, _forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
     _apply_shell_execution_context(dag, _normalize_arg_shellpath(args))
+    if args.json:
+        _emit_json(
+            _outputs_payload(combos, nodes_dir=nodes_dir, results_dir=results_dir)
+        )
+        return
     for label, pipeline, request in combos:
         resolve_paths(pipeline.nodes, nodes_dir)
         print(f"[{label}]")
@@ -260,23 +583,56 @@ def _outputs(args) -> None:
 
 def _provenance(args) -> None:
     path = Path(args.path)
-    rip = path.parent / ".rip" / "dependencies.toml"
-    if not rip.exists():
-        raise SystemExit(f"error: provenance metadata not found: {rip}")
-    doc = tomlkit.parse(rip.read_text(encoding="utf-8"))
+    payload = _provenance_payload(path)
+    if args.json:
+        _emit_json(payload)
+        return
     print(f"path = {path}")
-    print(f"rule = {doc.get('rule', '')}")
-    print(f"hash = {doc.get('hash', '')}")
-    config = doc.get("config", {})
+    print(f"rule = {payload.get('rule', '')}")
+    print(f"hash = {payload.get('hash', '')}")
+    config = payload.get("config", {})
     if config:
         print("[config]")
         for k, v in config.items():
             print(f"{k} = {v!r}")
-    execution = doc.get("execution", {})
+    execution = payload.get("execution", {})
     if execution:
         print("[execution]")
         for k, v in execution.items():
             print(f"{k} = {v!r}")
+
+
+def _doctor(args) -> None:
+    payload = _doctor_payload(args)
+    if args.json:
+        _emit_json(payload)
+    else:
+        if payload["ok"]:
+            print("doctor: ok")
+        else:
+            for issue in payload["issues"]:
+                print(f"{issue['severity']}: {issue['code']}: {issue['message']}")
+    if not payload["ok"]:
+        raise SystemExit(1)
+
+
+def _explain(args) -> None:
+    payload = _explain_payload(args)
+    if args.json:
+        _emit_json(payload)
+        return
+    for node in payload["nodes"]:
+        label = node.get("label") or node.get("output_name") or node["key"]
+        print(f"{label}")
+        print(f"  state: {node.get('state')}")
+        print(f"  will_run: {str(node.get('will_run')).lower()}")
+        print(f"  rule: {node.get('rule')}")
+        print(f"  path: {node.get('path')}")
+        if node.get("resources"):
+            resources = " ".join(f"{k}={v}" for k, v in node["resources"].items())
+            print(f"  resources: {resources}")
+        for reason in node.get("reasons", []):
+            print(f"  reason: {reason['kind']}")
 
 
 def _init(args) -> None:
@@ -500,19 +856,49 @@ def _build_parser() -> argparse.ArgumentParser:
     graph_parser.add_argument(
         "--output", help="Write graph text to a file instead of stdout"
     )
+    graph_parser.add_argument(
+        "--json", action="store_true", help="Write JSON to stdout"
+    )
     graph_parser.set_defaults(func=_graph)
 
     outputs_parser = subparsers.add_parser(
         "outputs", help="List requested output paths without executing"
     )
     _add_run_options(outputs_parser)
+    outputs_parser.add_argument(
+        "--json", action="store_true", help="Write JSON to stdout"
+    )
     outputs_parser.set_defaults(func=_outputs)
 
     provenance_parser = subparsers.add_parser(
         "provenance", help="Show stored provenance for an output path"
     )
     provenance_parser.add_argument("path", help="Path to a cached output file")
+    provenance_parser.add_argument(
+        "--json", action="store_true", help="Write JSON to stdout"
+    )
     provenance_parser.set_defaults(func=_provenance)
+
+    doctor_parser = subparsers.add_parser(
+        "doctor", help="Check whether job TOMLs are runnable"
+    )
+    _add_run_options(doctor_parser)
+    doctor_parser.add_argument(
+        "--json", action="store_true", help="Write JSON to stdout"
+    )
+    doctor_parser.set_defaults(func=_doctor)
+
+    explain_parser = subparsers.add_parser(
+        "explain", help="Explain what would run and why"
+    )
+    _add_run_options(explain_parser)
+    explain_parser.add_argument(
+        "--json", action="store_true", help="Write JSON to stdout"
+    )
+    explain_parser.add_argument(
+        "--node", metavar="LABEL", help="Show one pipeline label"
+    )
+    explain_parser.set_defaults(func=_explain)
 
     run_parser = subparsers.add_parser("run", help="Run job TOML files")
     _add_run_options(run_parser)
@@ -522,7 +908,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> None:
     argv = list(argv) if argv is not None else None
-    commands = {"init", "graph", "outputs", "provenance", "run"}
+    commands = {"init", "graph", "outputs", "provenance", "doctor", "explain", "run"}
     if argv and argv[0] not in commands:
         argv = ["run", *argv]
     elif argv is None:

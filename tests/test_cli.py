@@ -873,3 +873,170 @@ def test_main_keep_going_failure_writes_execution_summary(tmp_path):
     assert nodes["a"]["exit_code"] == 1
     assert nodes["b"]["state"] == "up_to_date"
     assert nodes["b"]["cached"] is False
+
+
+# -- Agent-oriented JSON, doctor, and explain -------------------------------
+
+
+def _json_stdout(capsys):
+    import json
+
+    return json.loads(capsys.readouterr().out)
+
+
+def test_outputs_json_lists_requested_paths(tmp_path, factory_file, capsys):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    main(
+        [
+            "outputs",
+            "--json",
+            "--nodes-dir",
+            str(tmp_path / "nodes"),
+            "--results-dir",
+            str(tmp_path / "results"),
+            str(job),
+        ]
+    )
+
+    payload = _json_stdout(capsys)
+    assert payload["jobs"][0]["label"] == "job"
+    requested = payload["jobs"][0]["requested"]
+    assert requested[0]["label"] == "b"
+    assert requested[0]["rule"] == "make_b"
+    assert requested[0]["node_path"].endswith("/b.txt")
+    assert requested[0]["result_path"].endswith("/b.txt")
+
+
+def test_graph_json_lists_nodes_and_edges(tmp_path, factory_file, capsys):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    main(["graph", "--json", "--outdir", str(tmp_path / "out"), str(job)])
+
+    payload = _json_stdout(capsys)
+    assert {node["label"] for node in payload["nodes"]} == {"a", "b"}
+    assert len(payload["edges"]) == 1
+    assert payload["jobs"][0]["label"] == "job"
+
+
+def test_provenance_json_prints_metadata(tmp_path, factory_file, capsys):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    nodes_dir = tmp_path / "nodes"
+    main(
+        [
+            "--nodes-dir",
+            str(nodes_dir),
+            "--results-dir",
+            str(tmp_path / "results"),
+            str(job),
+        ]
+    )
+    capsys.readouterr()
+    output = _real_output(nodes_dir, "b.txt")
+
+    main(["provenance", "--json", str(output)])
+
+    payload = _json_stdout(capsys)
+    assert payload["rule"] == "make_b"
+    assert payload["config"]["v"] == "hello"
+    assert payload["path"].endswith("/b.txt")
+
+
+def test_doctor_json_ok_for_valid_job(tmp_path, factory_file, capsys):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    main(["doctor", "--json", "--outdir", str(tmp_path / "out"), str(job)])
+
+    payload = _json_stdout(capsys)
+    assert payload == {"issues": [], "ok": True}
+
+
+def test_doctor_json_reports_missing_pipeline(tmp_path, capsys):
+    job = tmp_path / "job.toml"
+    job.write_text('v = "hello"\n')
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["doctor", "--json", "--outdir", str(tmp_path / "out"), str(job)])
+
+    assert excinfo.value.code == 1
+    payload = _json_stdout(capsys)
+    assert payload["ok"] is False
+    assert payload["issues"][0]["code"] == "NF_CONFIG_MISSING_PIPELINE"
+
+
+def test_doctor_json_reports_bad_request_label(tmp_path, factory_file, capsys):
+    job = tmp_path / "job.toml"
+    job.write_text(
+        f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n".requests" = ["missing"]\n'
+    )
+
+    with pytest.raises(SystemExit):
+        main(["doctor", "--json", "--outdir", str(tmp_path / "out"), str(job)])
+
+    payload = _json_stdout(capsys)
+    assert payload["issues"][0]["code"] == "NF_REQUEST_LABEL_NOT_FOUND"
+
+
+def test_doctor_json_reports_invalid_shellpath(tmp_path, factory_file, capsys):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "doctor",
+                "--json",
+                "--shellpath",
+                str(tmp_path / "missing-shell"),
+                "--outdir",
+                str(tmp_path / "out"),
+                str(job),
+            ]
+        )
+
+    payload = _json_stdout(capsys)
+    assert payload["issues"][0]["code"] == "NF_SHELLPATH_INVALID"
+
+
+def test_explain_json_reports_missing_and_up_to_date(tmp_path, factory_file, capsys):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    outdir = tmp_path / "out"
+
+    main(["explain", "--json", "--outdir", str(outdir), str(job)])
+    missing = _json_stdout(capsys)
+    by_label = {node["label"]: node for node in missing["nodes"]}
+    assert by_label["a"]["will_run"] is True
+    assert by_label["a"]["reasons"][0]["kind"] == "output_missing"
+
+    main(["--outdir", str(outdir), str(job)])
+    capsys.readouterr()
+    main(["explain", "--json", "--outdir", str(outdir), str(job)])
+    cached = _json_stdout(capsys)
+    by_label = {node["label"]: node for node in cached["nodes"]}
+    assert by_label["a"]["will_run"] is False
+    assert by_label["a"]["reasons"][0]["kind"] == "up_to_date"
+
+
+def test_explain_json_node_filter(tmp_path, factory_file, capsys):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    main(
+        [
+            "explain",
+            "--json",
+            "--node",
+            "b",
+            "--outdir",
+            str(tmp_path / "out"),
+            str(job),
+        ]
+    )
+
+    payload = _json_stdout(capsys)
+    assert [node["label"] for node in payload["nodes"]] == ["b"]

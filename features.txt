@@ -83,8 +83,15 @@ necroflow
 │   ├── init subcommand
 │   │   └── canonical starter workflow scaffold
 │   ├── graph subcommand
+│   │   └── --json machine-readable graph
 │   ├── outputs subcommand
+│   │   └── --json requested output paths
 │   ├── provenance subcommand
+│   │   └── --json metadata payload
+│   ├── doctor subcommand
+│   │   └── stable NF_* preflight issue codes
+│   ├── explain subcommand
+│   │   └── state, command, resources, and why-run reasons
 │   ├── output root options
 │   │   ├── --nodes-dir
 │   │   ├── --results-dir

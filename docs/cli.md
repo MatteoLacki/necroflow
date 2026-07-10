@@ -67,18 +67,48 @@ Render a DAG without running jobs:
 ```bash
 necroflow graph job.toml
 necroflow graph --output graph.txt job.toml
+necroflow graph --json job.toml
 ```
 
 List requested output paths without running jobs:
 
 ```bash
 necroflow outputs job.toml
+necroflow outputs --json job.toml
 ```
 
 Print stored provenance for an existing cached output:
 
 ```bash
 necroflow provenance nodes/rule/hash/file
+necroflow provenance --json nodes/rule/hash/file
 ```
+
+Run preflight checks without executing rules:
+
+```bash
+necroflow doctor job.toml
+necroflow doctor --json job.toml
+```
+
+`doctor` reports stable issue codes such as `NF_CONFIG_MISSING_PIPELINE`,
+`NF_PIPELINE_IMPORT_FAILED`, `NF_VALIDATION_FAILED`,
+`NF_REQUEST_LABEL_NOT_FOUND`, `NF_SHELLPATH_INVALID`, `NF_NODESTORE_LOCKED`,
+`NF_OUTPUT_PATH_TOO_LONG`, and `NF_RESOURCE_INVALID`. It exits non-zero when
+any error issue is present.
+
+Explain what would run and why without executing rules:
+
+```bash
+necroflow explain job.toml
+necroflow explain --node counts job.toml
+necroflow explain --json job.toml
+```
+
+`explain` reports requested nodes and ancestors, predicted paths, state, command,
+resource constraints, whether each node would run, and best-effort reasons such
+as `output_missing`, `up_to_date`, `parent_not_up_to_date`,
+`parent_content_changed`, `forced_invalidation`, `invalidator_changed`, and
+`compromised_prior_state`.
 
 [Previous: Where Outputs Live and Caching](caching.md) | [README](../README.md) | [Next: Job TOML and Parameter Grids](job-toml.md)
