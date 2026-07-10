@@ -135,6 +135,12 @@ both filtered precursors and indexed". Use a union for alternatives:
 Mixed unions such as `NodeType | str` are rejected because node inputs and config
 inputs are different parts of the rule API.
 
+Unions are for inputs only. A rule output should be a concrete `NodeType`, not a
+union, because necroflow needs one exact artifact type to choose the filename,
+node identity, downstream type, and provenance shape. If two rules can produce
+alternative formats, give each producer a concrete output type and let downstream
+consumers accept the alternatives with a union input.
+
 Keep structural or semantic checks close to pipeline construction with a
 validator when a config path is imported from outside the DAG:
 
