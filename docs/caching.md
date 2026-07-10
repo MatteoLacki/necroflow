@@ -12,17 +12,23 @@ nodes/
 
 results/
   experiment__ref+hg38__aligner+bwa/
-    {rule}/{hash16}/{file}         ← symlinks to requested node outputs only
+    {node_name}/{file}             ← symlinks to requested node outputs only
     manifest.toml                  ← requested output paths for this combo
   experiment__ref+hg38__aligner+bowtie2/
     ...
 ```
 
-Only the **requested** outputs (defaults to pipeline sinks) get a symlink — intermediate ancestors are excluded. `manifest.toml` lists the same outputs keyed by the Pipeline attribute name assigned in the factory, with paths relative to the node store:
+Only the **requested** outputs (defaults to pipeline sinks) get a symlink — intermediate ancestors are excluded. `node_name` is the Pipeline attribute name assigned in the factory, and the file name is the declared `NodeType.filename` when present:
+
+```text
+results/experiment__ref+hg38__aligner+bwa/counts/counts.txt
+```
+
+`manifest.toml` lists the same visible result paths keyed by node name:
 
 ```toml
 [outputs]
-counts = "count/a3f1bc92/counts.txt"
+counts = "counts/counts.txt"
 ```
 
 The key (`counts`) matches `P.counts = R.count(...)` in the factory function.

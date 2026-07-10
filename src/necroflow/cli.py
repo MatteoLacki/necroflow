@@ -241,6 +241,12 @@ def _node_display_label(node) -> str:
     )
 
 
+def _result_relative_path(node) -> Path:
+    if node.path is None:
+        raise ValueError("node path has not been resolved")
+    return Path(_node_display_label(node)) / node.path.name
+
+
 def _node_json(node, *, nodes_dir: Path | None = None) -> dict:
     data = {
         "key": node.key,
@@ -278,15 +284,17 @@ def _outputs_payload(combos, *, nodes_dir: Path, results_dir: Path) -> dict:
         resolve_paths(pipeline.nodes, nodes_dir)
         requested = []
         for node in request:
-            rel = node.path.relative_to(nodes_dir)
+            node_rel = node.path.relative_to(nodes_dir)
+            result_rel = _result_relative_path(node)
             requested.append(
                 {
                     "label": _node_display_label(node),
                     "node_key": node.key,
                     "rule": node.rule.__name__ if node.rule else "unknown",
                     "node_path": str(node.path),
-                    "result_path": str(results_dir / label / rel),
-                    "relative_path": rel.as_posix(),
+                    "result_path": str(results_dir / label / result_rel),
+                    "relative_path": result_rel.as_posix(),
+                    "node_relative_path": node_rel.as_posix(),
                 }
             )
         jobs.append({"label": label, "requested": requested})
@@ -572,12 +580,8 @@ def _outputs(args) -> None:
         resolve_paths(pipeline.nodes, nodes_dir)
         print(f"[{label}]")
         for node in request:
-            key = (
-                node.pipeline_label
-                or node.output_name
-                or (node.node_type.__name__ if node.node_type else "output")
-            )
-            rel = node.path.relative_to(nodes_dir)
+            key = _node_display_label(node)
+            rel = _result_relative_path(node)
             print(f"{key}\tnode={node.path}\tresult={results_dir / label / rel}")
 
 
@@ -693,6 +697,31 @@ def _write_execution_summaries(
         (combo_dir / "execution.toml").write_text(tomlkit.dumps(data), encoding="utf-8")
 
 
+def _prune_empty_dirs(path: Path, stop: Path) -> None:
+    while path != stop and path.is_dir():
+        try:
+            path.rmdir()
+        except OSError:
+            return
+        path = path.parent
+
+
+def _clear_generated_result_links(combo_dir: Path) -> None:
+    manifest = combo_dir / "manifest.toml"
+    if not manifest.exists():
+        return
+    try:
+        doc = tomlkit.parse(manifest.read_text(encoding="utf-8"))
+        paths = [combo_dir / str(rel) for rel in doc.get("outputs", {}).values()]
+    except Exception:
+        return
+    for path in sorted(paths, key=lambda p: len(p.parts), reverse=True):
+        if path.is_symlink():
+            parent = path.parent
+            path.unlink()
+            _prune_empty_dirs(parent, combo_dir)
+
+
 def _create_link_outputs(
     results_dir: Path,
     combos: list[tuple[str, object, list]],
@@ -703,30 +732,26 @@ def _create_link_outputs(
 
     Only requested (sink) outputs get a symlink — ancestors are excluded.
     """
-    root = nodes_dir if nodes_dir is not None else results_dir
     for label, pipeline, sink_nodes in combos:
         combo_dir = results_dir / label
-
-        for node in sink_nodes:
-            if node.path is None or not node.path.exists():
-                continue
-            rel = node.path.relative_to(root)
-            link = combo_dir / rel
-            link.parent.mkdir(parents=True, exist_ok=True)
-            if link.is_symlink() or link.exists():
-                link.unlink()
-            link.symlink_to(Path(os.path.relpath(node.path, link.parent)))
+        _clear_generated_result_links(combo_dir)
 
         manifest_lines = ["[outputs]\n"]
         for node in sink_nodes:
-            if node.path is not None and node.path.exists():
-                rel = node.path.relative_to(root)
-                key = (
-                    node.pipeline_label
-                    or node.output_name
-                    or (node.node_type.__name__ if node.node_type else "output")
+            if node.path is None or not node.path.exists():
+                continue
+            rel = _result_relative_path(node)
+            link = combo_dir / rel
+            link.parent.mkdir(parents=True, exist_ok=True)
+            if link.is_symlink():
+                link.unlink()
+            elif link.exists():
+                raise FileExistsError(
+                    f"refusing to overwrite non-symlink result: {link}"
                 )
-                manifest_lines.append(f'{key} = "{rel.as_posix()}"\n')
+            link.symlink_to(Path(os.path.relpath(node.path, link.parent)))
+            manifest_lines.append(f'{_node_display_label(node)} = "{rel.as_posix()}"\n')
+
         combo_dir.mkdir(parents=True, exist_ok=True)
         (combo_dir / "manifest.toml").write_text(
             "".join(manifest_lines), encoding="utf-8"

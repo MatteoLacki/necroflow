@@ -57,6 +57,17 @@ def test_symlinks_created_for_existing_outputs(tmp_path):
     assert all(f.is_symlink() for f in symlinks)
 
 
+def test_symlink_path_uses_pipeline_label_and_filename(tmp_path):
+    P, outdir = _make_pipeline_with_outputs(tmp_path)
+    combos = [("run1", P, _sinks(P))]
+
+    _create_link_outputs(outdir, combos)
+
+    link = outdir / "run1" / "log" / "run.log"
+    assert link.is_symlink()
+    assert link.resolve() == P.log.path
+
+
 def test_symlinks_point_to_real_files(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
     combos = [("run1", P, _sinks(P))]
@@ -89,9 +100,27 @@ def test_link_outputs_can_use_separate_nodes_and_results_dirs(tmp_path):
     links = [p for p in (results_dir / "run1").rglob("*") if p.is_symlink()]
     assert links
     assert all(p.resolve().is_file() for p in links)
+    assert (results_dir / "run1" / "log" / "run.log").resolve() == P.log.path
     content = (results_dir / "run1" / "manifest.toml").read_text()
     doc = tomlkit.parse(content)
     assert all(not str(v).startswith("../") for v in doc["outputs"].values())
+
+
+def test_link_outputs_removes_stale_generated_symlinks(tmp_path):
+    P, outdir = _make_pipeline_with_outputs(tmp_path)
+    combo_dir = outdir / "run1"
+    stale = combo_dir / "step2" / "abc123" / "run.log"
+    stale.parent.mkdir(parents=True)
+    stale.symlink_to(P.log.path)
+    (combo_dir / "manifest.toml").write_text(
+        '[outputs]\nlog = "step2/abc123/run.log"\n'
+    )
+
+    _create_link_outputs(outdir, [("run1", P, _sinks(P))])
+
+    assert not stale.exists()
+    assert not stale.parent.exists()
+    assert (combo_dir / "log" / "run.log").is_symlink()
 
 
 # ── manifest ─────────────────────────────────────────────────────────────────
@@ -127,6 +156,17 @@ def test_manifest_only_sinks(tmp_path):
     # "out" is intermediate (P.out), "log" is the sink (P.log)
     assert "out" not in keys
     assert "log" in keys
+
+
+def test_manifest_values_are_visible_result_paths(tmp_path):
+    P, outdir = _make_pipeline_with_outputs(tmp_path)
+    combos = [("run1", P, _sinks(P))]
+
+    _create_link_outputs(outdir, combos)
+
+    content = (outdir / "run1" / "manifest.toml").read_text()
+    doc = tomlkit.parse(content)
+    assert doc["outputs"]["log"] == "log/run.log"
 
 
 # ── main() integration ───────────────────────────────────────────────────────
@@ -451,7 +491,7 @@ def test_main_runs_pipeline_with_default_nodes_and_results_dirs(
     assert any((tmp_path / "nodes").rglob("b.txt"))
     assert (tmp_path / "results" / "job" / "manifest.toml").exists()
     assert not any((tmp_path / "results" / "job").rglob("a.txt"))
-    assert any((tmp_path / "results" / "job").rglob("b.txt"))
+    assert (tmp_path / "results" / "job" / "b" / "b.txt").is_symlink()
 
 
 def test_main_runs_pipeline_with_split_nodes_and_results_dirs(tmp_path, factory_file):
@@ -468,10 +508,9 @@ def test_main_runs_pipeline_with_split_nodes_and_results_dirs(tmp_path, factory_
         p.is_symlink() for p in results_dir.rglob("*.txt")
     )
     assert not list((results_dir / "job").rglob("a.txt"))
-    b_links = list((results_dir / "job").rglob("b.txt"))
-    assert (
-        len(b_links) == 1 and b_links[0].is_symlink() and b_links[0].resolve() == real_b
-    )
+    b_link = results_dir / "job" / "b" / "b.txt"
+    assert b_link.is_symlink()
+    assert b_link.resolve() == real_b
 
 
 def test_main_outdir_keeps_single_root_compatibility(tmp_path, factory_file):

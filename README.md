@@ -164,7 +164,7 @@ Example output:
 
 ```text
 [job]
-summary	node=nodes/summarize/d18e6af2070f14be/summary.txt	result=results/job/summarize/d18e6af2070f14be/summary.txt
+summary	node=nodes/summarize/d18e6af2070f14be/summary.txt	result=results/job/summary/summary.txt
 ```
 
 Inspect stored metadata for an existing cached output:
