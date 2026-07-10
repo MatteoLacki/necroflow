@@ -271,6 +271,7 @@ class DAG(_GraphBase):
         self._all_nodes: list = []  # all nodes including duplicates
         self._required: set[str] = set()
         self.outdir = Path(outdir) if outdir is not None else Path.cwd()
+        self.last_execution_report = None
 
     def add(self, pipeline: Pipeline, request=None) -> None:
         """Add a pipeline's nodes. request defaults to pipeline sinks."""
@@ -314,7 +315,8 @@ class DAG(_GraphBase):
         required_keys = {n.key for n in self.required_nodes}
         return "orange" if node.key in required_keys else "steelblue"
 
-    def execute(self, **kwargs) -> None:
+    def execute(self, **kwargs):
         from necroflow.executor import execute
 
-        execute(self, self.outdir, **kwargs)
+        self.last_execution_report = execute(self, self.outdir, **kwargs)
+        return self.last_execution_report

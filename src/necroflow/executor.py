@@ -6,10 +6,15 @@ import os
 import shutil
 import subprocess
 import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from functools import partial
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
+
+import tomlkit
 
 from necroflow.dag import (
     NodeState,
@@ -28,6 +33,204 @@ from necroflow import logger as _logger
 if TYPE_CHECKING:
     from necroflow.dag import Node
     from necroflow.pipeline import _GraphBase
+
+
+@dataclass
+class ExecutionEvent:
+    node_key: str
+    rule: str
+    output_name: str | None
+    pipeline_label: str | None
+    path: str | None
+    state: str
+    cached: bool
+    started_at: str | None = None
+    finished_at: str | None = None
+    duration_seconds: float | None = None
+    exit_code: int | None = None
+    error: str | None = None
+    output_size_bytes: int | None = None
+    output_size_human: str | None = None
+
+    def to_toml_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "key": self.node_key,
+            "rule": self.rule,
+            "state": self.state,
+            "cached": self.cached,
+        }
+        optional = {
+            "output_name": self.output_name,
+            "label": self.pipeline_label,
+            "path": self.path,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "duration_seconds": self.duration_seconds,
+            "exit_code": self.exit_code,
+            "error": self.error,
+            "output_size_bytes": self.output_size_bytes,
+            "output_size_human": self.output_size_human,
+        }
+        data.update({k: v for k, v in optional.items() if v is not None})
+        return data
+
+
+@dataclass
+class ExecutionReport:
+    events: dict[str, ExecutionEvent] = field(default_factory=dict)
+
+    def add(self, event: ExecutionEvent) -> None:
+        self.events[event.node_key] = event
+
+    def get(self, node_or_key) -> ExecutionEvent | None:
+        key = node_or_key if isinstance(node_or_key, str) else node_or_key.key
+        return self.events.get(key)
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _human_size(size: int) -> str:
+    value = float(size)
+    units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"]
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{int(value)} B" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{size} B"
+
+
+def _rule_output_size_bytes(output_dir: Path) -> int:
+    if not output_dir.exists():
+        return 0
+    total = 0
+    for path in output_dir.rglob("*"):
+        if ".rip" in path.parts or not path.is_file():
+            continue
+        total += path.stat().st_size
+    return total
+
+
+def _event_for_node(
+    node,
+    *,
+    state: str,
+    cached: bool,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+    duration_seconds: float | None = None,
+    exit_code: int | None = None,
+    error: str | None = None,
+    output_size_bytes: int | None = None,
+) -> ExecutionEvent:
+    return ExecutionEvent(
+        node_key=node.key,
+        rule=node.rule.__name__ if node.rule else "unknown",
+        output_name=node.output_name,
+        pipeline_label=node.pipeline_label,
+        path=str(node.path) if node.path is not None else None,
+        state=state,
+        cached=cached,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_seconds=duration_seconds,
+        exit_code=exit_code,
+        error=error,
+        output_size_bytes=output_size_bytes,
+        output_size_human=(
+            _human_size(output_size_bytes) if output_size_bytes is not None else None
+        ),
+    )
+
+
+def _write_run_stats(node, event: ExecutionEvent) -> None:
+    if node.path is None:
+        return
+    run = {
+        "started_at": event.started_at,
+        "finished_at": event.finished_at,
+        "duration_seconds": event.duration_seconds,
+        "exit_code": event.exit_code,
+        "output_size_bytes": event.output_size_bytes,
+        "output_size_human": event.output_size_human,
+    }
+    data = {"run": {k: v for k, v in run.items() if v is not None}}
+    rip = node.path.parent / ".rip"
+    rip.mkdir(parents=True, exist_ok=True)
+    (rip / "run.toml").write_text(tomlkit.dumps(data), encoding="utf-8")
+
+
+def _record_cached_events(report: ExecutionReport, active: list) -> None:
+    measured_dirs: dict[Path, int] = {}
+    for node in active:
+        if node.state != NodeState.UP_TO_DATE or node.path is None:
+            continue
+        output_dir = node.path.parent
+        size = measured_dirs.setdefault(output_dir, _rule_output_size_bytes(output_dir))
+        report.add(
+            _event_for_node(
+                node,
+                state="up_to_date",
+                cached=True,
+                output_size_bytes=size,
+            )
+        )
+
+
+def _record_success_events(
+    report: ExecutionReport,
+    node,
+    *,
+    active_keys: set,
+    needs_run: set,
+    started_at: str,
+    finished_at: str,
+    duration_seconds: float,
+) -> None:
+    size = _rule_output_size_bytes(node.path.parent)
+    for conode in node.output_nodes.values():
+        if conode.key not in active_keys:
+            continue
+        if conode is not node and conode.state not in needs_run:
+            continue
+        event = _event_for_node(
+            conode,
+            state="up_to_date",
+            cached=False,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_seconds=duration_seconds,
+            exit_code=0,
+            output_size_bytes=size,
+        )
+        report.add(event)
+    _write_run_stats(node, event)
+
+
+def _record_failure_event(
+    report: ExecutionReport,
+    node,
+    *,
+    state: str,
+    started_at: str,
+    finished_at: str,
+    duration_seconds: float,
+    exit_code: int | None,
+    error: str,
+) -> None:
+    report.add(
+        _event_for_node(
+            node,
+            state=state,
+            cached=False,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_seconds=duration_seconds,
+            exit_code=exit_code,
+            error=error,
+        )
+    )
 
 
 def _normalize_shellpath(shellpath) -> str | None:
@@ -247,11 +450,24 @@ def _on_job_done(
     autoclean: bool,
     children: dict,
     final_keys: set,
+    report: ExecutionReport,
+    started_at: str,
+    finished_at: str,
+    duration_seconds: float,
 ) -> int:
     """Handle a successful job completion. Returns number of intermediate outputs cleaned."""
     for conode in node.output_nodes.values():
         if conode.key in active_keys and not conode.path.exists():
             raise RuntimeError(f"command succeeded but output missing: {conode.path}")
+    _record_success_events(
+        report,
+        node,
+        active_keys=active_keys,
+        needs_run=needs_run,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_seconds=duration_seconds,
+    )
     write_dependencies(node)
     write_ancestor_graph(node)
     n_cleaned = 0
@@ -283,7 +499,7 @@ def execute(
     node_runner=None,
     forced_stale_keys: set[str] | None = None,
     shellpath: str | Path | None = None,
-) -> None:
+) -> ExecutionReport:
     """Run required nodes in the pipeline, respecting declared resource caps.
 
     Classifies each node as Missing/Stale/UpToDate/Orphan before execution.
@@ -323,6 +539,8 @@ def execute(
         active, active_keys, n_cleaned = _prepare_active(
             pipeline, outdir, autoclean, dry_run, forced_stale_keys
         )
+        report = ExecutionReport()
+        _record_cached_events(report, active)
 
         if dry_run:
             n_would_run = sum(
@@ -333,9 +551,9 @@ def execute(
                 if n.state in (NodeState.MISSING, NodeState.STALE):
                     _logger.dry_run_node(n)
             _logger.dry_run_summary(n_would_run, n_up_to_date)
-            return
+            return report
 
-        running: dict = {}  # future -> (node, start_time, job_resources)
+        running: dict = {}  # future -> (node, start_time, start_wall, job_resources)
         running_resources: dict[str, int] = {}
         errors: list = []  # exceptions collected in keep_going mode
         n_run = n_failed = 0
@@ -389,8 +607,9 @@ def execute(
                             node.state = NodeState.RUNNING
                             _logger.job_start(node)
                             start = time.monotonic()
+                            start_wall = _utc_now()
                             future = pool.submit(_run, node, log_path)
-                            running[future] = (node, start, job_res)
+                            running[future] = (node, start, start_wall, job_res)
                             for r, v in job_res.items():
                                 running_resources[r] = running_resources.get(r, 0) + v
 
@@ -401,8 +620,9 @@ def execute(
                         running, return_when=concurrent.futures.FIRST_COMPLETED
                     )
                     for f in done_fs:
-                        node, start, job_res = running.pop(f)
+                        node, start, start_wall, job_res = running.pop(f)
                         elapsed = time.monotonic() - start
+                        finished_wall = _utc_now()
                         try:
                             f.result()
                             n_cleaned += _on_job_done(
@@ -412,6 +632,10 @@ def execute(
                                 autoclean,
                                 children,
                                 final_keys,
+                                report,
+                                start_wall,
+                                finished_wall,
+                                elapsed,
                             )
                             _logger.job_done(node, elapsed)
                             n_run += 1
@@ -422,13 +646,35 @@ def execute(
                                 if rc < 0:
                                     node.state = NodeState.INTERRUPTED
                                     node.mark_done("interrupted")
+                                    state = "interrupted"
                                 else:
                                     node.state = NodeState.FAILED
                                     node.mark_done("failed")
+                                    state = "failed"
+                                _record_failure_event(
+                                    report,
+                                    node,
+                                    state=state,
+                                    started_at=start_wall,
+                                    finished_at=finished_wall,
+                                    duration_seconds=elapsed,
+                                    exit_code=rc,
+                                    error=str(exc),
+                                )
                                 _logger.job_failed(node, elapsed, rc, log_path)
                             else:
                                 node.state = NodeState.FAILED
                                 node.mark_done("failed")
+                                _record_failure_event(
+                                    report,
+                                    node,
+                                    state="failed",
+                                    started_at=start_wall,
+                                    finished_at=finished_wall,
+                                    duration_seconds=elapsed,
+                                    exit_code=None,
+                                    error=str(exc),
+                                )
                                 _logger.job_error(node, elapsed, exc, log_path)
                             _logger.job_output(log_path)
                             n_failed += 1
@@ -441,10 +687,13 @@ def execute(
             _logger.summary(n_run, n_skipped, n_failed, n_cleaned)
 
     if errors:
-        raise ExceptionGroup(
+        exc = ExceptionGroup(
             "necroflow: some nodes failed",
             errors,
         )
+        exc.execution_report = report
+        raise exc
+    return report
 
 
 def _run_node(node, log_path, *, shellpath: str | None = None) -> None:

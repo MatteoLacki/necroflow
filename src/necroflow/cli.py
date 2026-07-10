@@ -209,16 +209,24 @@ def _finalize_link_outputs(combos, *, nodes_dir: Path, results_dir: Path) -> Non
 def _run(args) -> None:
     nodes_dir, results_dir = _resolve_roots(args)
     dag, combos, forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
-    dag.execute(
-        resource_caps=_parse_resource_caps(args),
-        keep_going=args.keep_going,
-        autoclean=args.autoclean,
-        dry_run=args.dry_run,
-        forced_stale_keys=forced_stale_keys,
-        shellpath=_normalize_arg_shellpath(args),
-    )
+    try:
+        report = dag.execute(
+            resource_caps=_parse_resource_caps(args),
+            keep_going=args.keep_going,
+            autoclean=args.autoclean,
+            dry_run=args.dry_run,
+            forced_stale_keys=forced_stale_keys,
+            shellpath=_normalize_arg_shellpath(args),
+        )
+    except ExceptionGroup as exc:
+        report = getattr(exc, "execution_report", None)
+        if args.keep_going and not args.dry_run:
+            _finalize_link_outputs(combos, nodes_dir=nodes_dir, results_dir=results_dir)
+            _write_execution_summaries(results_dir, combos, report)
+        raise
     if not args.dry_run:
         _finalize_link_outputs(combos, nodes_dir=nodes_dir, results_dir=results_dir)
+        _write_execution_summaries(results_dir, combos, report)
 
 
 def _graph(args) -> None:
@@ -286,6 +294,47 @@ def _init(args) -> None:
                 raise SystemExit(f"error: {target} exists; pass --force to overwrite")
             target.write_bytes(item.read_bytes())
     print(f"created {dest}")
+
+
+def _requested_with_ancestors(request: list) -> list:
+    seen: dict[str, object] = {}
+    stack = list(request)
+    while stack:
+        node = stack.pop()
+        if node.key in seen:
+            continue
+        seen[node.key] = node
+        stack.extend(node.parents)
+    return list(seen.values())
+
+
+def _write_execution_summaries(
+    results_dir: Path,
+    combos: list[tuple[str, object, list]],
+    report,
+) -> None:
+    if report is None:
+        return
+    for label, _pipeline, request in combos:
+        data = tomlkit.document()
+        nodes_array = tomlkit.aot()
+        for node in sorted(_requested_with_ancestors(request), key=lambda n: n.key):
+            event = report.get(node)
+            if event is None:
+                continue
+            values = event.to_toml_dict()
+            if node.pipeline_label is not None:
+                values["label"] = node.pipeline_label
+            if node.output_name is not None:
+                values["output_name"] = node.output_name
+            table = tomlkit.table()
+            for key, value in values.items():
+                table[key] = value
+            nodes_array.append(table)
+        data["nodes"] = nodes_array
+        combo_dir = results_dir / label
+        combo_dir.mkdir(parents=True, exist_ok=True)
+        (combo_dir / "execution.toml").write_text(tomlkit.dumps(data), encoding="utf-8")
 
 
 def _create_link_outputs(

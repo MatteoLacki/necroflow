@@ -67,6 +67,10 @@ necroflow
 │   ├── compromised-output reruns
 │   ├── missing-output detection
 │   ├── job logs
+│   ├── execution reports
+│   │   ├── .rip/run.toml node-local runtime stats
+│   │   ├── results/<job>/execution.toml per-run summaries
+│   │   └── duration and output-size accounting
 │   ├── output/provenance graph writing
 │   ├── file locking per output root
 │   └── autoclean
@@ -119,10 +123,12 @@ necroflow
 │   ├── real node outputs under node store
 │   ├── per-job result symlink folders
 │   ├── manifest.toml for requested outputs
+│   ├── execution.toml for requested nodes and ancestors
 │   ├── dependencies.toml
 │   ├── content hash files
 │   ├── invalidation token files
 │   ├── job.log
+│   ├── run.toml runtime stats
 │   ├── graph.txt ancestor view
 │   └── provenance CLI display
 │

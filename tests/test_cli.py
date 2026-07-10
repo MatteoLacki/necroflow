@@ -788,3 +788,88 @@ def test_cli_invalid_shellpath_errors_cleanly(tmp_path, factory_file):
 
     with pytest.raises(SystemExit, match="shellpath does not exist"):
         main(["--shellpath", str(tmp_path / "missing-shell"), str(job)])
+
+
+def test_main_writes_execution_summary_for_requested_ancestors(tmp_path, factory_file):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    nodes_dir = tmp_path / "nodes"
+    results_dir = tmp_path / "results"
+
+    main(["--nodes-dir", str(nodes_dir), "--results-dir", str(results_dir), str(job)])
+
+    summary = results_dir / "job" / "execution.toml"
+    assert summary.exists()
+    doc = tomlkit.parse(summary.read_text())
+    nodes = {node["label"]: node for node in doc["nodes"]}
+    assert set(nodes) == {"a", "b"}
+    assert nodes["a"]["cached"] is False
+    assert nodes["b"]["cached"] is False
+    assert nodes["a"]["duration_seconds"] >= 0
+    assert nodes["a"]["output_size_bytes"] == 0
+    assert "make_a" == nodes["a"]["rule"]
+
+
+def test_main_execution_summary_survives_autocleaned_intermediate(
+    tmp_path, factory_file
+):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    nodes_dir = tmp_path / "nodes"
+    results_dir = tmp_path / "results"
+
+    main(
+        [
+            "--nodes-dir",
+            str(nodes_dir),
+            "--results-dir",
+            str(results_dir),
+            "--autoclean",
+            str(job),
+        ]
+    )
+
+    doc = tomlkit.parse((results_dir / "job" / "execution.toml").read_text())
+    nodes = {node["label"]: node for node in doc["nodes"]}
+    assert set(nodes) == {"a", "b"}
+    assert not Path(nodes["a"]["path"]).exists()
+    assert Path(nodes["b"]["path"]).exists()
+
+
+def test_main_keep_going_failure_writes_execution_summary(tmp_path):
+    factory = tmp_path / "pipe.py"
+    factory.write_text(textwrap.dedent("""\
+        from necroflow import Pipeline, NodeType, Inputs, Outputs, Rules
+        class A(NodeType): filename = "a.txt"
+        class B(NodeType): filename = "b.txt"
+        R = Rules()
+        R.register("fail_a", Inputs(v=str), Outputs(a=A), "touch {a}; exit 1")
+        R.register("make_b", Inputs(v=str), Outputs(b=B), "touch {b}")
+        def factory(cfg):
+            P = Pipeline()
+            P.a = R.fail_a(v=cfg["v"])
+            P.b = R.make_b(v=cfg["v"])
+            return P
+    """))
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory}:factory"\nv = "hello"\n')
+    results_dir = tmp_path / "results"
+
+    with pytest.raises(ExceptionGroup):
+        main(
+            [
+                "--nodes-dir",
+                str(tmp_path / "nodes"),
+                "--results-dir",
+                str(results_dir),
+                "--keep-going",
+                str(job),
+            ]
+        )
+
+    doc = tomlkit.parse((results_dir / "job" / "execution.toml").read_text())
+    nodes = {node["label"]: node for node in doc["nodes"]}
+    assert nodes["a"]["state"] == "failed"
+    assert nodes["a"]["exit_code"] == 1
+    assert nodes["b"]["state"] == "up_to_date"
+    assert nodes["b"]["cached"] is False

@@ -79,6 +79,39 @@ Run state is persisted to a plain-text `state` file inside each node's `.rip/` d
 
 Each job's stdout/stderr is captured to the node store at `{rule}/{hash}/.rip/job.log`. On failure the log is printed to the terminal.
 
+
+## Execution reports
+
+Each successful rule call writes node-local runtime metadata to the rule-call
+metadata directory:
+
+```text
+nodes/<rule>/<hash>/.rip/run.toml
+```
+
+The file records the last successful execution of that cached node directory:
+start/end timestamps, wall-clock duration, exit code, and total output size. The
+size is measured for the rule-call output directory, excluding `.rip` metadata,
+so side files written under `{workdir}` are counted with declared outputs.
+
+CLI runs also write a per-job execution summary next to the manifest:
+
+```text
+results/<job-label>/execution.toml
+```
+
+That summary lists every requested node and ancestor for that job. Executed nodes
+include `duration_seconds`, `started_at`, `finished_at`, `exit_code`, and
+`output_size_bytes`; cached nodes are marked `cached = true` and include the
+current measured output size when the cached output directory exists. With
+`--keep-going`, failed attempted nodes are included with `state = "failed"` or
+`state = "interrupted"` and the captured error/exit code.
+
+`--autoclean` may delete intermediate node directories and their `.rip/run.toml`
+files after downstream work completes. The per-job `execution.toml` is written
+under `results/`, so it remains available as the durable summary for that CLI
+invocation even when intermediate cached folders were removed.
+
 ## Cleaning orphan outputs
 
 Outputs that existed from a previous run but are no longer in the required subgraph are classified as `ORPHAN`. Pass `autoclean=True` to delete them. Intermediate rule-call directories are removed as whole directories once all downstream work is complete, so side files written under `{workdir}` are cleaned together with the declared outputs:

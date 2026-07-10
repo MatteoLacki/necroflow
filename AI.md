@@ -34,6 +34,10 @@ The CLI accepts repeatable `--validation PATH.py:FUNCTION` flags. Each validator
 
 `necroflow.config.iter_job_configs()` is intentionally validation-free: it yields expanded, metadata-stripped `JobConfig` objects. Python-only callers that want validation should call their validator explicitly inside the `for job in iter_job_configs(...)` loop. Cerberus is an optional extra via `necroflow[validation]`; core necroflow does not import it unless user validator code does.
 
+## Execution reports
+
+`execute()` returns an `ExecutionReport`; `DAG.execute()` stores it as `dag.last_execution_report` and returns it. Successful rule calls write `.rip/run.toml` with start/end timestamps, `duration_seconds`, `exit_code`, and total rule-call output size excluding `.rip`. CLI runs write `results/<job>/execution.toml` after link finalization, covering each requested node and ancestor. The run-level summary survives `--autoclean`, while node-local `.rip/run.toml` can disappear with cleaned intermediates. Cached nodes are reported as `cached = true` with measured current output size and no new duration. With `--keep-going`, the executor attaches the report to the raised `ExceptionGroup` and the CLI writes summaries before re-raising.
+
 ## CLI output roots
 
 The CLI separates hashed node storage from job-facing links. `--nodes-dir DIR` controls the node store and defaults to `nodes`; `--results-dir DIR` controls per-job symlink folders and defaults to `results`. `--outdir DIR` / `-o DIR` remains a compatibility alias that uses one directory for both and cannot be combined with either split-dir flag. Manifests list requested output paths relative to the node store.

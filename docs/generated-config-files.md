@@ -2,9 +2,88 @@
 
 [Previous: Rules and Typed Outputs](rules.md) | [README](../README.md) | [Next: Execution, Scheduling, and Cleanup](execution.md)
 
+Tool-specific config can live in necroflow in two useful ways.
+
+First, keep large tool configs inside the main job TOML as ordinary tables. This
+is useful when the job TOML is the run contract: one file contains the pipeline
+factory, sample-specific parameters, tool settings, and optional grid axes. The
+settings then participate naturally in necroflow fingerprints because the
+pipeline factory serializes the table into a normal rule input.
+
+Second, keep tool configs as separate files and put only their paths in the job
+TOML. This is the Snakemake-style layout: each tool can own its native config
+file, while necroflow records the path as part of the job config and passes it to
+the relevant rule. Use this when the config is maintained outside necroflow, is
+shared by many workflows, or is already the format expected by the tool.
+
+## External config files
+
+A separate config file can be passed as a normal string parameter when that is
+all the downstream command needs:
+
+```python
+@R.command("sage --config {sage_config_path} --mzml {spectra} --out {sage_out}")
+def run_sage(spectra: Mzml, sage_config_path: str):
+    return SageOut[sage_out]
+
+
+def pipeline(config):
+    P = Pipeline()
+    P.sage_out = R.run_sage(P.spectra, sage_config_path=config["sage_config"])
+    return P
+```
+
+```toml
+sage_config = "configs/sage.json"
+```
+
+This is closest to the Snakemake convention: each tool can keep its own native
+config file, and the main job TOML records which file to use. In this form,
+necroflow fingerprints the path string, not the file contents, so changing the
+file in place does not automatically change the downstream node key.
+
+When the external config should be a typed artifact in the DAG, add an import or
+copy rule and pass the resulting node downstream:
+
+```python
+from necroflow import NodeType, Rules, Pipeline
+
+class SageConfig(NodeType):
+    filename = "sage.json"
+
+class SageOut(NodeType):
+    filename = "results.sage.tsv"
+
+R = Rules()
+
+@R.command("cp {path} {sage_config}")
+def import_sage_config(path: str):
+    return SageConfig[sage_config]
+
+@R.command("sage --config {sage_config} --mzml {spectra} --out {sage_out}")
+def run_sage(spectra: Mzml, sage_config: SageConfig):
+    return SageOut[sage_out]
+
+
+def pipeline(config):
+    P = Pipeline()
+    P.sage_config = R.import_sage_config(path=config["sage_config"])
+    P.sage_out = R.run_sage(P.spectra, P.sage_config)
+    return P
+```
+
+This keeps the config as a normal upstream artifact. If in-place edits to the
+source config should invalidate downstream work, add a `NodeType.invalidator` to
+the imported config type that reads the copied config content, or make the config
+producer itself a necroflow rule.
+
 ## Generated config files
 
-For tools that normally consume a large config file, register a built-in text-file rule and pass serialized config text from the pipeline factory. The text is written directly by Python, so it avoids shell quoting problems and command-line length limits from patterns such as `printf {config}`.
+For tools that normally consume a large config file, but whose settings belong in
+the main job TOML, register a built-in text-file rule and pass serialized config
+text from the pipeline factory. The text is written directly by Python, so it
+avoids shell quoting problems and command-line length limits from patterns such
+as `printf {config}`.
 
 ```python
 import json
@@ -36,7 +115,9 @@ P.sage_config = R.write_sage_config(
 P.sage_out, P.run_info = R.run_sage(P.spectra, P.fasta, P.sage_config)
 ```
 
-`Rules.text_file(name, output, input_name="text")` creates a normal cached node. The text value participates in the node fingerprint, and the built-in writer recipe (`necroflow.text_file/v1`) is hashed in place of shell command text.
+`Rules.text_file(name, output, input_name="text")` creates a normal cached node.
+The text value participates in the node fingerprint, and the built-in writer
+recipe (`necroflow.text_file/v1`) is hashed in place of shell command text.
 
 ## Updating one config from another
 
