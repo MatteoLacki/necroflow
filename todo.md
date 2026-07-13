@@ -24,3 +24,11 @@
 6. [ ] Add dependency and security maintenance.
    - Configure Dependabot for Python dependencies and GitHub Actions.
    - Evaluate adding CodeQL scanning as a lower-priority follow-up.
+
+7. [ ] Add and document a tag-based GitHub release flow.
+   - Keep the package version in `src/necroflow/__init__.py` aligned with release tags.
+   - Run tests and `make check-dist` before tagging.
+   - Create version tags with `make tag-release TAG=vX.Y.Z` and push them with `git push origin vX.Y.Z`.
+   - Configure GitHub Actions to run the release checks for tags matching `v*`.
+   - Publish the tag as a GitHub Release with generated notes, for example `gh release create vX.Y.Z --verify-tag --generate-notes --title "vX.Y.Z"`.
+   - Consider attaching the checked source distribution and wheel to the GitHub Release and using trusted publishing for PyPI.
