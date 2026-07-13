@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 import tomlkit
 
+from necroflow._compat import ExceptionGroup
 from necroflow.dag import (
     NodeState,
     classify_nodes,

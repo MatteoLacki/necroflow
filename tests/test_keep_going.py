@@ -1,4 +1,6 @@
 import pytest
+
+from necroflow._compat import ExceptionGroup
 from necroflow import Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState
 
 

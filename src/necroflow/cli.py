@@ -36,6 +36,7 @@ from typing import Callable
 
 import tomlkit
 
+from necroflow._compat import ExceptionGroup
 from necroflow import DAG
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import (

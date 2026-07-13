@@ -5,6 +5,8 @@ import textwrap
 import time
 import tomlkit
 import pytest
+
+from necroflow._compat import ExceptionGroup
 from pathlib import Path
 from necroflow import NodeType, Inputs, Outputs, Rules, Pipeline
 from necroflow.dag import resolve_paths
