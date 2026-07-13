@@ -31,6 +31,7 @@ dev = [
     "twine",
     "pytest",
     "pytest-cov",
+    "networkx",
 ]
 
 

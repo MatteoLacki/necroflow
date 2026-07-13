@@ -49,6 +49,7 @@ from necroflow.dag import (
     resolve_paths,
 )
 from necroflow.pipeline import _sinks
+from necroflow.graphviz_render import render_png
 from necroflow.executor import (
     _apply_shell_execution_context,
     _normalize_shellpath,
@@ -561,6 +562,10 @@ def _graph(args) -> None:
         _emit_json(_graph_payload(dag, combos, nodes_dir=nodes_dir))
         return
     dag.resolve_paths(nodes_dir)
+    if args.png:
+        title = ", ".join(Path(j).stem for j in args.jobs)
+        render_png(dag, output_path=Path(args.png), title=title)
+        return
     rendered = str(dag)
     if args.output:
         Path(args.output).write_text(rendered + "\n", encoding="utf-8")
@@ -884,6 +889,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     graph_parser.add_argument(
         "--json", action="store_true", help="Write JSON to stdout"
+    )
+    graph_parser.add_argument(
+        "--png",
+        help="Render the DAG as a PNG (graphviz, clustered by dependency "
+        "depth) instead of ASCII. Requires the 'dev' extra and the system "
+        "'dot' binary.",
     )
     graph_parser.set_defaults(func=_graph)
 

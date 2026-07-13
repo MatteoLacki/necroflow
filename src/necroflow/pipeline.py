@@ -57,9 +57,9 @@ def _label(node: Node) -> str:
         suffix += f":{node.output_name}" if suffix else node.output_name
     if suffix:
         parts[0] += f"[{suffix}]"
-    if node.config:
-        cfg = ", ".join(f"{k}={v!r}" for k, v in node.config.items())
-        parts.append(f"({cfg})")
+    # needs human review: config omitted from label — a single long config value
+    # (e.g. write_*_config rules embedding a full TOML file as `text=`) used to
+    # blow up box width to ~1400 chars and make the ASCII DAG unreadable.
     if node.rule and node.rule.constraints:
         res = ", ".join(f"{k}={v}" for k, v in node.rule.constraints.items())
         parts.append(f"[{res}]")

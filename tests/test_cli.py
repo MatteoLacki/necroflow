@@ -962,6 +962,46 @@ def test_graph_json_lists_nodes_and_edges(tmp_path, factory_file, capsys):
     assert payload["jobs"][0]["label"] == "job"
 
 
+@pytest.mark.skipif(shutil.which("dot") is None, reason="graphviz 'dot' not on PATH")
+def test_graph_png_renders_file(tmp_path, factory_file, capsys):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    png_path = tmp_path / "dag.png"
+
+    main(["graph", "--png", str(png_path), "--outdir", str(tmp_path / "out"), str(job)])
+
+    assert png_path.exists()
+    assert png_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_graph_png_without_networkx_fails_clearly(tmp_path, factory_file, monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "networkx":
+            raise ImportError("simulated missing networkx")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    with pytest.raises(SystemExit, match="dev' extra"):
+        main(
+            [
+                "graph",
+                "--png",
+                str(tmp_path / "dag.png"),
+                "--outdir",
+                str(tmp_path / "out"),
+                str(job),
+            ]
+        )
+
+
 def test_provenance_json_prints_metadata(tmp_path, factory_file, capsys):
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
