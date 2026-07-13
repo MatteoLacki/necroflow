@@ -1,9 +1,11 @@
 """Render a DAG as a graphviz PNG, laid out like a software architecture
-diagram: orthogonal edges, nodes clustered into bands by dependency depth.
+diagram: orthogonal edges, nodes clustered by author-declared pipeline section when
+available, otherwise into bands by dependency depth.
 
 Optional feature — requires the 'dev' extra (`pip install necroflow[dev]`)
 for networkx, and the system `dot` binary (graphviz) on PATH.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -15,12 +17,18 @@ def _dot_id(nid: str) -> str:
     return '"' + nid.replace('"', '\\"') + '"'
 
 
+def _dot_text(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _group_key(node_key: str) -> str:
     """Co-outputs of one rule call share 'rule/fingerprint/' — group on that."""
     return node_key.rsplit("/", 1)[0]
 
 
-def render_png(dag, *, output_path: Path, title: str | None = None, dpi: int = 170) -> None:
+def render_png(
+    dag, *, output_path: Path, title: str | None = None, dpi: int = 170
+) -> None:
     """Render `dag` (a necroflow DAG, after resolve_paths) to a PNG at output_path.
 
     Raises SystemExit with an actionable message if networkx isn't installed
@@ -52,6 +60,7 @@ def render_png(dag, *, output_path: Path, title: str | None = None, dpi: int = 1
                 "threads": 1,
                 "requested": False,
                 "outputs": [],
+                "sections": set(),
             }
             order.append(gid)
         g = groups[gid]
@@ -59,6 +68,7 @@ def render_png(dag, *, output_path: Path, title: str | None = None, dpi: int = 1
         threads = dict(getattr(node.rule, "constraints", {}) or {}).get("threads", 1)
         g["threads"] = max(g["threads"], threads)
         g["outputs"].append(node.output_name or "")
+        g["sections"].add(dag.section_for(node))
 
     edges: set[tuple[str, str]] = set()
     for node in dag.nodes:
@@ -89,20 +99,40 @@ def render_png(dag, *, output_path: Path, title: str | None = None, dpi: int = 1
     lines.append('  fontname="Helvetica";')
     if title:
         stats = f"{len(order)} rules &#183; {len(edges)} edges"
-        lines.append(f'  label=<<b>{title}</b><br/><font point-size="11" color="#66707c">{stats}</font>>;')
+        lines.append(
+            f'  label=<<b>{title}</b><br/><font point-size="11" color="#66707c">{stats}</font>>;'
+        )
         lines.append("  labelloc=t;")
         lines.append("  fontsize=18;")
     lines.append('  node [fontname="Helvetica", fontsize=11];')
     lines.append('  edge [color="#9aa4b2", arrowsize=0.75, penwidth=1.1];')
     lines.append("")
 
-    by_depth: dict[int, list[str]] = {}
-    for gid, d in depth.items():
-        by_depth.setdefault(d, []).append(gid)
+    use_sections = all(
+        len(g["sections"]) == 1 and None not in g["sections"] for g in groups.values()
+    )
+    if use_sections:
+        by_section: dict[str, list[str]] = {}
+        for gid in order:
+            section = next(iter(groups[gid]["sections"]))
+            by_section.setdefault(section, []).append(gid)
+        layout_groups = list(by_section.items())
+    else:
+        by_depth: dict[int, list[str]] = {}
+        for gid, d in depth.items():
+            by_depth.setdefault(d, []).append(gid)
+        layout_groups = [(None, by_depth[d]) for d in sorted(by_depth)]
 
-    for d in sorted(by_depth):
-        lines.append("  { rank=same;")
-        for gid in by_depth[d]:
+    for index, (section, gids) in enumerate(layout_groups):
+        if section is None:
+            lines.append("  { rank=same;")
+        else:
+            lines.append(f"  subgraph cluster_section_{index} {{")
+            lines.append(f'    label="{_dot_text(section)}";')
+            lines.append('    style="rounded";')
+            lines.append('    color="#c3cad2";')
+            lines.append("    margin=12;")
+        for gid in gids:
             g = groups[gid]
             is_source = G.in_degree(gid) == 0
             label_lines = [g["rule"]] + [o for o in g["outputs"] if o]
@@ -110,7 +140,12 @@ def render_png(dag, *, output_path: Path, title: str | None = None, dpi: int = 1
                 label_lines.append(f"threads={g['threads']}")
             label = "\\n".join(label_lines)
             if g["requested"]:
-                shape, style, color, penwidth = "box", "rounded,filled,bold", "#c33d2c", 2.4
+                shape, style, color, penwidth = (
+                    "box",
+                    "rounded,filled,bold",
+                    "#c33d2c",
+                    2.4,
+                )
                 fill = "#fff3ef"
             elif is_source:
                 shape, style, color, penwidth = "cylinder", "filled", "#5b6672", 1.3

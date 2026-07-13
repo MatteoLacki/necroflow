@@ -237,6 +237,30 @@ class Pipeline(_GraphBase):
     def __init__(self):
         self._nodes_list = []
         self._node_names = {}
+        self._sections = []
+        self._active_section = None
+        self._section_by_node_id = {}
+
+    def section(self, name: str) -> None:
+        """Start a named presentation section for subsequently assigned nodes."""
+        if not isinstance(name, str):
+            raise TypeError("section name must be a string")
+        name = name.strip()
+        if not name:
+            raise ValueError("section name must not be empty")
+        if name in self._sections:
+            raise ValueError(f"pipeline section {name!r} already exists")
+        self._sections.append(name)
+        self._active_section = name
+
+    @property
+    def sections(self) -> tuple[str, ...]:
+        """Declared presentation sections, in author-defined order."""
+        return tuple(self._sections)
+
+    def section_for(self, node: Node) -> str | None:
+        """Return this pipeline section for node, if assigned."""
+        return self._section_by_node_id.get(id(node))
 
     @property
     def nodes(self) -> list:
@@ -253,6 +277,7 @@ class Pipeline(_GraphBase):
         if isinstance(value, Node):
             self._nodes_list.append(value)
             self._node_names[name] = value
+            self._section_by_node_id[id(value)] = self._active_section
             value.pipeline_label = name
         object.__setattr__(self, name, value)
 
@@ -270,6 +295,8 @@ class DAG(_GraphBase):
         self._nodes: dict[str, object] = {}  # key -> canonical Node
         self._all_nodes: list = []  # all nodes including duplicates
         self._required: set[str] = set()
+        self._sections_by_key: dict[str, set[str | None]] = {}
+        self._section_by_node_id: dict[int, str | None] = {}
         self.outdir = Path(outdir) if outdir is not None else Path.cwd()
         self.last_execution_report = None
 
@@ -280,6 +307,9 @@ class DAG(_GraphBase):
         for node in pipeline.nodes:
             self._nodes.setdefault(node.key, node)
             self._all_nodes.append(node)
+            section = pipeline.section_for(node)
+            self._section_by_node_id[id(node)] = section
+            self._sections_by_key.setdefault(node.key, set()).add(section)
         for node in request:
             self._required.add(node.key)
 
@@ -289,8 +319,12 @@ class DAG(_GraphBase):
             self.required_nodes if required_nodes is None else required_nodes
         )
         self._nodes = {}
+        self._sections_by_key = {}
         for node in self._all_nodes:
             self._nodes.setdefault(node.key, node)
+            self._sections_by_key.setdefault(node.key, set()).add(
+                self._section_by_node_id.get(id(node))
+            )
         self._required = {node.key for node in required_nodes}
 
     @property
@@ -300,6 +334,13 @@ class DAG(_GraphBase):
     @property
     def required_nodes(self) -> list:
         return [n for h, n in self._nodes.items() if h in self._required]
+
+    def section_for(self, node: Node) -> str | None:
+        """Return the node section when all contributing pipelines agree."""
+        sections = self._sections_by_key.get(node.key, set())
+        if len(sections) == 1:
+            return next(iter(sections))
+        return None
 
     def resolve_paths(self, outdir) -> None:
         _resolve_paths(self._all_nodes, outdir)

@@ -8,9 +8,9 @@ import pytest
 
 from necroflow._compat import ExceptionGroup
 from pathlib import Path
-from necroflow import NodeType, Inputs, Outputs, Rules, Pipeline
+from necroflow import NodeType, Inputs, Outputs, Rules, Pipeline, DAG
 from necroflow.dag import resolve_paths
-from necroflow.cli import _create_link_outputs, main
+from necroflow.cli import _create_link_outputs, _graph_payload, main
 from necroflow.pipeline import _sinks
 
 
@@ -962,8 +962,26 @@ def test_graph_json_lists_nodes_and_edges(tmp_path, factory_file, capsys):
     assert payload["jobs"][0]["label"] == "job"
 
 
+def test_graph_json_includes_pipeline_sections(tmp_path):
+    P = Pipeline()
+    P.section("Preparation")
+    P.out = R.step1(v="hello")
+    P.section("Analysis")
+    P.log = R.step2(P.out)
+    dag = DAG()
+    dag.add(P)
+
+    payload = _graph_payload(dag, [("job", P, [P.log])], nodes_dir=tmp_path)
+
+    assert {node["label"]: node["section"] for node in payload["nodes"]} == {
+        "out": "Preparation",
+        "log": "Analysis",
+    }
+
+
 @pytest.mark.skipif(shutil.which("dot") is None, reason="graphviz 'dot' not on PATH")
 def test_graph_png_renders_file(tmp_path, factory_file, capsys):
+    pytest.importorskip("networkx")
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
     png_path = tmp_path / "dag.png"

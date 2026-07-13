@@ -20,6 +20,7 @@ necroflow
 │   ├── Pipeline
 │   │   ├── attribute-based node registration
 │   │   ├── pipeline labels for manifests and requests
+│   │   ├── author-declared presentation sections via P.section(...)
 │   │   └── conditional Python pipeline construction
 │   └── DAG
 │       ├── multi-pipeline aggregation
@@ -83,7 +84,8 @@ necroflow
 │   ├── init subcommand
 │   │   └── canonical starter workflow scaffold
 │   ├── graph subcommand
-│   │   └── --json machine-readable graph
+│   │   ├── --json machine-readable graph with section metadata
+│   │   └── --png Graphviz rendering grouped by sections when unambiguous
 │   ├── outputs subcommand
 │   │   └── --json requested output paths
 │   ├── provenance subcommand

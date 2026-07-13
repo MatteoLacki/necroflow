@@ -20,7 +20,7 @@ See [COMPARISON.md](COMPARISON.md) for a detailed comparison with Snakemake, Nex
 ## Core ideas
 
 - **Rules** describe how to produce outputs from inputs — shell command templates with typed I/O.
-- **Pipelines** wire rule calls together for a single config.
+- **Pipelines** wire rule calls together for a single config and can mark author-declared presentation sections for graph inspection.
 - **DAG** runs many pipelines at once, deduplicating shared upstream work across samples automatically.
 - **Paths** are derived from a content-addressed hash of the full input chain — same inputs always produce the same path, different inputs produce different paths. The filesystem is the cache.
 
@@ -35,6 +35,18 @@ source .venv/bin/activate
 ## Platform support
 
 necroflow supports POSIX systems (Linux and macOS). We do not offer native Windows support because POSIX commands are the reproducible execution target for workflows. On Windows, use [Windows Subsystem for Linux (WSL)](https://learn.microsoft.com/windows/wsl/) to run necroflow in a POSIX environment.
+
+## Pipeline sections
+
+Use `P.section(name)` in a long factory to label the stage for subsequent node assignments. Sections are presentation metadata: they appear in graph JSON and group `necroflow graph --png` output when unambiguous, but do not affect execution, cache identity, or provenance.
+
+```python
+P = Pipeline()
+P.section("Read alignment")
+P.bam = R.align(P.fastq, ref=config.ref)
+P.section("Quantification")
+P.counts = R.count(P.bam, gene_model=config.gene_model)
+```
 
 ## Define a pipeline
 

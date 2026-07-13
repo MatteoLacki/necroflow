@@ -68,7 +68,10 @@ Render a DAG without running jobs:
 necroflow graph job.toml
 necroflow graph --output graph.txt job.toml
 necroflow graph --json job.toml
+necroflow graph --png graph.png job.toml
 ```
+
+`--png` requires the `dev` extra and Graphviz `dot`. When every displayed rule call has one unambiguous `P.section(...)` label, the PNG uses labelled section clusters; otherwise it groups nodes by dependency depth.
 
 List requested output paths without running jobs:
 

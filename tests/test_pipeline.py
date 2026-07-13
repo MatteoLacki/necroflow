@@ -131,6 +131,82 @@ def test_workdir_is_reserved_input_output_name():
         )
 
 
+def test_pipeline_sections_tag_subsequent_nodes_only():
+    P = Pipeline()
+    P.a = R.make_a(x="x")
+    P.section("Preparation")
+    P.b = R.make_b(P.a)
+    P.section("Analysis")
+    P.c = R.make_c(P.a)
+
+    assert P.sections == ("Preparation", "Analysis")
+    assert P.section_for(P.a) is None
+    assert P.section_for(P.b) == "Preparation"
+    assert P.section_for(P.c) == "Analysis"
+
+
+def test_pipeline_section_rejects_invalid_or_duplicate_names():
+    P = Pipeline()
+    with pytest.raises(TypeError, match="must be a string"):
+        P.section(1)
+    with pytest.raises(ValueError, match="must not be empty"):
+        P.section("  ")
+    P.section("Preparation")
+    with pytest.raises(ValueError, match="already exists"):
+        P.section("Preparation")
+
+
+def test_png_renderer_clusters_unambiguous_pipeline_sections(tmp_path, monkeypatch):
+    import sys
+    from necroflow import graphviz_render
+
+    class FakeGraph:
+        def __init__(self):
+            self.nodes = []
+            self.edges = []
+
+        def add_nodes_from(self, nodes):
+            self.nodes.extend(nodes)
+
+        def add_edges_from(self, edges):
+            self.edges.extend(edges)
+
+        def in_degree(self, node):
+            return sum(target == node for _source, target in self.edges)
+
+    class FakeNetworkX:
+        DiGraph = FakeGraph
+
+        def is_directed_acyclic_graph(graph):
+            return True
+
+        def topological_generations(graph):
+            yield graph.nodes
+
+    P = Pipeline()
+    P.section("Preparation")
+    P.a = R.make_a(x="x")
+    P.section("Analysis")
+    P.b = R.make_b(P.a)
+    dag = DAG()
+    dag.add(P)
+
+    captured = {}
+    monkeypatch.setitem(sys.modules, "networkx", FakeNetworkX)
+    monkeypatch.setattr(graphviz_render.shutil, "which", lambda _name: "dot")
+    monkeypatch.setattr(
+        graphviz_render.subprocess,
+        "run",
+        lambda _args, **kwargs: captured.setdefault("dot", kwargs["input"]),
+    )
+
+    graphviz_render.render_png(dag, output_path=tmp_path / "dag.png")
+
+    assert "subgraph cluster_section_0" in captured["dot"]
+    assert 'label="Preparation";' in captured["dot"]
+    assert 'label="Analysis";' in captured["dot"]
+
+
 # ── DAG deduplication ─────────────────────────────────────────────────────────
 
 
@@ -148,6 +224,22 @@ def test_dag_deduplicates_shared_nodes():
     dag.add(P2)
     # same config → same hash → 2 unique nodes, not 4
     assert len(dag.nodes) == 2
+
+
+def test_dag_section_is_none_when_shared_nodes_have_conflicting_sections():
+    P1 = Pipeline()
+    P1.section("Preparation")
+    P1.a = R.make_a(x="shared")
+
+    P2 = Pipeline()
+    P2.section("Alternative preparation")
+    P2.a = R.make_a(x="shared")
+
+    dag = DAG()
+    dag.add(P1)
+    dag.add(P2)
+
+    assert dag.section_for(dag.nodes[0]) is None
 
 
 def test_dag_keeps_distinct_nodes():

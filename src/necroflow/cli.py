@@ -310,6 +310,7 @@ def _graph_payload(dag, combos, *, nodes_dir: Path) -> dict:
         "nodes": [
             {
                 **_node_json(node, nodes_dir=nodes_dir),
+                "section": dag.section_for(node),
                 "requested": node.key in requested,
             }
             for node in dag.nodes
@@ -892,8 +893,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     graph_parser.add_argument(
         "--png",
-        help="Render the DAG as a PNG (graphviz, clustered by dependency "
-        "depth) instead of ASCII. Requires the 'dev' extra and the system "
+        help="Render the DAG as a PNG (graphviz, grouped by declared sections when "
+        "unambiguous, otherwise dependency depth) instead of ASCII. Requires the "
+        "'dev' extra and the system "
         "'dot' binary.",
     )
     graph_parser.set_defaults(func=_graph)

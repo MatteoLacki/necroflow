@@ -30,6 +30,22 @@ for i, step in enumerate(steps):
 
 The idiomatic pattern for multi-sample or multi-condition work is separate `Pipeline` objects added to a shared `DAG` — one pipeline per config, one `dag.add(P)` call per pipeline.
 
+## Pipeline sections
+
+Use `P.section(name)` to mark the author-defined stage for all later node assignments:
+
+```python
+def my_pipeline(config, R):
+    P = Pipeline()
+    P.section("Read alignment")
+    P.bam = R.align(path=config.path, ref=config.ref)
+    P.section("Quantification")
+    P.counts = R.count_reads(P.bam)
+    return P
+```
+
+A section is presentation metadata, not computational input: it does not change node fingerprints, paths, cache hits, execution, or provenance. `necroflow graph --json` includes the section for each unambiguous node, and `necroflow graph --png` uses section clusters only when every displayed rule call has one unambiguous section. A shared node assigned to conflicting sections across pipelines falls back to the ordinary dependency-depth layout.
+
 ## Inspecting a pipeline
 
 From the command line, render the requested job DAG without executing it:
