@@ -101,11 +101,7 @@ def render_png(dag, *, output_path: Path, title: str | None = None, dpi: int = 1
         by_depth.setdefault(d, []).append(gid)
 
     for d in sorted(by_depth):
-        lines.append(f"  subgraph cluster_depth_{d} {{")
-        lines.append(f'    label=<<font color="#8b96a5" point-size="10">depth {d}</font>>;')
-        lines.append('    style="dashed,rounded";')
-        lines.append('    color="#c3cad2";')
-        lines.append("    margin=12;")
+        lines.append("  { rank=same;")
         for gid in by_depth[d]:
             g = groups[gid]
             is_source = G.in_degree(gid) == 0
