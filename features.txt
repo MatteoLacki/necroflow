@@ -59,9 +59,11 @@ necroflow
 │   │   ├── ram/custom resource caps
 │   │   └── SI/binary resource parsing
 │   ├── scheduler protocol
+│   │   └── ready nodes, remaining nodes, and available capped resources
 │   ├── connected-component scheduler
 │   ├── FIFO scheduler
 │   ├── custom schedulers
+│   │   └── Python callables can implement resource-aware ordering policies
 │   ├── dry-run mode
 │   ├── keep-going failure mode
 │   ├── failed/interrupted state tracking
@@ -79,6 +81,10 @@ necroflow
 │       └── intermediate cleanup
 │
 ├── CLI
+│   ├── --scheduler selector
+│   │   ├── connected-components default
+│   │   ├── fifo
+│   │   └── local Python callable
 │   ├── legacy/default run form: necroflow job.toml
 │   ├── explicit run subcommand
 │   ├── init subcommand

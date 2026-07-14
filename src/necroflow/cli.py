@@ -37,7 +37,7 @@ from typing import Callable
 import tomlkit
 
 from necroflow._compat import ExceptionGroup
-from necroflow import DAG
+from necroflow import DAG, connected_component_scheduler, fifo_scheduler
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import (
     NodeState,
@@ -73,6 +73,22 @@ def _load_validators(specs: list[str]) -> list[Callable]:
         except Exception as exc:
             raise SystemExit(f"error: {exc}") from exc
     return validators
+
+
+def _load_scheduler(spec: str) -> Callable:
+    builtins = {
+        "connected-components": connected_component_scheduler,
+        "fifo": fifo_scheduler,
+    }
+    if spec in builtins:
+        return builtins[spec]
+    try:
+        return load_callable(spec, kind="scheduler")
+    except Exception as exc:
+        raise SystemExit(
+            "error: --scheduler must be connected-components, fifo, or "
+            f"path.py:function; got {spec!r}: {exc}"
+        ) from exc
 
 
 def _validate_job_config(
@@ -538,6 +554,7 @@ def _run(args) -> None:
     try:
         report = dag.execute(
             resource_caps=_parse_resource_caps(args),
+            scheduler=_load_scheduler(args.scheduler),
             keep_going=args.keep_going,
             autoclean=args.autoclean,
             dry_run=args.dry_run,
@@ -941,6 +958,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="Run job TOML files")
     _add_run_options(run_parser)
+    run_parser.add_argument(
+        "--scheduler",
+        default="connected-components",
+        metavar="NAME|PATH.py:FUNCTION",
+        help="Scheduling policy: connected-components (default), fifo, or a local Python callable.",
+    )
     run_parser.set_defaults(func=_run)
     return parser
 

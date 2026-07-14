@@ -3,14 +3,17 @@ from __future__ import annotations
 from typing import Callable
 
 # Scheduler protocol:
-#   scheduler(ready, remaining) -> list[Node]
+#   scheduler(ready, remaining, available_resources) -> list[Node]
 # ready     -- nodes whose parents are all done, not yet running
 # remaining -- all not-yet-done, not-yet-running nodes (superset of ready)
+# available_resources -- remaining capacity for capped resources
 # Returns ready nodes in priority order; executor submits from the front.
-Scheduler = Callable[["list", "list"], "list"]
+Scheduler = Callable[["list", "list", "dict[str, int]"], "list"]
 
 
-def fifo_scheduler(ready: list, remaining: list) -> list:
+def fifo_scheduler(
+    ready: list, remaining: list, available_resources: dict[str, int]
+) -> list:
     """Submit ready nodes in topological (registration) order."""
     return ready
 
@@ -105,7 +108,9 @@ class ConnectedComponentScheduler:
                 for k in sub:
                     self._component_of[k] = new_cid
 
-    def __call__(self, ready: list, remaining: list) -> list:
+    def __call__(
+        self, ready: list, remaining: list, available_resources: dict[str, int]
+    ) -> list:
         if self._adj is None or (not self._component_of and remaining):
             self._build(remaining)
             self._prev_keys = {n.key for n in remaining}

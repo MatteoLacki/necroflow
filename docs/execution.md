@@ -49,6 +49,7 @@ necroflow --shellpath /bin/bash job.toml
 An explicit `shellpath` is included in fingerprints for string commands and recorded in provenance. List-form commands and built-in materializers do not use a shell and are not affected.
 
 By default the scheduler prioritises nodes from the **smallest connected component** of remaining work — this tends to finish whole samples before starting new ones, keeping memory pressure low.
+The CLI accepts `--scheduler connected-components` (default), `--scheduler fifo`, or a local Python callable such as `--scheduler schedulers.py:my_scheduler`.
 
 ```python
 from necroflow import fifo_scheduler
@@ -59,7 +60,8 @@ dag.execute(resource_caps={"threads": 16}, scheduler=fifo_scheduler)  # topologi
 Custom schedulers:
 
 ```python
-def my_scheduler(ready, remaining):
+def my_scheduler(ready, remaining, available_resources):
+    # Contains remaining capped capacity, e.g. {"threads": 12}.
     return sorted(ready, key=lambda n: n.rule.constraints.get("threads", 1), reverse=True)
 
 dag.execute(scheduler=my_scheduler)

@@ -586,7 +586,11 @@ def execute(
 
                     ready = [n for n in active if n.state == NodeState.READY]
                     remaining = [n for n in active if n.state in needs_run]
-                    for node in scheduler(ready, remaining):
+                    available_resources = {
+                        resource: cap - running_resources.get(resource, 0)
+                        for resource, cap in caps.items()
+                    }
+                    for node in scheduler(ready, remaining, available_resources):
                         # skip co-outputs whose sibling is already running
                         coouts = [
                             c

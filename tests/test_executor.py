@@ -419,10 +419,23 @@ def test_connected_component_scheduler(tmp_path):
     assert P.b.path.exists()
 
 
+def test_scheduler_receives_available_resources(tmp_path):
+    seen = []
+
+    def recording_scheduler(ready, remaining, available_resources):
+        seen.append(dict(available_resources))
+        return ready
+
+    P = Pipeline()
+    P.a = R.make_a(x="x")
+    execute(P, tmp_path, scheduler=recording_scheduler, resource_caps={"threads": 3})
+    assert seen == [{"threads": 3}]
+
+
 def test_custom_scheduler_invoked(tmp_path):
     calls = []
 
-    def recording_scheduler(ready, remaining):
+    def recording_scheduler(ready, remaining, available_resources):
         calls.append(len(ready))
         return ready
 
@@ -457,8 +470,8 @@ def _recording(sched):
     first node returned per scheduler call (= submission order with threads=1)."""
     started = []
 
-    def fn(ready, remaining):
-        result = sched(ready, remaining)
+    def fn(ready, remaining, available_resources):
+        result = sched(ready, remaining, available_resources)
         if result:
             started.append(result[0].rule.__name__)
         return result

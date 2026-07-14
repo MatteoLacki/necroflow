@@ -209,6 +209,7 @@ text = '{\n  "mode": "uppercase"\n}\n'
 - [Rules and typed outputs](docs/rules.md)
 - [Generated config files](docs/generated-config-files.md)
 - [Execution, scheduling, and cleanup](docs/execution.md)
+- [Manuscript argument conspect](docs/paper-arguments.md)
 - [Release checklist](docs/release.md)
 - [Development](docs/development.md)
 

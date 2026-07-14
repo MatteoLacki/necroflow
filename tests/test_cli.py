@@ -496,6 +496,49 @@ def test_main_runs_pipeline_with_default_nodes_and_results_dirs(
     assert (tmp_path / "results" / "job" / "b" / "b.txt").is_symlink()
 
 
+def test_main_accepts_fifo_scheduler(tmp_path, job_toml):
+    outdir = tmp_path / "out"
+
+    main(["--outdir", str(outdir), "--scheduler", "fifo", str(job_toml)])
+
+    assert _real_output(outdir, "b.txt").exists()
+
+
+def test_main_loads_custom_scheduler(tmp_path, job_toml):
+    scheduler = tmp_path / "schedulers.py"
+    scheduler.write_text(
+        "def choose(ready, remaining, available_resources):\n"
+        '    assert available_resources["threads"] >= 0\n'
+        "    return ready\n"
+    )
+    outdir = tmp_path / "out"
+
+    main(
+        [
+            "--outdir",
+            str(outdir),
+            "--scheduler",
+            f"{scheduler}:choose",
+            str(job_toml),
+        ]
+    )
+
+    assert _real_output(outdir, "b.txt").exists()
+
+
+def test_main_rejects_unknown_scheduler(tmp_path, job_toml):
+    with pytest.raises(SystemExit, match="--scheduler must be"):
+        main(
+            [
+                "--outdir",
+                str(tmp_path / "out"),
+                "--scheduler",
+                "unknown",
+                str(job_toml),
+            ]
+        )
+
+
 def test_main_runs_pipeline_with_split_nodes_and_results_dirs(tmp_path, factory_file):
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
