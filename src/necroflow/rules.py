@@ -395,6 +395,34 @@ class Rules:
             materializer=materializer,
         )
 
+    def symlink_file(
+        self,
+        name: str,
+        output: type,
+        *,
+        path_arg: str = "path",
+        output_name: str | None = None,
+    ) -> None:
+        """Register a built-in rule that symlinks an external path into the output tree.
+
+        Unlike a bare path passed as a config value, the symlinked node's stat follows
+        through to the real file, so the existing mtime/hash STALE machinery detects
+        upstream edits and reruns downstream consumers automatically — no
+        NodeType.invalidator needed. See docs/caching.md#external-dataset-ingestion.
+        """
+        if path_arg in BUILTIN_COMMAND_PLACEHOLDERS:
+            raise ValueError(f"symlink_file path_arg {path_arg!r} is reserved")
+        if not _is_nodetype(output):
+            raise TypeError(f"symlink_file output must be a NodeType, got {output!r}")
+        oname = output_name or _pascal_to_snake(output.__name__)
+        self.register(
+            name,
+            Inputs(**{path_arg: str}),
+            Outputs(**{oname: output}),
+            f"ln -s $(realpath {{{path_arg}}}) {{{oname}}}",
+            info=f"Symlink an external file into {output.__name__}.",
+        )
+
     def command(self, cmd: str | list[str], **constraints):
         """Decorator to register a rule, with the command as the decorator argument.
 

@@ -869,6 +869,105 @@ def test_text_file_custom_input_name(tmp_path):
     assert P.config.path.read_text() == "custom\n"
 
 
+# -- built-in symlink ingestion rule ------------------------------------------
+
+
+def test_symlink_file_rule_links_to_source_content(tmp_path):
+    class RawData(NodeType):
+        filename = "raw.txt"
+
+    source = tmp_path / "source.txt"
+    source.write_text("hello\n")
+
+    r = Rules()
+    r.symlink_file("ingest_raw", RawData)
+    P = Pipeline()
+    P.raw = r.ingest_raw(path=str(source))
+
+    execute(P, tmp_path / "out")
+
+    assert P.raw.path.is_symlink()
+    assert P.raw.path.read_text() == "hello\n"
+
+
+def test_symlink_file_change_reruns_downstream_consumer(tmp_path):
+    """Editing the source file behind a symlink_file node must rerun its children.
+
+    A bare path config value is fingerprinted as text and never revisited, so
+    dataset edits go unnoticed. symlink_file exists specifically to make the
+    normal mtime-fast-path -> content-hash STALE machinery pick up the edit
+    through the symlink, without needing a NodeType.invalidator.
+    """
+    import time
+
+    class RawData(NodeType):
+        filename = "raw.txt"
+
+    class Copied(NodeType):
+        filename = "copied.txt"
+
+    source = tmp_path / "source.txt"
+    source.write_text("v1\n")
+
+    r = Rules()
+    r.symlink_file("ingest_raw", RawData)
+    r.register(
+        "copy_raw", Inputs(raw=RawData), Outputs(copied=Copied), "cp {raw} {copied}"
+    )
+
+    def build():
+        P = Pipeline()
+        P.raw = r.ingest_raw(path=str(source))
+        P.copied = r.copy_raw(P.raw)
+        return P
+
+    outdir = tmp_path / "out"
+    P1 = build()
+    execute(P1, outdir)
+    assert P1.copied.path.read_text() == "v1\n"
+
+    time.sleep(0.05)
+    source.write_text("v2\n")
+
+    P2 = build()
+    execute(P2, outdir)
+
+    assert P2.copied.path.read_text() == "v2\n"
+    assert P2.copied.path == P1.copied.path  # in-place overwrite, not a new dir
+
+
+def test_symlink_file_custom_path_arg(tmp_path):
+    class RawData(NodeType):
+        filename = "raw.txt"
+
+    source = tmp_path / "source.txt"
+    source.write_text("hi\n")
+
+    r = Rules()
+    r.symlink_file("ingest_raw", RawData, path_arg="dataset_path")
+    P = Pipeline()
+    P.raw = r.ingest_raw(dataset_path=str(source))
+
+    execute(P, tmp_path / "out")
+
+    assert P.raw.path.read_text() == "hi\n"
+
+
+def test_symlink_file_rejects_reserved_path_arg():
+    class RawData(NodeType):
+        filename = "raw.txt"
+
+    r = Rules()
+    with pytest.raises(ValueError, match="reserved"):
+        r.symlink_file("ingest_raw", RawData, path_arg="workdir")
+
+
+def test_symlink_file_rejects_non_nodetype_output():
+    r = Rules()
+    with pytest.raises(TypeError, match="must be a NodeType"):
+        r.symlink_file("ingest_raw", str)
+
+
 def test_execute_returns_report_and_writes_run_stats_with_output_size(tmp_path):
     P = Pipeline()
     P.a = R.make_a_from_workdir(x="abc")

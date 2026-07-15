@@ -85,6 +85,57 @@ Invalidators are evaluated during the initial node classification at the start o
   - `job.log` — captured stdout/stderr.
   - `state` — last recorded run state (`running` / `up_to_date` / `failed` / `interrupted`). If a process is killed mid-run the `state` file is left as `running`; on the next invocation necroflow detects this and re-runs the node even if its output exists on disk.
 
+### External dataset ingestion
+
+A path passed as a bare string config value (e.g. `R.align(fastq="/data/sample.fastq")`)
+is fingerprinted as *text* — necroflow hashes the path string, never the file's
+bytes. Editing that file in place changes nothing necroflow can see: the
+downstream node stays `UP_TO_DATE` forever. This applies with no ingestion
+node at all; there is nothing to compare against.
+
+The fix is to ingest the file through its own rule, symlinking it in. Use the
+built-in `Rules.symlink_file` registrar instead of hand-writing the same
+`ln -s` command for every dataset type:
+
+```python
+R.symlink_file("raw_spectra", Mzml)
+# equivalent to:
+#   @R.command("ln -s $(realpath {path}) {spectra}")
+#   def raw_spectra(path: str):
+#       return Mzml[spectra]
+
+P.spectra = R.raw_spectra(path=config["spectra"])
+```
+
+`$(realpath ...)` resolves to an absolute path so the symlink survives if the
+working directory changes; see `examples/sage_recal/pipeline.py` for a
+runnable version. Once the file is behind a symlinked node, the normal
+mtime-fast-path / content-hash mechanism described above applies automatically:
+`Path.stat()` follows the symlink to the real file, so editing it bumps the
+mtime necroflow sees, the fast path fails, the content hash is recomputed and
+found to differ from the value stored in `.rip/{filename}.hash`, and every
+downstream consumer is correctly marked `STALE` and reruns. No
+`NodeType.invalidator` is needed for this case — the existing STALE machinery
+already covers it once the file is a real node in the DAG.
+
+This is still **in-place overwrite**, not content-addressed versioning: the
+ingestion node's `node.key` is fixed by the path string, not by file content,
+so a rerun always lands in the same directory, overwriting the previous
+result. There is no side-by-side history of dataset versions. If that is
+needed, the caller has to bake a distinguishing token (a version tag, a date,
+a checksum) into the rule's own config themselves — necroflow does not derive
+one from file content automatically.
+
+Do not ingest with a plain copy (`cp {path} {output}`) expecting the same
+detection: copying freezes the content at that moment, and nothing ever
+revisits the original path again, so a later edit to the source file goes
+unnoticed. Use `ln -s`, not `cp`, when the goal is to detect upstream changes.
+(A `cp` import is still the right choice for the *config-file* case in
+[Generated Config Files](generated-config-files.md#external-config-files),
+where the accompanying `NodeType.invalidator` explicitly re-reads the original
+path on every classification — that pattern doesn't rely on the symlink/mtime
+trick at all.)
+
 ## Concurrency
 
 **Only one necroflow instance may run against a given node store at a time.** `execute()` acquires an exclusive lock on `nodes/.rip/necroflow.lock` (via `fcntl.flock`) at startup and releases it on exit. A second instance targeting the same node store will fail immediately with a clear error. Running two instances against *overlapping* node stores (e.g. `nodes` and `nodes/sub`) is unsupported — there is no OS primitive to detect this, so avoid it.

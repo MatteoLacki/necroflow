@@ -177,6 +177,8 @@ def validate(config):
 A rule with multiple declared outputs runs its command **once**; all co-outputs are marked complete when the command finishes:
 
 ```python
+R.symlink_file("raw_fastq", Fastq)  # see docs/caching.md#external-dataset-ingestion
+
 @r.command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
 def align(fastq: Fastq, ref: str):
     """Align reads with BWA-MEM, capturing the log."""
