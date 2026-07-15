@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Necroflow: a Python-native typed workflow framework with lineage-addressed caching for bioinformatics pipelines"
+type: software
+authors:
+  - given-names: "Mateusz Krzysztof"
+    family-names: "Łącki"
+    orcid: "https://orcid.org/0000-0001-7415-4748"
+  - given-names: "David"
+    family-names: "Teschner"
+  - given-names: "Andreas"
+    family-names: "Hildebrandt"
+    orcid: "https://orcid.org/0000-0003-2180-6516"
+  - given-names: "Michał"
+    family-names: "Startek"
+  - given-names: "Stefan"
+    family-names: "Tenzer"
+version: "0.0.3"
+date-released: "2026-07-15"
+license: MIT
+repository-code: "https://github.com/MatteoLacki/necroflow"
+# doi: 10.5281/zenodo.XXXXXXX   # concept DOI — uncomment and fill after first Zenodo publish
