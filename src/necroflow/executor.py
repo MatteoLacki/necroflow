@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import fcntl
+import inspect
 import os
 import shutil
 import subprocess
@@ -489,6 +490,28 @@ def _on_job_done(
     return n_cleaned
 
 
+def _validate_scheduler(scheduler: Scheduler) -> None:
+    """Reject callables that cannot be called with the 3-argument protocol.
+
+    The scheduler protocol is scheduler(ready, remaining, available_resources).
+    A legacy 2-argument scheduler would otherwise fail deep inside the run loop
+    after the lock is taken and nodes are classified; failing here names the
+    expected protocol up front.
+    """
+    try:
+        signature = inspect.signature(scheduler)
+    except (TypeError, ValueError):
+        return
+    try:
+        signature.bind([], [], {})
+    except TypeError:
+        name = getattr(scheduler, "__name__", type(scheduler).__name__)
+        raise TypeError(
+            f"scheduler {name!r} does not match the scheduler protocol: "
+            "scheduler(ready, remaining, available_resources) -> list[Node]"
+        ) from None
+
+
 def execute(
     pipeline: _GraphBase,
     outdir,
@@ -520,6 +543,7 @@ def execute(
     shellpath: optional executable shell path for string commands. If omitted,
     Python's default shell=True behavior is used.
     """
+    _validate_scheduler(scheduler)
     shellpath = _normalize_shellpath(shellpath)
     if shellpath is not None and node_runner is not None:
         raise ValueError("shellpath cannot be combined with node_runner")

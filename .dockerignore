@@ -1,0 +1,8 @@
+.venv/
+.git/
+.pytest_cache/
+dist/
+build/
+**/__pycache__/
+examples/output/
+examples/sage_recal/jobs/*/outputs/

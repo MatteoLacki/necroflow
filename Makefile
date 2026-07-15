@@ -3,6 +3,11 @@ PYTHON ?= .venv/bin/python
 PYTEST ?= .venv/bin/pytest
 TWINE ?= .venv/bin/twine
 DIST_FILES = dist/*
+SAGE_RECAL_DIR = examples/sage_recal
+SAGE_VERSION ?= v0.14.7
+SAGE_SHA256 ?= e3dc6b41015cb167574f6c82525b75e946c094f30bd700271b05c051c30cbe8a
+SAGE_IMAGE = necroflow-sage-recal:$(SAGE_VERSION)
+SAGE_IMAGE_ARCHIVE = dist/necroflow-sage-recal-$(SAGE_VERSION).tar.gz
 VERSION_GOALS = release_pypi release_test_pypi bump-version tag-release
 POSITIONAL_VERSION = $(if $(filter $(VERSION_GOALS),$(MAKECMDGOALS)),$(firstword $(filter-out $(VERSION_GOALS),$(MAKECMDGOALS))))
 REQUESTED_VERSION = $(if $(VERSION),$(VERSION),$(POSITIONAL_VERSION))
@@ -10,7 +15,7 @@ CURRENT_VERSION = $(shell PYTHONPATH=src $(PYTHON) -c 'import necroflow; print(n
 RELEASE_VERSION = $(if $(REQUESTED_VERSION),$(REQUESTED_VERSION),$(CURRENT_VERSION))
 TAG ?= v$(RELEASE_VERSION)
 
-.PHONY: all venv test example clean-example clean-dist bump-version maybe-bump-version build check-dist upload_test_pypi upload_pypi release_test_pypi release_pypi tag-release
+.PHONY: all venv test example clean-example clean-dist bump-version maybe-bump-version build check-dist upload_test_pypi upload_pypi release_test_pypi release_pypi tag-release sage-image sage-image-archive
 
 all: venv
 
@@ -25,6 +30,26 @@ example:
 
 clean-example:
 	rm -rf $(EXAMPLE_OUTDIR)
+
+# Builds the examples/sage_recal Docker image, pinned to a checksum-verified Sage
+# release binary (see examples/sage_recal/Dockerfile, README.md's "Provenance" section).
+# Bumping SAGE_VERSION without also updating SAGE_SHA256 fails the build closed (the
+# checksum check in the Dockerfile won't match) rather than silently trusting an
+# unverified binary.
+sage-image:
+	docker build \
+		--build-arg SAGE_VERSION=$(SAGE_VERSION) \
+		--build-arg SAGE_SHA256=$(SAGE_SHA256) \
+		-t $(SAGE_IMAGE) \
+		$(SAGE_RECAL_DIR)
+
+# Archives the built image for Zenodo, the same way necroflowpaper/submission.mk
+# archives the source tarball (checksum alongside, ready to attach as a deposition
+# file) -- durable against the upstream GitHub release asset later disappearing.
+sage-image-archive: sage-image
+	mkdir -p dist
+	docker save $(SAGE_IMAGE) | gzip > $(SAGE_IMAGE_ARCHIVE)
+	sha256sum $(SAGE_IMAGE_ARCHIVE) > $(SAGE_IMAGE_ARCHIVE).sha256
 
 test: venv
 	$(PYTEST) -q

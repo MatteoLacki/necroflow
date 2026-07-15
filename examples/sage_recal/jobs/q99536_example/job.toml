@@ -1,0 +1,52 @@
+".pipeline" = "pipeline.py:recalibrated_sage_search"
+
+spectra_path = "jobs/q99536_example/spectra.mzml"
+fasta_path = "jobs/q99536_example/fasta.fasta"
+recal_top_k = 1
+# This bundled fixture is a single spectrum, so Sage's q-value estimation has no
+# target/decoy population to work with -- fdr=1.0 keeps the demo runnable end to end.
+# A real, multi-spectrum dataset should use a real fdr, e.g. 0.01. Also note: the second
+# (recalibrated) pass finds zero PSMs here, expected for a single-PSM calibration set --
+# see pipeline.py's example_config() docstring, and README.md's "reproduce on your own
+# data" section for a demo that shows real recalibration.
+fdr = 1.0
+
+# Same as [sage.precursor_tol]/[sage.fragment_tol] below -- this fixture's single real
+# PSM (precursor_ppm 0.82) is well within either window either way, so there's no real
+# error range a wider calibration-only tolerance would need to see. See
+# jobs/q99536_synthetic_100/job.toml for where calibration_tol actually needs to differ
+# from the production tolerance.
+[calibration_tol.precursor_tol]
+ppm = [-50, 50]
+
+[calibration_tol.fragment_tol]
+ppm = [-10, 10]
+
+[sage.database]
+bucket_size = 16384
+fragment_min_mz = 150.0
+fragment_max_mz = 1500.0
+fasta = "fasta.fasta"
+decoy_tag = "rev_"
+generate_decoys = true
+
+[sage.database.enzyme]
+missed_cleavages = 1
+cleave_at = "KR"
+restrict = "P"
+
+[sage.database.static_mods]
+C = 57.0216
+
+[sage]
+deisotope = true
+chimera = false
+max_fragment_charge = 1
+report_psms = 1
+isotope_errors = [-1, 3]
+
+[sage.precursor_tol]
+ppm = [-50, 50]
+
+[sage.fragment_tol]
+ppm = [-10, 10]

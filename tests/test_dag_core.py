@@ -306,6 +306,30 @@ def test_resolve_command_preserves_escaped_shell_braces(tmp_path):
     assert resolve_command(txt) == f"printf '%s\n' {{left,right}} hi > {txt.path}"
 
 
+def test_resolve_command_substitutes_union_typed_input(tmp_path):
+    # Regression test: resolve_command used to build its {name} substitution dict by
+    # filtering node.rule.inputs.specs with _is_nodetype(), which is a strict
+    # isclass()-and-issubclass()-NodeType check -- False for a `TypeA | TypeB` union,
+    # even though docs/rules.md documents unions as a supported "either format is
+    # fine" input contract (and rule-call-time validation already accepted them via
+    # _is_node_input_contract). A union-typed positional input's placeholder was
+    # therefore silently dropped from the substitution dict, and {name} in the
+    # command template raised a bare KeyError at execution time.
+    r = Rules()
+
+    @r.command("cat {doc} > {txt}")
+    def read_either(doc: Txt | Upper):
+        return Txt[txt]
+
+    src = R.make_txt(word="hi")
+    doc = r.read_either(src)
+
+    resolve_paths([src, doc], tmp_path)
+    cmd = resolve_command(doc)
+    assert str(src.path) in cmd
+    assert str(doc.path) in cmd
+
+
 def test_constraint_placeholder_forces_constraint_when_config_name_collides(tmp_path):
     r = Rules()
     r.register(

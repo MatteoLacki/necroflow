@@ -1,0 +1,73 @@
+".pipeline" = "pipeline.py:recalibrated_sage_search"
+
+spectra_path = "jobs/q99536_synthetic_100/spectra.mgf"
+fasta_path = "jobs/q99536_example/fasta.fasta"
+recal_top_k = 40
+# Target-decoy peptide-level q-value has a floor around 1/N (verified empirically: with
+# 20 first-pass PSMs, peptide_q floors at 0.05/5% for every single one, even correct
+# hits -- there just isn't a large enough population for the FDR estimate to resolve
+# below that, independent of the identifications' actual quality). A single ~237-residue
+# source protein caps how many distinct peptides exist to search at all (~50 candidates
+# regardless of missed-cleavage count), so recal_top_k=40 keeps the calibration pass's
+# own floor (~1/40=2.5%) below fdr=0.05. Real multi-protein datasets have thousands of
+# PSMs and no such floor -- 0.01 is the normal choice there.
+fdr = 0.05
+# spectrum_q, not the default peptide_q: Sage's peptide-level "picked" FDR needs a much
+# larger, more heterogeneous PSM population to converge (its own separate KDE fit can
+# report peptide_q=1.0 for every PSM on a small dataset, even objectively excellent
+# ones -- verified by reading Sage v0.14.7's fdr.rs/linear_discriminant.rs directly).
+# See scripts/fit_recalibration.py's docstring. Real multi-protein datasets should
+# leave this at the peptide_q default.
+recal_q_column = "spectrum_q"
+
+# See generate_synthetic_data.py: this spectra.mgf is a deterministic, in-silico
+# multi-spectrum dataset (Koina/Prosit-predicted fragments for tryptic Q99536 peptides),
+# with an injected calibration error that oscillates sinusoidally (mean +3ppm,
+# amplitude 16ppm -- so it swings from -13 to +19ppm) rather than sitting still. Both
+# extremes fall outside [sage.fragment_tol] below, so a chunk of these 90 spectra are
+# genuinely unfindable without recalibration -- see calibration_tol below and
+# pipeline.py's recalibrated_sage_search docstring for why the first pass needs its own
+# separate, wider tolerance to see that full range before fitting a correction from it.
+# Unlike jobs/q99536_example/ (Sage's own real but single-spectrum CI fixture), this has
+# enough confident PSMs for recalibrate_spectra to derive a real, non-degenerate
+# correction -- and, because the injected error genuinely exceeds [sage.fragment_tol],
+# the recalibrated second pass finds *more* real PSMs than an uncorrected search with
+# [sage.fragment_tol] ever could, not just a non-empty result.
+
+# Wide, exploratory tolerance for the calibration (first) pass only -- see
+# pipeline.py's recalibrated_sage_search docstring for why this can't just reuse
+# [sage.precursor_tol]/[sage.fragment_tol] below.
+[calibration_tol.precursor_tol]
+ppm = [-50, 50]
+
+[calibration_tol.fragment_tol]
+ppm = [-25, 25]
+
+[sage.database]
+bucket_size = 16384
+fragment_min_mz = 150.0
+fragment_max_mz = 1500.0
+fasta = "fasta.fasta"
+decoy_tag = "rev_"
+generate_decoys = true
+
+[sage.database.enzyme]
+missed_cleavages = 2
+cleave_at = "KR"
+restrict = "P"
+
+[sage.database.static_mods]
+C = 57.0216
+
+[sage]
+deisotope = true
+chimera = false
+max_fragment_charge = 3
+report_psms = 1
+isotope_errors = [-1, 3]
+
+[sage.precursor_tol]
+ppm = [-50, 50]
+
+[sage.fragment_tol]
+ppm = [-10, 10]

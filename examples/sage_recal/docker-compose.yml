@@ -1,0 +1,13 @@
+# Bind-mount pattern modeled on midiaIDorg/midia_docker: the host's jobs/ folder is
+# exposed inside the container so outputs land back on the host, owned by you (not
+# root) -- run.sh passes -u $(id -u):$(id -g) the same way midia_docker's runcpu does.
+services:
+  sage_recal:
+    build:
+      context: ../..
+      dockerfile: examples/sage_recal/Dockerfile
+    image: necroflow-sage-recal:local
+    volumes:
+      - "./jobs:/work/jobs"
+      - "/etc/passwd:/etc/passwd:ro"
+      - "/etc/group:/etc/group:ro"

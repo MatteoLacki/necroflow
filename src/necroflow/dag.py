@@ -13,10 +13,17 @@ from necroflow.nodes import (
     NodeState,
     NodeType,
     NodeTypeMeta,
-    _is_nodetype,
     _topo_sort,
 )
-from necroflow.rules import Inputs, Outputs, Constraints, Rule, Rules, parse_resource
+from necroflow.rules import (
+    Inputs,
+    Outputs,
+    Constraints,
+    Rule,
+    Rules,
+    parse_resource,
+    _is_node_input_contract,
+)
 
 
 def _filesystem_limits(path: Path) -> tuple[int | None, int | None]:
@@ -224,7 +231,9 @@ def resolve_command(node: Node) -> str | list[str] | None:
     """
     if node.command is None:
         return None
-    pos_input_names = [n for n, t in node.rule.inputs.specs.items() if _is_nodetype(t)]
+    pos_input_names = [
+        n for n, t in node.rule.inputs.specs.items() if _is_node_input_contract(t)
+    ]
     subs: dict[str, Any] = {}
     for iname, parent in zip(pos_input_names, node.parents):
         subs[iname] = parent.path

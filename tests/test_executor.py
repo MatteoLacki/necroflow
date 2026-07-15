@@ -432,6 +432,43 @@ def test_scheduler_receives_available_resources(tmp_path):
     assert seen == [{"threads": 3}]
 
 
+def test_legacy_two_argument_scheduler_rejected_up_front(tmp_path):
+    """A scheduler missing available_resources must fail fast with the protocol.
+
+    The scheduler protocol grew a third argument (available_resources). A legacy
+    2-argument callable would otherwise raise a bare TypeError mid-run, after the
+    lock is taken and nodes are classified. execute() must reject it before doing
+    any work, and the error must spell out the expected protocol so the author
+    can fix the signature without reading executor internals.
+    """
+
+    def legacy_scheduler(ready, remaining):
+        return ready
+
+    P = Pipeline()
+    P.a = R.make_a(x="x")
+    with pytest.raises(TypeError, match=r"ready, remaining, available_resources"):
+        execute(P, tmp_path, scheduler=legacy_scheduler)
+    assert not (tmp_path / "make_a").exists()
+
+
+def test_scheduler_protocol_accepts_callable_objects(tmp_path):
+    """Class-based schedulers with a 3-argument __call__ must pass validation.
+
+    Built-in connected_component_scheduler is a callable object, not a function;
+    the protocol check must inspect __call__ rather than assume a plain function.
+    """
+
+    class ObjectScheduler:
+        def __call__(self, ready, remaining, available_resources):
+            return ready
+
+    P = Pipeline()
+    P.a = R.make_a(x="x")
+    execute(P, tmp_path, scheduler=ObjectScheduler())
+    assert P.a.path.exists()
+
+
 def test_custom_scheduler_invoked(tmp_path):
     calls = []
 
