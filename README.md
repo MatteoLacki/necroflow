@@ -2,6 +2,7 @@
 [![CI platforms](https://img.shields.io/badge/CI-Linux%20%7C%20macOS-blue)](https://github.com/MatteoLacki/necroflow/actions/workflows/ci.yml)
 [![CI Python](https://img.shields.io/badge/CI%20Python-3.10--3.15-blue)](https://github.com/MatteoLacki/necroflow/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/necroflow)](https://pypi.org/project/necroflow/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21371562.svg)](https://doi.org/10.5281/zenodo.21371562)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -22,7 +23,7 @@ See [COMPARISON.md](COMPARISON.md) for a detailed comparison with Snakemake, Nex
 - **Rules** describe how to produce outputs from inputs — shell command templates with typed I/O.
 - **Pipelines** wire rule calls together for a single config and can mark author-declared presentation sections for graph inspection.
 - **DAG** runs many pipelines at once, deduplicating shared upstream work across samples automatically.
-- **Paths** are derived from a content-addressed hash of the full input chain — same inputs always produce the same path, different inputs produce different paths. The filesystem is the cache.
+- **Paths** are derived from a lineage-derived fingerprint of the full input chain — same inputs always produce the same path, different inputs produce different paths. The filesystem is the cache.
 
 ## Install
 
@@ -126,7 +127,7 @@ The same pipeline can also be assembled and executed from Python directly; see [
 
 ## Where outputs live
 
-`DAG("some-dir")` writes real content-addressed node outputs directly under that directory. The CLI defaults to a split layout: real cached outputs under `nodes/`, plus per-job symlink folders and `manifest.toml` files under `results/`. See [Where outputs live and caching](docs/caching.md) for the full layout.
+`DAG("some-dir")` writes real lineage-addressed node outputs directly under that directory. The CLI defaults to a split layout: real cached outputs under `nodes/`, plus per-job symlink folders and `manifest.toml` files under `results/`. See [Where outputs live and caching](docs/caching.md) for the full layout.
 
 
 ## Manual

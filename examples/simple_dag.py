@@ -1,202 +1,145 @@
-try:
-    _ip = get_ipython()
-    _ip.run_line_magic("load_ext", "autoreload")
-    _ip.run_line_magic("autoreload", "2")
-except NameError:
-    pass
+"""Typed bioinformatics pipeline example used by the Necroflow paper.
+
+The factories are safe to import and inspect without requiring BWA, samtools,
+featureCounts, or bcftools. Commands run only when a DAG is executed.
+"""
 
 from types import SimpleNamespace
-from necroflow import (
-    NodeType,
-    Rules,
-    resolve_command,
-    Pipeline,
-    DAG,
-)
 
-# --- node types ---
+from necroflow import DAG, NodeType, Pipeline, Rules, resolve_command
 
 
 class Fastq(NodeType):
-    """Raw sequencing reads (FASTQ format)."""
-
     filename = "reads.fastq.gz"
 
 
 class Bam(NodeType):
-    """Aligned reads in BAM format."""
-
     filename = "aligned.bam"
 
 
 class SortedBam(Bam):
-    """Coordinate-sorted BAM; required before quantification or variant calling."""
-
     filename = "sorted.bam"
 
 
 class Log(NodeType):
-    """Aligner log capturing mapping statistics."""
-
     filename = "align.log"
 
 
 class Counts(NodeType):
-    """Per-gene read counts produced by featureCounts."""
-
     filename = "counts.txt"
 
 
-class QcReport(NodeType):
-    """Alignment QC summary from featureCounts."""
-
-    filename = "qc.txt"
-
-
 class Vcf(NodeType):
-    """Raw variant calls in VCF format."""
-
     filename = "variants.vcf.gz"
 
 
 class AnnotatedVcf(NodeType):
-    """Variant calls enriched with database annotations."""
-
     filename = "annotated.vcf.gz"
 
-
-class MergedVcf(NodeType):
-    """SNP and indel calls merged into a single VCF."""
-
-    filename = "merged.vcf.gz"
-
-
-# --- rules ---
 
 r = Rules()
 
 
 @r.command("ln -s {path} {fastq}")
 def raw_fastq(path: str):
-    """Symlink a raw FASTQ file into the output tree."""
+    """Expose a source FASTQ as a typed artifact."""
     return Fastq[fastq]
 
 
-@r.command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
-def align(fastq: Fastq, ref: str):
-    """Align reads to a reference genome with BWA-MEM."""
+@r.command(
+    "bwa mem {reference} {fastq} 2> {log} | samtools view -b -o {bam}",
+    threads=4,
+)
+def align(fastq: Fastq, reference: str):
+    """Align reads and write a BAM plus the BWA log."""
     return Bam[bam], Log[log]
 
 
 @r.command("samtools sort {bam} -o {sorted_bam}")
 def sort_bam(bam: Bam):
-    """Sort BAM by coordinate with samtools."""
+    """Sort a BAM by coordinate."""
     return SortedBam[sorted_bam]
 
 
 @r.command("featureCounts -a {gene_model} {bam} -o {counts}")
 def quantify(bam: SortedBam, gene_model: str):
-    """Count reads per gene using featureCounts."""
+    """Count reads per gene."""
     return Counts[counts]
 
 
-@r.command("gatk HaplotypeCaller -I {bam} -O {vcf} --caller {caller}")
-def call_variants(bam: SortedBam, caller: str):
-    """Call germline SNPs and indels with GATK HaplotypeCaller."""
+@r.command(
+    "bcftools mpileup -f {reference} -Ou {bam} | " "bcftools call -mv -Oz -o {vcf}"
+)
+def call_variants(bam: SortedBam, reference: str):
+    """Call variants from a sorted BAM."""
     return Vcf[vcf]
 
 
-@r.command("bcftools annotate -a {db} {vcf} -o {annotated_vcf}")
-def annotate(vcf: Vcf, db: str):
-    """Annotate variants against a reference database with bcftools."""
+@r.command("bcftools annotate -a {database} {vcf} -Oz -o {annotated_vcf}")
+def annotate(vcf: Vcf, database: str):
+    """Annotate a VCF against a supplied database."""
     return AnnotatedVcf[annotated_vcf]
 
 
-@r.command("bcftools merge {snp_ann} {indel_ann} -o {merged_vcf}")
-def merge_annotations(snp_ann: AnnotatedVcf, indel_ann: AnnotatedVcf):
-    """Merge SNP and indel annotated VCFs into one file."""
-    return MergedVcf[merged_vcf]
-
-
-# --- pipeline definitions ---
-
-
-def basic_pipeline(config, r):
+def aligned_reads(config, rules=r):
+    """Construct the import, alignment, and sorting prefix."""
     P = Pipeline()
-    P.fastq = r.raw_fastq(path=config.path)
-    P.bam, P.align_log = r.align(P.fastq, ref=config.ref)
-    P.sorted_bam = r.sort_bam(P.bam)
-    P.counts = r.quantify(P.sorted_bam, gene_model=config.gene_model)
+    P.fastq = rules.raw_fastq(path=config.path)
+    P.bam, P.align_log = rules.align(P.fastq, reference=config.reference)
+    P.sorted_bam = rules.sort_bam(P.bam)
     return P
 
 
-def diamond_pipeline(config, r):
-    P = Pipeline()
-    P.fastq = r.raw_fastq(path=config.path)
-    P.bam, P.align_log = r.align(P.fastq, ref=config.ref)
-    P.sorted_bam = r.sort_bam(P.bam)
-    P.snp_vcf = r.call_variants(P.sorted_bam, caller="haplotypecaller")
-    P.indel_vcf = r.call_variants(P.sorted_bam, caller="mutect2")
-    P.snp_ann = r.annotate(P.snp_vcf, db="dbsnp")
-    P.indel_ann = r.annotate(P.indel_vcf, db="clinvar")
-    P.merged = r.merge_annotations(P.snp_ann, P.indel_ann)
+def quantification_pipeline(config, rules=r):
+    P = aligned_reads(config, rules)
+    P.counts = rules.quantify(P.sorted_bam, gene_model=config.gene_model)
     return P
 
 
-# --- single-pipeline inspection ---
+def variant_pipeline(config, rules=r):
+    P = aligned_reads(config, rules)
+    P.vcf = rules.call_variants(P.sorted_bam, reference=config.reference)
+    return P
 
-config = SimpleNamespace(
-    path="/data/sample1.fastq.gz", ref="hg38", gene_model="gencode_v44"
-)
-P = basic_pipeline(config, r)
-print(P)
-P.save("/tmp/simple_dag_pipeline.txt")
 
-# inspect resolved commands before running
-P.resolve_paths("results")
-for node in P.nodes:
-    print(resolve_command(node))
+def extended_pipeline(config, rules=r):
+    P = quantification_pipeline(config, rules)
+    if config.call_variants:
+        P.vcf = rules.call_variants(P.sorted_bam, reference=config.reference)
+        P.annotated_vcf = rules.annotate(P.vcf, database=config.variant_database)
+    return P
 
-# --- multi-sample DAG: basic pipeline ---
 
-basic_configs = [
-    SimpleNamespace(
-        path="/data/sample1.fastq.gz", ref="hg38", gene_model="gencode_v44"
-    ),
-    SimpleNamespace(
-        path="/data/sample2.fastq.gz", ref="hg38", gene_model="gencode_v44"
-    ),
-]
+def example_config(**overrides):
+    values = {
+        "path": "/data/sample.fastq.gz",
+        "reference": "/refs/hg38.fa",
+        "gene_model": "/refs/gencode.gtf",
+        "variant_database": "/refs/dbsnp.vcf.gz",
+        "call_variants": True,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
-dag = DAG("results")
-for config in basic_configs:
-    P = basic_pipeline(config, r)
-    dag.add(P, request=[P.counts])  # only run up to counts, skip qc
 
-print(dag)
-dag.save("/tmp/simple_dag_basic.txt")
-dag.execute()
+def inspect_example():
+    config = example_config()
+    pipeline = extended_pipeline(config)
+    pipeline.resolve_paths("results")
+    return pipeline, [resolve_command(node) for node in pipeline.nodes]
 
-# pipeline_label (the P.xxx name) is the handle for each output
-for node in dag.nodes:
-    if node.pipeline_label and node.path:
-        print(f"{node.pipeline_label}: {node.path}")
 
-# --- multi-sample DAG: diamond pipeline ---
+def shared_dag(outdir="results"):
+    config = example_config()
+    quant = quantification_pipeline(config)
+    variants = variant_pipeline(config)
+    dag = DAG(outdir)
+    dag.add(quant)
+    dag.add(variants)
+    return dag, quant, variants
 
-diamond_configs = [
-    SimpleNamespace(path="/data/sample1.fastq.gz", ref="hg38"),
-    SimpleNamespace(path="/data/sample2.fastq.gz", ref="hg38"),
-]
 
-dag2 = DAG("results")
-for config in diamond_configs:
-    dag2.add(diamond_pipeline(config, r))  # sinks = [merged] per sample
-
-print(dag2)
-dag2.save("/tmp/simple_dag_diamond.txt")
-dag2.execute()
-
-for node in dag2.nodes:
-    if node.pipeline_label and node.path:
-        print(f"{node.pipeline_label}: {node.path}")
+if __name__ == "__main__":
+    pipeline, commands = inspect_example()
+    print(pipeline)
+    print("\n".join(commands))

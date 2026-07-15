@@ -4,7 +4,7 @@
 
 ## Where outputs live
 
-`DAG("some-dir")` writes the real content-addressed node outputs directly under that directory. The CLI defaults to a split layout: hashed node outputs under `nodes/`, plus one user-facing subfolder per job/grid combo under `results/`:
+`DAG("some-dir")` writes the real lineage-addressed node outputs directly under that directory. The CLI defaults to a split layout: hashed node outputs under `nodes/`, plus one user-facing subfolder per job/grid combo under `results/`:
 
 ```
 nodes/

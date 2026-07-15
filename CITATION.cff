@@ -19,4 +19,5 @@ version: "0.0.3"
 date-released: "2026-07-15"
 license: MIT
 repository-code: "https://github.com/MatteoLacki/necroflow"
-# doi: 10.5281/zenodo.XXXXXXX   # concept DOI — uncomment and fill after first Zenodo publish
+url: "https://github.com/MatteoLacki/necroflow"
+doi: "10.5281/zenodo.21371563"
