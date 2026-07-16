@@ -1,3 +1,8 @@
+---
+name: necroflow-style
+description: necroflow coding style for AI agents — invariants and anti-patterns derived from the git history. Load before writing or refactoring necroflow source code.
+---
+
 # necroflow coding style for AI agents
 
 Derived from the git history: what the refactors converged on, and why.
