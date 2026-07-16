@@ -88,6 +88,34 @@ def rna_pipeline(config):
     return P
 ```
 
+## Compose pipeline fragments
+
+A command-line pipeline factory creates and returns a fresh `Pipeline`:
+`factory(config) -> Pipeline`. This keeps each CLI invocation self-contained and
+gives it a clear set of named requested outputs.
+
+For reusable internal fragments, pass an existing pipeline to a helper that
+adds its named nodes. This lets several fragments contribute to one public
+factory without changing the CLI factory signature:
+
+```python
+def add_alignment(P, config):
+    P.fastq = r.raw_fastq(path=config["path"])
+    P.bam = r.align(P.fastq, ref=config["ref"])
+
+def rna_pipeline(config):
+    P = Pipeline()
+    add_alignment(P, config)
+    P.counts = r.count(P.bam, gene_model=config["gene_model"])
+    return P
+```
+
+An assembler mutates the supplied pipeline, so its labels must not conflict
+with labels added by another fragment. Use this form for components that belong
+to one pipeline. Independently runnable factories should still each create a
+fresh `Pipeline`; when they are added to one `DAG`, Necroflow canonicalizes
+identical upstream rule calls and executes their shared work once.
+
 ## Run from the CLI
 
 Create a job TOML that references the factory and carries the concrete parameters for one run.
