@@ -2,7 +2,7 @@
 provenance, Inputs/Outputs validation, NodeType subtyping, pipeline_label."""
 
 from necroflow.rules import Constraints, Inputs, Outputs, Rule
-from necroflow import command
+from necroflow import command, output
 
 import pytest
 from pathlib import Path
@@ -312,7 +312,8 @@ def test_resolve_command_substitutes_union_typed_input(tmp_path):
     # command template raised a bare KeyError at execution time.
     @command("cat {doc} > {txt}")
     def read_either(doc: Txt | Upper):
-        return Txt[txt]
+        txt = output(Txt)
+        return txt
 
     src = R_make_txt(word="hi")
     doc = read_either(src)
@@ -343,13 +344,15 @@ def test_unknown_constraint_placeholder_is_rejected():
 
         @command("tool --ram {ram} > {txt}")
         def bad_ram(word: str):
-            return Txt[txt]
+            txt = output(Txt)
+            return txt
 
     with pytest.raises(ValueError, match=r"unknown constraint placeholders: \['gpu'\]"):
 
         @command("tool --gpu {constraint:gpu} > {txt}")
         def bad_gpu(word: str):
-            return Txt[txt]
+            txt = output(Txt)
+            return txt
 
 
 # ── accumulated config ────────────────────────────────────────────────────────
@@ -479,7 +482,8 @@ def test_mixed_nodetype_union_rejected_at_declaration():
 
         @command("touch {log}")
         def bad_union(data: Txt | str):
-            return Log[log]
+            log = output(Log)
+            return log
 
 
 def test_config_union_still_supported():
@@ -628,7 +632,8 @@ def test_repeat_does_not_affect_fingerprint():
 def test_command_decorator_body_return_single():
     @command("echo {word} > {txt}")
     def make_txt(word: str):
-        return Txt[txt]
+        txt = output(Txt)
+        return txt
 
     assert make_txt.outputs.specs == {"txt": Txt}
 
@@ -636,7 +641,8 @@ def test_command_decorator_body_return_single():
 def test_command_decorator_accepts_repeat_and_constraints():
     @command("echo {word} > {txt}", threads=2, repeat=4)
     def make_txt(word: str):
-        return Txt[txt]
+        txt = output(Txt)
+        return txt
 
     assert make_txt.repeat == 4
     assert make_txt.resources == {"threads": 2}
@@ -645,27 +651,164 @@ def test_command_decorator_accepts_repeat_and_constraints():
 def test_command_decorator_body_return_multi():
     @command("tr a-z A-Z < {txt} | tee {log} > {upper}")
     def to_upper(txt: Txt):
-        return Upper[upper], Log[log]
+        upper = output(Upper)
+        log = output(Log)
+        return upper, log
 
     assert to_upper.outputs.specs == {"upper": Upper, "log": Log}
 
 
-def test_command_decorator_body_return_ignores_arrow_annotation():
+def test_command_decorator_output_assignments_ignore_arrow_annotation():
     @command("echo {word} > {txt}")
     def make_txt2(word: str) -> Upper:  # -> annotation should be ignored
-        return Txt[txt]
+        txt = output(Txt)
+        return txt
 
     assert make_txt2.outputs.specs == {"txt": Txt}
 
 
-def test_command_decorator_annotation_fallback():
-    """-> annotation fallback still works when no return statement is present."""
+def test_command_decorator_rejects_removed_annotation_fallback():
+    """Return annotations must not silently recreate the removed output DSL."""
+
+    with pytest.raises(ValueError, match="declaration must end with return"):
+
+        @command("echo {word} > {txt}")
+        def fallback(word: str) -> Txt:
+            pass
+
+
+def test_command_decorator_accepts_imported_output_alias():
+    """The parser recognizes output declarations by identity, not spelling."""
+    declare_output = output
 
     @command("echo {word} > {txt}")
-    def fallback(word: str) -> Txt:
-        pass
+    def make_txt(word: str):
+        txt = declare_output(Txt)
+        return txt
 
-    assert fallback.outputs.specs == {"txt": Txt}
+    assert make_txt.outputs.specs == {"txt": Txt}
+
+
+def test_command_decorator_rejects_invalid_output_declarations():
+    """Malformed declarations fail at import time with actionable errors."""
+    with pytest.raises(ValueError, match="body may contain only"):
+
+        @command("touch {txt}")
+        def chained(word: str):
+            txt = alias = output(Txt)
+            return txt
+
+    with pytest.raises(ValueError, match="body may contain only"):
+
+        @command("touch {txt}")
+        def destructured(word: str):
+            txt, alias = output(Txt)
+            return txt
+
+    with pytest.raises(ValueError, match="body may contain only"):
+
+        @command("touch {txt}")
+        def nested(word: str):
+            if word:
+                txt = output(Txt)
+            return txt
+
+    with pytest.raises(ValueError, match="final return must contain only"):
+
+        @command("touch {txt}")
+        def direct_return(word: str):
+            return output(Txt)
+
+    with pytest.raises(ValueError, match="each output must be returned exactly once"):
+
+        @command("touch {txt}")
+        def duplicate_return(word: str):
+            txt = output(Txt)
+            return txt, txt
+
+    with pytest.raises(ValueError, match="declared outputs not returned"):
+
+        @command("touch {txt}")
+        def unused(word: str):
+            txt = output(Txt)
+            log = output(Log)
+            return txt
+
+    with pytest.raises(ValueError, match="undeclared outputs returned"):
+
+        @command("touch {txt}")
+        def undeclared(word: str):
+            txt = output(Txt)
+            return other
+
+    with pytest.raises(ValueError, match="exactly one positional NodeType"):
+
+        @command("touch {txt}")
+        def wrong_arity(word: str):
+            txt = output()
+            return txt
+
+    with pytest.raises(ValueError, match="concrete NodeType name"):
+
+        @command("touch {txt}")
+        def expression_type(word: str):
+            txt = output(Txt())
+            return txt
+
+    with pytest.raises(TypeError, match="must be a NodeType"):
+
+        @command("touch {txt}")
+        def non_node_type(word: str):
+            txt = output(str)
+            return txt
+
+    with pytest.raises(ValueError, match="duplicate output declaration"):
+
+        @command("touch {txt}")
+        def duplicate_declaration(word: str):
+            txt = output(Txt)
+            txt = output(Txt)
+            return txt
+
+    with pytest.raises(ValueError, match="Type\[name\] output syntax was removed"):
+
+        @command("touch {txt}")
+        def removed_syntax(word: str):
+            return Txt[txt]
+
+
+def test_output_is_declaration_only():
+    """Calling output at runtime explains that it only belongs in declarations."""
+    with pytest.raises(RuntimeError, match="declaration-only"):
+        output(Txt)
+
+
+def test_command_decorator_preserves_runtime_shape_and_fingerprint():
+    """The lint-clean declaration changes typing syntax, not rule identity or values."""
+
+    @command("echo {word} > {txt}")
+    def make_txt(word: str):
+        txt = output(Txt)
+        return txt
+
+    explicit = Rule(
+        "make_txt",
+        Inputs(word=str),
+        Outputs(txt=Txt),
+        "echo {word} > {txt}",
+    )
+    assert make_txt(word="same").fingerprint == explicit(word="same").fingerprint
+
+    @command("tr a-z A-Z < {txt} | tee {log} > {upper}")
+    def to_upper(txt: Txt):
+        upper = output(Upper)
+        log = output(Log)
+        return upper, log
+
+    result = to_upper(make_txt(word="same"))
+    assert tuple(result) == (result.upper, result.log)
+    assert result.upper.output_name == "upper"
+    assert result.log.output_name == "log"
 
 
 def test_registry_construction_api_is_not_exported():
@@ -683,4 +826,5 @@ def test_command_unannotated_input_raises():
 
         @command("echo {word} > {txt}")
         def make_txt(word):  # missing annotation — word absent from inputs_specs
-            return Txt[txt]
+            txt = output(Txt)
+            return txt

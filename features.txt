@@ -11,6 +11,7 @@ necroflow
 │   │   ├── shell command API: @command(...)
 │   │   ├── built-in decorators: @text_file / @symlink_file
 │   │   ├── explicit built-in factories: text_file_rule / symlink_file_rule
+│   │   ├── lint-clean name = output(NodeType) declarations
 │   │   ├── typed Inputs / Outputs
 │   │   ├── multi-output rules
 │   │   ├── co-output execution once per rule call

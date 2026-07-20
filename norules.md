@@ -6,17 +6,19 @@ Necroflow rules are ordinary module-level values. There is no `Rules` registry,
 ## Shell rules
 
 ```python
-from necroflow import command
+from necroflow import command, output
 
 @command("bwa mem {ref} {fastq} > {bam}", threads=4)
 def align(fastq: Fastq, ref: str):
-    return Bam[bam]
-
+    bam = output(Bam)
+    return bam
 P.bam = align(P.fastq, ref=config.ref)
 ```
 
 `@command` parses the typed function declaration and replaces its name with a
-callable internal `Rule`. The declaration body is not executed.
+callable internal `Rule`. The declaration body is not executed. Outputs are declared
+as `name = output(NodeType)` locals and returned in output order, giving ordinary
+Python linters real bound names and preserving single-versus-tuple return typing.
 
 ## Built-in file rules
 
@@ -24,6 +26,7 @@ Built-ins have decorator sugar and explicit factories:
 
 ```python
 from necroflow import (
+    output,
     symlink_file,
     symlink_file_rule,
     text_file,
@@ -32,8 +35,8 @@ from necroflow import (
 
 @symlink_file
 def raw_fastq(path: str):
-    return Fastq[fastq]
-
+    fastq = output(Fastq)
+    return fastq
 raw_fasta = symlink_file_rule(
     "raw_fasta",
     Fasta,
@@ -42,12 +45,12 @@ raw_fasta = symlink_file_rule(
 
 @text_file
 def write_config(text: str):
-    return ConfigFile[config_file]
-
+    config_file = output(ConfigFile)
+    return config_file
 @text_file(encoding="utf-16")
 def write_utf16_config(text: str):
-    return Utf16Config[config_file]
-
+    config_file = output(Utf16Config)
+    return config_file
 write_other_config = text_file_rule(
     "write_other_config",
     ConfigFile,

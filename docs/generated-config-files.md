@@ -24,9 +24,8 @@ all the downstream command needs:
 ```python
 @command("sage --config {sage_config_path} --mzml {spectra} --out {sage_out}")
 def run_sage(spectra: Mzml, sage_config_path: str):
-    return SageOut[sage_out]
-
-
+    sage_out = output(SageOut)
+    return sage_out
 def pipeline(config):
     P = Pipeline()
     P.sage_out = run_sage(P.spectra, sage_config_path=config["sage_config"])
@@ -46,7 +45,7 @@ When the external config should be a typed artifact in the DAG, add an import or
 copy rule and pass the resulting node downstream:
 
 ```python
-from necroflow import NodeType, Pipeline, command
+from necroflow import NodeType, Pipeline, command, output
 
 class SageConfig(NodeType):
     filename = "sage.json"
@@ -55,13 +54,12 @@ class SageOut(NodeType):
     filename = "results.sage.tsv"
 @command("cp {path} {sage_config}")
 def import_sage_config(path: str):
-    return SageConfig[sage_config]
-
+    sage_config = output(SageConfig)
+    return sage_config
 @command("sage --config {sage_config} --mzml {spectra} --out {sage_out}")
 def run_sage(spectra: Mzml, sage_config: SageConfig):
-    return SageOut[sage_out]
-
-
+    sage_out = output(SageOut)
+    return sage_out
 def pipeline(config):
     P = Pipeline()
     P.sage_config = import_sage_config(path=config["sage_config"])
@@ -84,17 +82,19 @@ as `printf {config}`.
 
 ```python
 import json
-from necroflow import NodeType, command, text_file
+from necroflow import NodeType, command, text_file, output
 
 class SageConfig(NodeType):
     filename = "sage.json"
 @text_file
 def write_sage_config(text: str):
-    return SageConfig[sage_config]
-
+    sage_config = output(SageConfig)
+    return sage_config
 @command("necromerge2-run-sage {spectra} {fasta} {outdir} {run_info} --config {sage_config}")
 def run_sage(spectra: SageInputStaged, fasta: Fasta, sage_config: SageConfig):
-    return SageRawOutdir[outdir], SageRunInfo[run_info]
+    outdir = output(SageRawOutdir)
+    run_info = output(SageRunInfo)
+    return outdir, run_info
 ```
 
 A job TOML table can then be passed through as ordinary factory config:

@@ -49,7 +49,8 @@ Commands may use the built-in `{workdir}` placeholder to refer to the rule-call 
 ```python
 @command("dosomething --tmp {workdir}/scratch -o {result}")
 def compute(input: Input):
-    return Result[result]
+    result = output(Result)
+    return result
 ```
 
 The `{workdir}` directory is created before the command runs. Files written there are kept by default, just like declared outputs, because the directory is part of the cached rule-call result. The name `workdir` is reserved for this built-in placeholder and cannot be used as an input or output name.
@@ -100,8 +101,8 @@ built-in `@symlink_file` decorator instead of hand-writing the same
 ```python
 @symlink_file
 def raw_spectra(path: str):
-    return Mzml[spectra]
-
+    spectra = output(Mzml)
+    return spectra
 P.spectra = raw_spectra(path=config["spectra"])
 ```
 

@@ -31,6 +31,7 @@ dev = [
     "twine",
     "pytest",
     "pytest-cov",
+    "pyright",
     "networkx",
 ]
 
@@ -38,6 +39,9 @@ dev = [
 [project.urls]
 homepage="https://github.com/MatteoLacki/necroflow.git"
 repository="https://github.com/MatteoLacki/necroflow.git"
+
+[tool.pyright]
+typeCheckingMode = "basic"
 
 [tool.uv]
 reinstall-package = ["necroflow"]

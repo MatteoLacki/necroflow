@@ -10,8 +10,8 @@
 @command("bwa mem {ref} {fastq} > {bam}", threads=4, ram="8Gi")
 def align(fastq: Fastq, ref: str):
     """Align reads with BWA-MEM."""
-    return Bam[bam]
-
+    bam = output(Bam)
+    return bam
 dag.execute(resource_caps={"threads": 16, "ram": parse_resource("64Gi")})
 ```
 
@@ -23,7 +23,8 @@ Rule constraints are also available to command templates. Direct placeholders su
 @command("tool --threads {threads} --memory {ram} --gpu {constraint:gpu} -i {inp} -o {out}",
            threads=8, ram="32Gi", gpu=1)
 def run_tool(inp: Input):
-    return Output[out]
+    out = output(Output)
+    return out
 ```
 
 `@command(..., repeat=N)` accepts Snakemake-style repeat compatibility metadata. Necroflow stores it as `rule.repeat` and validates that it is a positive integer, but it is currently metadata only: it does not make the executor run the command multiple times and it is not part of scheduling resources or output fingerprints.
@@ -35,8 +36,8 @@ String commands use Python's default `shell=True` behavior unless a shell path i
 ```python
 @command("printf '%s\n' {{left,right}} > {out}")
 def make_out():
-    return Out[out]
-
+    out = output(Out)
+    return out
 execute(P, "nodes", shellpath="/bin/bash")
 ```
 

@@ -4,7 +4,7 @@ from necroflow.rules import Constraints, Inputs, Outputs, Rule
 
 import pytest
 from pathlib import Path
-from necroflow import NodeType, Pipeline, DAG, command
+from necroflow import NodeType, Pipeline, DAG, command, output
 from necroflow.pipeline import _sinks
 
 
@@ -115,6 +115,13 @@ def test_pipeline_label_single():
     assert P.a.pipeline_label == "a"
 
 
+def test_pipeline_missing_attribute_still_raises():
+    """Typing dynamic pipeline reads as Node must not invent missing values."""
+    P = Pipeline()
+    with pytest.raises(AttributeError, match="missing"):
+        _ = P.missing
+
+
 def test_pipeline_save(tmp_path):
     P = diamond()
     out = tmp_path / "out.txt"
@@ -128,13 +135,15 @@ def test_workdir_is_reserved_input_output_name():
 
         @command("touch {a}")
         def bad_input(workdir: str):
-            return A[a]
+            a = output(A)
+            return a
 
     with pytest.raises(ValueError, match="reserved command placeholder"):
 
         @command("touch {workdir}")
         def bad_output(x: str):
-            return A[workdir]
+            workdir = output(A)
+            return workdir
 
 
 def test_pipeline_sections_tag_subsequent_nodes_only():
@@ -164,7 +173,7 @@ def test_pipeline_section_rejects_invalid_or_duplicate_names():
 
 def test_png_renderer_clusters_unambiguous_pipeline_sections(tmp_path, monkeypatch):
     import sys
-    from necroflow import graphviz_render
+    from necroflow import graphviz_render, output
 
     class FakeGraph:
         def __init__(self):

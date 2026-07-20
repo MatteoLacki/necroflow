@@ -2,6 +2,33 @@
 
 [Previous: Config Validation](config-validation.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)
 
+## Declaring rule outputs
+
+Import `output` with the decorator and bind every output to a real local name:
+
+```python
+from necroflow import NodeType, command, output
+
+class Bam(NodeType):
+    filename = "aligned.bam"
+
+class Log(NodeType):
+    filename = "align.log"
+
+@command("aligner {reads} > {bam} 2> {log}")
+def align(reads: str):
+    bam = output(Bam)
+    log = output(Log)
+    return bam, log
+```
+
+The decorated body is a declaration, not executable rule code. After an optional
+docstring it contains one or more top-level `name = output(ConcreteNodeType)`
+assignments and a final return of each declared name exactly once. The return order
+defines the rule call's single-node or tuple shape. This is ordinary valid Python, so
+linters understand that the names are bound and type checkers can preserve the return
+shape through pipeline assignments.
+
 ## Conditional pipelines
 
 Pipeline factory functions are plain Python, so `if/else` branching on config values works naturally:
@@ -83,12 +110,13 @@ class SortedBam(Bam):
 @command("samtools sort {bam} -o {sorted_bam}")
 def sort(bam: Bam):
     """Sort BAM by coordinate with samtools."""
-    return SortedBam[sorted_bam]
-
+    sorted_bam = output(SortedBam)
+    return sorted_bam
 @command("featureCounts -a {gene_model} {bam} -o {counts}")
 def quantify(bam: SortedBam, gene_model: str):  # only accepts sorted bam
     """Count reads per gene using featureCounts."""
-    return Counts[counts]
+    counts = output(Counts)
+    return counts
 ```
 
 The same pattern is useful for format families. Define a base `NodeType` for the
@@ -119,27 +147,24 @@ class IndexedFilteredPrecursors(FilteredPrecursors, IndexedDataset):
 
 @command("filter-mmappet {precursors} > {filtered_precursors}")
 def filter_precursors(precursors: PrecursorTable):
-    return FilteredPrecursors[filtered_precursors]
-
-
+    filtered_precursors = output(FilteredPrecursors)
+    return filtered_precursors
 @command("index-mmappet {dataset} > {indexed_filtered_precursors}")
 def index(dataset: FilteredPrecursors):
-    return IndexedFilteredPrecursors[indexed_filtered_precursors]
-
-
+    indexed_filtered_precursors = output(IndexedFilteredPrecursors)
+    return indexed_filtered_precursors
 @command("score-mmappet {dataset} > {scores}")
 def score(dataset: MmappetDataset):
-    return Scores[scores]
-
-
+    scores = output(Scores)
+    return scores
 @command("query-index {dataset} > {report}")
 def query(dataset: IndexedDataset):
-    return Report[report]
-
-
+    report = output(Report)
+    return report
 @command("import-mmappet {dataset} > {precursor_table}")
 def import_any_mmappet(dataset: PrecursorTable | FilteredPrecursors):
-    return PrecursorTable[precursor_table]
+    precursor_table = output(PrecursorTable)
+    return precursor_table
 ```
 
 Here `score()` accepts `PrecursorTable`, `FilteredPrecursors`, or
@@ -179,13 +204,14 @@ A rule with multiple declared outputs runs its command **once**; all co-outputs 
 ```python
 @symlink_file
 def raw_fastq(path: str):
-    return Fastq[fastq]
-
+    fastq = output(Fastq)
+    return fastq
 @command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
 def align(fastq: Fastq, ref: str):
     """Align reads with BWA-MEM, capturing the log."""
-    return Bam[bam], Log[log]
-
+    bam = output(Bam)
+    log = output(Log)
+    return bam, log
 P = Pipeline()
 P.fastq = raw_fastq(path=config.path)
 P.bam, P.log = align(P.fastq, ref="hg38")

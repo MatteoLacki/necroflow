@@ -11,6 +11,7 @@ from necroflow.dag import (
 )
 from necroflow.rules import (
     command,
+    output,
     symlink_file,
     symlink_file_rule,
     text_file,
@@ -31,6 +32,7 @@ __all__ = [
     "Node",
     "NodeType",
     "command",
+    "output",
     "symlink_file",
     "symlink_file_rule",
     "text_file",

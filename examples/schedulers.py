@@ -10,7 +10,7 @@ Run:
 """
 
 from pathlib import Path
-from necroflow import DAG, NodeType, command, fifo_scheduler
+from necroflow import DAG, NodeType, command, fifo_scheduler, output
 
 
 class Text(NodeType):
@@ -31,26 +31,30 @@ class Merged(NodeType):
 
 @command("echo {word} > {text}")
 def make_text(word: str):
-    return Text[text]
+    text = output(Text)
+    return text
 
 
 @command("tr a-z A-Z < {text} > {upper}")
 def to_upper(text: Text):
-    return Upper[upper]
+    upper = output(Upper)
+    return upper
 
 
 @command("tr A-Z a-z < {text} > {lower}")
 def to_lower(text: Text):
-    return Lower[lower]
+    lower = output(Lower)
+    return lower
 
 
 @command("paste {upper} {lower} > {merged}")
 def merge(upper: Upper, lower: Lower):
-    return Merged[merged]
+    merged = output(Merged)
+    return merged
 
 
 def diamond(word: str):
-    from necroflow import Pipeline
+    from necroflow import Pipeline, output
 
     P = Pipeline()
     P.text = make_text(word=word)

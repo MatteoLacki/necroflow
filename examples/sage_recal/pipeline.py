@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 
-from necroflow import NodeType, Pipeline, command, symlink_file, text_file
+from necroflow import NodeType, Pipeline, command, symlink_file, text_file, output
 
 
 # --- node types ---
@@ -105,17 +105,20 @@ class RecalibrationTolerance(NodeType):
 # call site (see raw_spectra() below) rather than inside a single templated command.
 @symlink_file
 def raw_mzml(path: str):
-    return MzMlSpectra[raw_mzml]
+    raw_mzml = output(MzMlSpectra)
+    return raw_mzml
 
 
 @symlink_file
 def raw_mgf(path: str):
-    return MgfSpectra[raw_mgf]
+    raw_mgf = output(MgfSpectra)
+    return raw_mgf
 
 
 @symlink_file
 def raw_fasta(path: str):
-    return Fasta[raw_fasta]
+    raw_fasta = output(Fasta)
+    return raw_fasta
 
 
 def raw_spectra(path: str):
@@ -134,7 +137,8 @@ def raw_spectra(path: str):
 
 @text_file
 def write_sage_config(text: str):
-    return SageConfig[sage_config]
+    sage_config = output(SageConfig)
+    return sage_config
 
 
 # --- compute rules ---
@@ -144,7 +148,8 @@ def write_sage_config(text: str):
 def select_recalibration_spectra(spectra: SpectraFile, top_k: int):
     """Subset a spectra file to its top-K most intense precursors, for mass-error
     estimation on a fast first pass."""
-    return RecalibrationSpectraSubset[subset]
+    subset = output(RecalibrationSpectraSubset)
+    return subset
 
 
 @command(
@@ -153,12 +158,11 @@ def select_recalibration_spectra(spectra: SpectraFile, top_k: int):
     " && test -f {results_tsv} && test -f {matched_fragments}"
 )
 def run_sage(spectra: SpectraFile, fasta: Fasta, config: SageConfig):
-    return (
-        SageResultsJson[results_json],
-        SageResultsPin[results_pin],
-        SageResultsTsv[results_tsv],
-        SageMatchedFragments[matched_fragments],
-    )
+    results_json = output(SageResultsJson)
+    results_pin = output(SageResultsPin)
+    results_tsv = output(SageResultsTsv)
+    matched_fragments = output(SageMatchedFragments)
+    return results_json, results_pin, results_tsv, matched_fragments
 
 
 @command(
@@ -191,7 +195,9 @@ def recalibrate_spectra(
     `q_column` defaults to Sage's peptide-level FDR (the standard, stricter choice for
     real datasets); see scripts/fit_recalibration.py's docstring for why a small
     dataset may need `spectrum_q` instead."""
-    return RecalibrationTolerance[tolerance], RecalibratedSpectra[recalibrated_spectra]
+    tolerance = output(RecalibrationTolerance)
+    recalibrated_spectra = output(RecalibratedSpectra)
+    return tolerance, recalibrated_spectra
 
 
 @command(
@@ -203,7 +209,8 @@ def recalibrate_spectra(
     " --target fragment_tol --source {tolerance} --source-field fragment_tol"
 )
 def update_sage_config(sage_config: SageConfig, tolerance: RecalibrationTolerance):
-    return SageConfig[recalibrated_sage_config]
+    recalibrated_sage_config = output(SageConfig)
+    return recalibrated_sage_config
 
 
 def recalibrated_sage_search(config: dict) -> Pipeline:

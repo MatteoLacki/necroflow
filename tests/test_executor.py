@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 import tomlkit
-from necroflow import NodeType, Pipeline, DAG, execute
-from necroflow import fifo_scheduler, connected_component_scheduler
+from necroflow import NodeType, Pipeline, DAG, execute, output
+from necroflow import fifo_scheduler, connected_component_scheduler, output
 from necroflow.schedulers import ConnectedComponentScheduler
 
 
@@ -908,7 +908,8 @@ def test_text_file_decorator_matches_factory_fingerprint():
     @text_file
     def write_config(text: str):
         """Write the configuration."""
-        return ConfigFile[config_file]
+        config_file = output(ConfigFile)
+        return config_file
 
     explicit = text_file_rule(
         "write_config",
@@ -927,7 +928,8 @@ def test_text_file_decorator_accepts_encoding(tmp_path):
 
     @text_file(encoding="utf-16-le")
     def write_config(text: str):
-        return ConfigFile[config_file]
+        config_file = output(ConfigFile)
+        return config_file
 
     P = Pipeline()
     P.config = write_config(text="hello")
@@ -944,7 +946,8 @@ def test_text_file_decorator_rejects_invalid_declaration():
 
         @text_file
         def bad_text_file(first: str, second: str):
-            return ConfigFile[config_file]
+            config_file = output(ConfigFile)
+            return config_file
 
 
 # -- built-in symlink ingestion rule ------------------------------------------
@@ -973,7 +976,8 @@ def test_symlink_file_decorator_matches_factory_and_links(tmp_path):
     @symlink_file
     def ingest_raw(path: str):
         """Ingest raw data."""
-        return RawData[raw]
+        raw = output(RawData)
+        return raw
 
     explicit = symlink_file_rule(
         "ingest_raw",

@@ -28,7 +28,7 @@ try:
 except NameError:
     pass
 
-from necroflow import DAG, NodeType, Pipeline, command
+from necroflow import DAG, NodeType, Pipeline, command, output
 
 # ── node types ────────────────────────────────────────────────────────────────
 
@@ -144,61 +144,71 @@ _S = "sleep $((RANDOM % 3 + 1)) && "
 @command(_S + "echo {word} | tee {seed}")  # step 1 — materialise the seed word
 def make_seed(word: str):
     """Write the input word to a file — the starting point for all transforms."""
-    return Seed[seed]
+    seed = output(Seed)
+    return seed
 
 
 @command(_S + "tr a-z A-Z < {seed} | tee {upper}")  # steps 2-4 — fan-out
 def to_upper(seed: Seed):
     """Convert all characters to uppercase."""
-    return Upper[upper]
+    upper = output(Upper)
+    return upper
 
 
 @command(_S + "tr A-Z a-z < {seed} | tee {lower}")
 def to_lower(seed: Seed):
     """Convert all characters to lowercase."""
-    return Lower[lower]
+    lower = output(Lower)
+    return lower
 
 
 @command(_S + "rev {seed} | tee {reversed}")
 def reverse_it(seed: Seed):
     """Reverse the character order of the seed."""
-    return Reversed[reversed]
+    reversed = output(Reversed)
+    return reversed
 
 
 @command(_S + "grep -o . {seed} | sort | tee {sorted_chars}")  # step 5
 def sort_chars(seed: Seed):
     """Extract individual characters and sort them alphabetically."""
-    return SortedChars[sorted_chars]
+    sorted_chars = output(SortedChars)
+    return sorted_chars
 
 
 @command(_S + "tr A-Za-z N-ZA-Mn-za-m < {upper} | tee {rot13}")  # step 6
 def encode_rot13(upper: Upper):
     """Apply ROT13 substitution cipher to the uppercased text."""
-    return Rot13[rot13]
+    rot13 = output(Rot13)
+    return rot13
 
 
 @command(_S + "for _ in $(seq {n}); do cat {lower}; done | tee {repeated}")  # step 7
 def repeat_word(lower: Lower, n: int):
     """Repeat the lowercased word n times, one per line."""
-    return Repeated[repeated]
+    repeated = output(Repeated)
+    return repeated
 
 
 @command(_S + "paste {upper} {lower} | tee {merged}")  # step 8 — diamond merge
 def merge_cases(upper: Upper, lower: Lower):
     """Paste uppercase and lowercase versions side by side (diamond convergence)."""
-    return Merged[merged]
+    merged = output(Merged)
+    return merged
 
 
 @command(_S + "uniq {sorted_chars} | tee {unique_chars}")  # step 9
 def unique_chars(sorted_chars: SortedChars):
     """Deduplicate the sorted character list to get the unique character set."""
-    return UniqueChars[unique_chars]
+    unique_chars = output(UniqueChars)
+    return unique_chars
 
 
 @command(_S + "cat {merged} {rot13} {repeated} {reversed} | tee {combined}")  # step 10
 def combine_all(merged: Merged, rot13: Rot13, repeated: Repeated, reversed: Reversed):
     """Concatenate all four transform outputs into one blob (4-way fan-in)."""
-    return Combined[combined]
+    combined = output(Combined)
+    return combined
 
 
 @command(
@@ -206,37 +216,44 @@ def combine_all(merged: Merged, rot13: Rot13, repeated: Repeated, reversed: Reve
 )  # step 11+12
 def make_stats(combined: Combined, unique_chars: UniqueChars):
     """Compute byte count of combined blob and unique-character count (co-outputs)."""
-    return Stats[stats], Audit[audit]
+    stats = output(Stats)
+    audit = output(Audit)
+    return stats, audit
 
 
 @command(_S + "tr a-z A-Z < {rot13} | tee {upper_rot}")  # step 13
 def shout_rot(rot13: Rot13):
     """Re-uppercase the ROT13 output for maximum shouting energy."""
-    return UpperRot[upper_rot]
+    upper_rot = output(UpperRot)
+    return upper_rot
 
 
 @command(_S + "sort {combined} | tee {sorted_combined}")  # step 14
 def sort_combined(combined: Combined):
     """Lexicographically sort all lines in the combined blob."""
-    return SortedCombined[sorted_combined]
+    sorted_combined = output(SortedCombined)
+    return sorted_combined
 
 
 @command(_S + "wc -l < {combined} | tee {line_counts}")  # step 15
 def count_lines(combined: Combined):
     """Count the total number of lines in the combined blob."""
-    return LineCounts[line_counts]
+    line_counts = output(LineCounts)
+    return line_counts
 
 
 @command(_S + "cat {upper_rot} {sorted_combined} | tee {final_mix}")  # step 16
 def final_mix(upper_rot: UpperRot, sorted_combined: SortedCombined):
     """Concatenate shouted ROT13 and sorted blob into the final mix."""
-    return FinalMix[final_mix]
+    final_mix = output(FinalMix)
+    return final_mix
 
 
 @command(_S + "cat {stats} {line_counts} {final_mix} | tee {grand_summary}")  # step 17
 def grand_summary(stats: Stats, line_counts: LineCounts, final_mix: FinalMix):
     """Assemble stats, line counts, and final mix into the grand summary."""
-    return GrandSummary[grand_summary]
+    grand_summary = output(GrandSummary)
+    return grand_summary
 
 
 # ── pipeline factory ──────────────────────────────────────────────────────────

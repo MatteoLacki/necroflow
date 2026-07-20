@@ -20,7 +20,7 @@ See [COMPARISON.md](COMPARISON.md) for a detailed comparison with Snakemake, Nex
 
 ## Core ideas
 
-- **Rules** describe how to produce outputs from inputs — shell command templates with typed I/O.
+- **Rules** describe how to produce outputs from inputs — shell command templates with typed I/O and lint-clean `name = output(NodeType)` declarations.
 - **Pipelines** wire rule calls together for a single config and can mark author-declared presentation sections for graph inspection.
 - **DAG** runs many pipelines at once, deduplicating shared upstream work across samples automatically.
 - **Paths** are derived from a lineage-derived fingerprint of the full input chain — same inputs always produce the same path, different inputs produce different paths. The filesystem is the cache.
@@ -55,7 +55,7 @@ A command-line run points at a Python pipeline factory. Rules describe typed out
 
 ```python
 # pipeline.py
-from necroflow import NodeType, Pipeline, command, symlink_file
+from necroflow import NodeType, Pipeline, command, symlink_file, output
 
 class Fastq(NodeType):
     filename = "reads.fastq.gz"
@@ -67,16 +67,16 @@ class Counts(NodeType):
     filename = "counts.txt"
 @symlink_file
 def raw_fastq(path: str):
-    return Fastq[fastq]
-
+    fastq = output(Fastq)
+    return fastq
 @command("bwa mem {ref} {fastq} > {bam}", threads=4)
 def align(fastq: Fastq, ref: str):
-    return Bam[bam]
-
+    bam = output(Bam)
+    return bam
 @command("featureCounts -a {gene_model} {bam} -o {counts}")
 def count(bam: Bam, gene_model: str):
-    return Counts[counts]
-
+    counts = output(Counts)
+    return counts
 def rna_pipeline(config):
     P = Pipeline()
     P.fastq = raw_fastq(path=config["path"])

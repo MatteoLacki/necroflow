@@ -5,11 +5,13 @@ from collections.abc import Callable
 import re
 from types import UnionType
 from string import Formatter
-from typing import get_args, get_origin, overload
+from typing import Any, Generic, TypeVar, cast, get_args, get_origin, overload
 
-from necroflow.nodes import Node, _is_nodetype
+from necroflow.nodes import Node, NodeType, _is_nodetype
 
 BUILTIN_COMMAND_PLACEHOLDERS = {"workdir"}
+
+_ReturnT = TypeVar("_ReturnT")
 
 _SI_SUFFIXES = {"K": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15}
 _BIN_SUFFIXES = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50}
@@ -100,7 +102,20 @@ def _matches_node_type(actual, expected) -> bool:
     return issubclass(actual, expected)
 
 
-class Rule:
+def output(node_type: type[NodeType]) -> Node:
+    """Declare an output in a decorated rule body.
+
+    The decorator parses ``name = output(NodeType)`` assignments without
+    executing them.  The ``Node`` return annotation gives static analyzers the
+    real value shape produced when the resulting rule is called.
+    """
+    raise RuntimeError(
+        "output() is declaration-only; use it as name = output(NodeType) "
+        "inside a decorated rule declaration"
+    )
+
+
+class Rule(Generic[_ReturnT]):
     """A declared rule: validates inputs and produces output Nodes when called."""
 
     def __init__(
@@ -202,7 +217,7 @@ class Rule:
         result.setdefault("threads", 1)
         return result
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: Any, **kwargs: Any) -> _ReturnT:
         name = self.__name__
         if len(args) < len(self._pos_inputs):
             missing = [pname for pname, _ in self._pos_inputs[len(args) :]]
@@ -241,36 +256,19 @@ class Rule:
         nodes = Node.make_outputs(
             self, parents, kwargs, self.command, self.outputs.specs
         )
-        return self._return_type(*nodes) if self._multi else nodes[0]
+        value = self._return_type(*nodes) if self._multi else nodes[0]
+        return cast(_ReturnT, value)
 
 
 def _parse_rule_fn(fn) -> tuple:
-    """Extract (rule_name, inputs_specs, outputs_specs, info) from a decorator-style rule function.
-
-    Outputs are taken from a ``return Type[name]`` statement in the function body (preferred),
-    or from the ``->`` return annotation as a fallback (requires ``from __future__ import
-    annotations`` when using ``Type[name]`` subscript syntax).
-    """
+    """Parse a typed rule signature and assignment-based output declarations."""
     import ast
+    import builtins
     import inspect
     import textwrap
 
     namespace = dict(fn.__globals__)
     namespace.update(inspect.getclosurevars(fn).nonlocals)
-
-    def _parse_output_items(items):
-        specs = {}
-        for item in items:
-            if isinstance(item, ast.Subscript):
-                specs[item.slice.id] = namespace[item.value.id]
-            elif isinstance(item, ast.Name):
-                specs[_pascal_to_snake(item.id)] = namespace[item.id]
-            else:
-                raise ValueError(
-                    f"rule {rule_name!r}: output items must be Type[name] or Type"
-                )
-        return specs
-
     rule_name = fn.__name__
     info = fn.__doc__.strip() if fn.__doc__ else None
 
@@ -283,48 +281,104 @@ def _parse_rule_fn(fn) -> tuple:
             ann = eval(ann, namespace)  # noqa: PGH001
         inputs_specs[pname] = ann
 
-    # Prefer return Type[name] in the function body over -> annotation
-    outputs_specs = {}
-    body_return = None
     try:
         src = textwrap.dedent(inspect.getsource(fn))
         func_tree = ast.parse(src)
         func_def = next(
-            n
-            for n in ast.walk(func_tree)
-            if isinstance(n, ast.FunctionDef) and n.name == rule_name
+            node
+            for node in ast.walk(func_tree)
+            if isinstance(node, ast.FunctionDef) and node.name == rule_name
         )
-        for stmt in func_def.body:
-            if isinstance(stmt, ast.Return) and stmt.value is not None:
-                body_return = stmt.value
-                break
-    except (OSError, StopIteration):
-        pass
+    except (OSError, StopIteration) as exc:
+        raise ValueError(
+            f"rule {rule_name!r}: cannot inspect declaration source"
+        ) from exc
 
-    if body_return is not None:
-        items = (
-            body_return.elts if isinstance(body_return, ast.Tuple) else [body_return]
+    body = list(func_def.body)
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+
+    if not body or not isinstance(body[-1], ast.Return) or body[-1].value is None:
+        raise ValueError(
+            f"rule {rule_name!r}: declaration must end with return output_name"
         )
-        outputs_specs = _parse_output_items(items)
-    else:
-        return_ann = raw_anns.get("return")
-        if return_ann is not None:
-            if not isinstance(return_ann, str):
-                outputs_specs[_pascal_to_snake(return_ann.__name__)] = return_ann
-            else:
-                try:
-                    expr_tree = ast.parse(return_ann.strip(), mode="eval")
-                except SyntaxError:
-                    raise ValueError(
-                        f"rule {rule_name!r}: cannot parse return annotation {return_ann!r}"
-                    )
-                items = (
-                    expr_tree.body.elts
-                    if isinstance(expr_tree.body, ast.Tuple)
-                    else [expr_tree.body]
-                )
-                outputs_specs = _parse_output_items(items)
 
+    declarations = {}
+    for stmt in body[:-1]:
+        if not (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and isinstance(stmt.value, ast.Call)
+            and isinstance(stmt.value.func, ast.Name)
+            and namespace.get(stmt.value.func.id) is output
+        ):
+            raise ValueError(
+                f"rule {rule_name!r}: body may contain only "
+                "name = output(NodeType) declarations before the final return"
+            )
+        if len(stmt.value.args) != 1 or stmt.value.keywords:
+            raise ValueError(
+                f"rule {rule_name!r}: output() requires exactly one positional NodeType"
+            )
+        type_expr = stmt.value.args[0]
+        if not isinstance(type_expr, ast.Name):
+            raise ValueError(
+                f"rule {rule_name!r}: output() argument must be a concrete NodeType name"
+            )
+        try:
+            output_type = namespace[type_expr.id]
+        except KeyError:
+            try:
+                output_type = getattr(builtins, type_expr.id)
+            except AttributeError as exc:
+                raise ValueError(
+                    f"rule {rule_name!r}: output() argument must be a concrete NodeType name"
+                ) from exc
+        output_name = stmt.targets[0].id
+        if not _is_nodetype(output_type):
+            raise TypeError(
+                f"rule {rule_name!r}: output {output_name!r} must be a "
+                f"NodeType, got {output_type!r}"
+            )
+        if output_name in declarations:
+            raise ValueError(
+                f"rule {rule_name!r}: duplicate output declaration {output_name!r}"
+            )
+        declarations[output_name] = output_type
+
+    body_return = body[-1].value
+    if isinstance(body_return, ast.Subscript):
+        raise ValueError(
+            f"rule {rule_name!r}: Type[name] output syntax was removed; use "
+            "name = output(Type) followed by return name"
+        )
+    items = body_return.elts if isinstance(body_return, ast.Tuple) else [body_return]
+    if not items or not all(isinstance(item, ast.Name) for item in items):
+        raise ValueError(
+            f"rule {rule_name!r}: final return must contain only declared output names"
+        )
+    returned_names = [item.id for item in items]
+    if len(returned_names) != len(set(returned_names)):
+        raise ValueError(
+            f"rule {rule_name!r}: each output must be returned exactly once"
+        )
+    undeclared = [name for name in returned_names if name not in declarations]
+    unused = [name for name in declarations if name not in returned_names]
+    if undeclared or unused:
+        details = []
+        if undeclared:
+            details.append(f"undeclared outputs returned: {undeclared}")
+        if unused:
+            details.append(f"declared outputs not returned: {unused}")
+        raise ValueError(f"rule {rule_name!r}: " + "; ".join(details))
+
+    outputs_specs = {name: declarations[name] for name in returned_names}
     return rule_name, inputs_specs, outputs_specs, info
 
 
@@ -339,7 +393,7 @@ def _make_rule(
     repeat: int = 1,
     recipe_identity: str | None = None,
     materializer: Callable | None = None,
-) -> Rule:
+) -> Rule[Any]:
     """Build a Rule from the internal dictionary representation."""
     return Rule(
         name=name,
@@ -356,23 +410,26 @@ def _make_rule(
 
 def command(
     cmd: str | list[str], /, *, repeat: int = 1, **constraints
-) -> Callable[[Callable], Rule]:
+) -> Callable[[Callable[..., _ReturnT]], Rule[_ReturnT]]:
     """Declare a shell-command rule from a typed function signature.
 
-    The decorated function is parsed as a declaration and replaced by the
-    resulting callable Rule; its body is never executed.
+    The function body is declaration-only: assign each output with
+    ``name = output(NodeType)``, then return those names in output order.
     """
 
-    def decorator(fn: Callable) -> Rule:
+    def decorator(fn: Callable[..., _ReturnT]) -> Rule[_ReturnT]:
         rule_name, inputs, outputs, info = _parse_rule_fn(fn)
-        return _make_rule(
-            name=rule_name,
-            inputs=inputs,
-            outputs=outputs,
-            command=cmd,
-            constraints=constraints,
-            info=info,
-            repeat=repeat,
+        return cast(
+            Rule[_ReturnT],
+            _make_rule(
+                name=rule_name,
+                inputs=inputs,
+                outputs=outputs,
+                command=cmd,
+                constraints=constraints,
+                info=info,
+                repeat=repeat,
+            ),
         )
 
     return decorator
@@ -415,7 +472,7 @@ def _make_text_file_rule(
     encoding: str,
     output_name: str | None,
     info: str | None,
-) -> Rule:
+) -> Rule[Node]:
     if input_name in BUILTIN_COMMAND_PLACEHOLDERS:
         raise ValueError(f"text_file input_name {input_name!r} is reserved")
     if not _is_nodetype(output):
@@ -447,7 +504,7 @@ def text_file_rule(
     input_name: str = "text",
     encoding: str = "utf-8",
     output_name: str | None = None,
-) -> Rule:
+) -> Rule[Node]:
     """Return a built-in rule that writes a string config value to a file."""
     return _make_text_file_rule(
         name,
@@ -460,11 +517,13 @@ def text_file_rule(
 
 
 @overload
-def text_file(fn: Callable, /) -> Rule: ...
+def text_file(fn: Callable[..., _ReturnT], /) -> Rule[_ReturnT]: ...
 
 
 @overload
-def text_file(*, encoding: str = "utf-8") -> Callable[[Callable], Rule]: ...
+def text_file(
+    *, encoding: str = "utf-8"
+) -> Callable[[Callable[..., _ReturnT]], Rule[_ReturnT]]: ...
 
 
 def text_file(fn: Callable | None = None, /, *, encoding: str = "utf-8"):
@@ -493,7 +552,7 @@ def _make_symlink_file_rule(
     path_arg: str,
     output_name: str | None,
     info: str | None,
-) -> Rule:
+) -> Rule[Node]:
     if path_arg in BUILTIN_COMMAND_PLACEHOLDERS:
         raise ValueError(f"symlink_file path_arg {path_arg!r} is reserved")
     if not _is_nodetype(output):
@@ -514,7 +573,7 @@ def symlink_file_rule(
     *,
     path_arg: str = "path",
     output_name: str | None = None,
-) -> Rule:
+) -> Rule[Node]:
     """Return a rule that symlinks an external path into the output tree."""
     return _make_symlink_file_rule(
         name,
@@ -525,15 +584,18 @@ def symlink_file_rule(
     )
 
 
-def symlink_file(fn: Callable, /) -> Rule:
+def symlink_file(fn: Callable[..., _ReturnT], /) -> Rule[_ReturnT]:
     """Declare a built-in external-file symlink rule."""
-    name, path_arg, output_name, output, info = _validate_builtin_declaration(
+    name, path_arg, output_name, output_type, info = _validate_builtin_declaration(
         fn, "symlink_file"
     )
-    return _make_symlink_file_rule(
-        name,
-        output,
-        path_arg=path_arg,
-        output_name=output_name,
-        info=info,
+    return cast(
+        Rule[_ReturnT],
+        _make_symlink_file_rule(
+            name,
+            output_type,
+            path_arg=path_arg,
+            output_name=output_name,
+            info=info,
+        ),
     )

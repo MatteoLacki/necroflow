@@ -1,6 +1,7 @@
 EXAMPLE_OUTDIR = examples/output
 PYTHON ?= .venv/bin/python
 PYTEST ?= .venv/bin/pytest
+PYRIGHT ?= .venv/bin/pyright
 TWINE ?= .venv/bin/twine
 DIST_FILES = dist/*
 SAGE_RECAL_DIR = examples/sage_recal
@@ -15,7 +16,7 @@ CURRENT_VERSION = $(shell PYTHONPATH=src $(PYTHON) -c 'import necroflow; print(n
 RELEASE_VERSION = $(if $(REQUESTED_VERSION),$(REQUESTED_VERSION),$(CURRENT_VERSION))
 TAG ?= v$(RELEASE_VERSION)
 
-.PHONY: all venv test example clean-example clean-dist bump-version maybe-bump-version build check-dist upload_test_pypi upload_pypi release_test_pypi release_pypi tag-release sage-image sage-image-archive
+.PHONY: all venv test typecheck example clean-example clean-dist bump-version maybe-bump-version build check-dist upload_test_pypi upload_pypi release_test_pypi release_pypi tag-release sage-image sage-image-archive
 
 all: venv
 
@@ -24,6 +25,13 @@ venv: .venv/bin/pytest
 .venv/bin/pytest:
 	uv venv .venv --python 3.14
 	uv pip install --python .venv/bin/python -e ".[dev]"
+
+$(PYRIGHT): pyproject.toml
+	uv venv --allow-existing .venv --python 3.14
+	uv pip install --python .venv/bin/python -e ".[dev]"
+
+typecheck: $(PYRIGHT)
+	$(PYRIGHT) --pythonversion 3.10 tests/typing/rule_dsl.py examples/canonical/pipeline.py examples/sage_recal/pipeline.py
 
 example:
 	$(PYTHON) -m necroflow.cli --outdir $(EXAMPLE_OUTDIR) examples/necroalchemy_job.toml

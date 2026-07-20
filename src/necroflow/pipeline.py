@@ -263,10 +263,16 @@ class Pipeline(_GraphBase):
         return self._section_by_node_id.get(id(node))
 
     @property
-    def nodes(self) -> list:
+    def nodes(self) -> list[Node]:
         return self._nodes_list
 
-    def __setattr__(self, name, value):
+    def __getattr__(self, name: str) -> Node:
+        try:
+            return self._node_names[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __setattr__(self, name: str, value: object) -> None:
         if name.startswith("_"):
             object.__setattr__(self, name, value)
             return

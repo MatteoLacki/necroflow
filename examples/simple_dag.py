@@ -6,7 +6,7 @@ featureCounts, or bcftools. Commands run only when a DAG is executed.
 
 from types import SimpleNamespace
 
-from necroflow import DAG, NodeType, Pipeline, resolve_command, command
+from necroflow import DAG, NodeType, Pipeline, resolve_command, command, output
 
 
 class Fastq(NodeType):
@@ -40,7 +40,8 @@ class AnnotatedVcf(NodeType):
 @command("ln -s {path} {fastq}")
 def raw_fastq(path: str):
     """Expose a source FASTQ as a typed artifact."""
-    return Fastq[fastq]
+    fastq = output(Fastq)
+    return fastq
 
 
 @command(
@@ -49,19 +50,23 @@ def raw_fastq(path: str):
 )
 def align(fastq: Fastq, reference: str):
     """Align reads and write a BAM plus the BWA log."""
-    return Bam[bam], Log[log]
+    bam = output(Bam)
+    log = output(Log)
+    return bam, log
 
 
 @command("samtools sort {bam} -o {sorted_bam}")
 def sort_bam(bam: Bam):
     """Sort a BAM by coordinate."""
-    return SortedBam[sorted_bam]
+    sorted_bam = output(SortedBam)
+    return sorted_bam
 
 
 @command("featureCounts -a {gene_model} {bam} -o {counts}")
 def quantify(bam: SortedBam, gene_model: str):
     """Count reads per gene."""
-    return Counts[counts]
+    counts = output(Counts)
+    return counts
 
 
 @command(
@@ -69,13 +74,15 @@ def quantify(bam: SortedBam, gene_model: str):
 )
 def call_variants(bam: SortedBam, reference: str):
     """Call variants from a sorted BAM."""
-    return Vcf[vcf]
+    vcf = output(Vcf)
+    return vcf
 
 
 @command("bcftools annotate -a {database} {vcf} -Oz -o {annotated_vcf}")
 def annotate(vcf: Vcf, database: str):
     """Annotate a VCF against a supplied database."""
-    return AnnotatedVcf[annotated_vcf]
+    annotated_vcf = output(AnnotatedVcf)
+    return annotated_vcf
 
 
 def aligned_reads(config):

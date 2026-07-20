@@ -10,7 +10,7 @@ import pytest
 
 from necroflow._compat import ExceptionGroup
 from pathlib import Path
-from necroflow import NodeType, Pipeline, DAG
+from necroflow import NodeType, Pipeline, DAG, output
 from necroflow.dag import resolve_paths
 from necroflow.cli import _create_link_outputs, _graph_payload, main
 from necroflow.pipeline import _sinks
@@ -175,15 +175,17 @@ def test_manifest_values_are_visible_result_paths(tmp_path):
 # ── main() integration ───────────────────────────────────────────────────────
 
 FACTORY_SRC = textwrap.dedent("""\
-    from necroflow import Pipeline, NodeType, command
+    from necroflow import Pipeline, NodeType, command, output
     class A(NodeType): filename = "a.txt"
     class B(NodeType): filename = "b.txt"
     @command("touch {a}")
     def make_a(v: str):
-        return A[a]
+        a = output(A)
+        return a
     @command("touch {b}")
     def make_b(a: A):
-        return B[b]
+        b = output(B)
+        return b
     def factory(cfg):
         P = Pipeline()
         P.a = make_a(v=cfg["v"])
@@ -927,15 +929,17 @@ def test_main_execution_summary_survives_autocleaned_intermediate(
 def test_main_keep_going_failure_writes_execution_summary(tmp_path):
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import Pipeline, NodeType, command
+        from necroflow import Pipeline, NodeType, command, output
         class A(NodeType): filename = "a.txt"
         class B(NodeType): filename = "b.txt"
         @command("touch {a}; exit 1")
         def fail_a(v: str):
-            return A[a]
+            a = output(A)
+            return a
         @command("touch {b}")
         def make_b(v: str):
-            return B[b]
+            b = output(B)
+            return b
         def factory(cfg):
             P = Pipeline()
             P.a = fail_a(v=cfg["v"])
