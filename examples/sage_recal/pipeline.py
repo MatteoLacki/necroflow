@@ -20,9 +20,7 @@ from __future__ import annotations
 
 import json
 
-from necroflow import NodeType, Pipeline, Rules
-
-r = Rules()
+from necroflow import NodeType, Pipeline, command, symlink_file, text_file
 
 
 # --- node types ---
@@ -105,30 +103,42 @@ class RecalibrationTolerance(NodeType):
 # Two rules, not one with a runtime-chosen filename -- NodeType output filenames are
 # fixed per class (see SpectraFile above), so the extension has to be picked at the
 # call site (see raw_spectra() below) rather than inside a single templated command.
-r.symlink_file("raw_mzml", MzMlSpectra)
-r.symlink_file("raw_mgf", MgfSpectra)
-r.symlink_file("raw_fasta", Fasta)
+@symlink_file
+def raw_mzml(path: str):
+    return MzMlSpectra[raw_mzml]
 
 
-def raw_spectra(path: str, rules=r):
+@symlink_file
+def raw_mgf(path: str):
+    return MgfSpectra[raw_mgf]
+
+
+@symlink_file
+def raw_fasta(path: str):
+    return Fasta[raw_fasta]
+
+
+def raw_spectra(path: str):
     """Dispatch to raw_mzml/raw_mgf by the real file's extension -- see the comment
     above SpectraFile's definition for why a mismatched extension is a silent,
     zero-spectra Sage failure."""
     lower = str(path).lower()
     if lower.endswith(".mgf"):
-        return rules.raw_mgf(path=path)
+        return raw_mgf(path=path)
     if lower.endswith(".mzml") or lower.endswith(".mzml.gz"):
-        return rules.raw_mzml(path=path)
+        return raw_mzml(path=path)
     raise ValueError(
         f"unsupported spectra file extension: {path!r} (expected .mzml or .mgf)"
     )
 
 
-r.text_file("write_sage_config", SageConfig)
+@text_file
+def write_sage_config(text: str):
+    return SageConfig[sage_config]
 
 
 # --- compute rules ---
-@r.command(
+@command(
     "python scripts/select_top_precursors.py {spectra} --top-k {top_k} -o {subset}"
 )
 def select_recalibration_spectra(spectra: SpectraFile, top_k: int):
@@ -137,7 +147,7 @@ def select_recalibration_spectra(spectra: SpectraFile, top_k: int):
     return RecalibrationSpectraSubset[subset]
 
 
-@r.command(
+@command(
     "sage {config} -f {fasta} --write-pin --annotate-matches -o {workdir} {spectra}"
     " && test -f {results_json} && test -f {results_pin}"
     " && test -f {results_tsv} && test -f {matched_fragments}"
@@ -151,7 +161,7 @@ def run_sage(spectra: SpectraFile, fasta: Fasta, config: SageConfig):
     )
 
 
-@r.command(
+@command(
     "python scripts/fit_recalibration.py {results_tsv}"
     " --fdr {fdr} --q-column {q_column} -o {tolerance}"
     " && python scripts/recalibrate_spectra.py {spectra} {tolerance} -o {recalibrated_spectra}"
@@ -184,7 +194,7 @@ def recalibrate_spectra(
     return RecalibrationTolerance[tolerance], RecalibratedSpectra[recalibrated_spectra]
 
 
-@r.command(
+@command(
     "python -m necroflow.tools.config_set"
     " {sage_config} {workdir}/precursor_tol_updated.json"
     " --target precursor_tol --source {tolerance} --source-field precursor_tol"
@@ -196,7 +206,7 @@ def update_sage_config(sage_config: SageConfig, tolerance: RecalibrationToleranc
     return SageConfig[recalibrated_sage_config]
 
 
-def recalibrated_sage_search(config: dict, rules=r) -> Pipeline:
+def recalibrated_sage_search(config: dict) -> Pipeline:
     """Two-pass Sage search: the first pass searches a subset of the spectra to
     estimate mass error, then the second pass re-runs the full spectra file with
     recalibrated tolerances. `run_sage` is instantiated twice on distinct lineage.
@@ -216,12 +226,12 @@ def recalibrated_sage_search(config: dict, rules=r) -> Pipeline:
     made things worse, because the calibration sample never saw the full error range
     to correct for. A wide calibration-only tolerance fixes that."""
     P = Pipeline()
-    P.spectra = raw_spectra(config["spectra_path"], rules)
-    P.fasta = rules.raw_fasta(path=config["fasta_path"])
-    P.sage_config = rules.write_sage_config(
+    P.spectra = raw_spectra(config["spectra_path"])
+    P.fasta = raw_fasta(path=config["fasta_path"])
+    P.sage_config = write_sage_config(
         text=json.dumps(config["sage"], sort_keys=True, indent=2) + "\n"
     )
-    P.calibration_sage_config = rules.write_sage_config(
+    P.calibration_sage_config = write_sage_config(
         text=json.dumps(
             {**config["sage"], **config["calibration_tol"]}, sort_keys=True, indent=2
         )
@@ -229,25 +239,25 @@ def recalibrated_sage_search(config: dict, rules=r) -> Pipeline:
     )
 
     # First search: top-K subset, wide exploratory tolerance, for mass-error estimation.
-    P.recal_subset = rules.select_recalibration_spectra(
+    P.recal_subset = select_recalibration_spectra(
         P.spectra, top_k=config["recal_top_k"]
     )
-    P.recal_json, P.recal_pin, P.recal_tsv, P.recal_fragments = rules.run_sage(
+    P.recal_json, P.recal_pin, P.recal_tsv, P.recal_fragments = run_sage(
         P.recal_subset, P.fasta, P.calibration_sage_config
     )
 
     # Recalibrate: fit tolerances AND correct the full spectra file's m/z from the
     # first-pass identifications (see recalibrate_spectra's docstring for why both).
-    P.tolerance, P.recalibrated_spectra = rules.recalibrate_spectra(
+    P.tolerance, P.recalibrated_spectra = recalibrate_spectra(
         P.recal_tsv,
         P.spectra,
         fdr=config["fdr"],
         q_column=config.get("recal_q_column", "peptide_q"),
     )
-    P.recalibrated_config = rules.update_sage_config(P.sage_config, P.tolerance)
+    P.recalibrated_config = update_sage_config(P.sage_config, P.tolerance)
 
     # Second search: full, m/z-corrected spectra file, recalibrated tolerances.
-    P.json, P.pin, P.tsv, P.fragments = rules.run_sage(
+    P.json, P.pin, P.tsv, P.fragments = run_sage(
         P.recalibrated_spectra, P.fasta, P.recalibrated_config
     )
     return P

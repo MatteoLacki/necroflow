@@ -6,7 +6,7 @@ featureCounts, or bcftools. Commands run only when a DAG is executed.
 
 from types import SimpleNamespace
 
-from necroflow import DAG, NodeType, Pipeline, Rules, resolve_command
+from necroflow import DAG, NodeType, Pipeline, resolve_command, command
 
 
 class Fastq(NodeType):
@@ -37,16 +37,13 @@ class AnnotatedVcf(NodeType):
     filename = "annotated.vcf.gz"
 
 
-r = Rules()
-
-
-@r.command("ln -s {path} {fastq}")
+@command("ln -s {path} {fastq}")
 def raw_fastq(path: str):
     """Expose a source FASTQ as a typed artifact."""
     return Fastq[fastq]
 
 
-@r.command(
+@command(
     "bwa mem {reference} {fastq} 2> {log} | samtools view -b -o {bam}",
     threads=4,
 )
@@ -55,19 +52,19 @@ def align(fastq: Fastq, reference: str):
     return Bam[bam], Log[log]
 
 
-@r.command("samtools sort {bam} -o {sorted_bam}")
+@command("samtools sort {bam} -o {sorted_bam}")
 def sort_bam(bam: Bam):
     """Sort a BAM by coordinate."""
     return SortedBam[sorted_bam]
 
 
-@r.command("featureCounts -a {gene_model} {bam} -o {counts}")
+@command("featureCounts -a {gene_model} {bam} -o {counts}")
 def quantify(bam: SortedBam, gene_model: str):
     """Count reads per gene."""
     return Counts[counts]
 
 
-@r.command(
+@command(
     "bcftools mpileup -f {reference} -Ou {bam} | " "bcftools call -mv -Oz -o {vcf}"
 )
 def call_variants(bam: SortedBam, reference: str):
@@ -75,38 +72,38 @@ def call_variants(bam: SortedBam, reference: str):
     return Vcf[vcf]
 
 
-@r.command("bcftools annotate -a {database} {vcf} -Oz -o {annotated_vcf}")
+@command("bcftools annotate -a {database} {vcf} -Oz -o {annotated_vcf}")
 def annotate(vcf: Vcf, database: str):
     """Annotate a VCF against a supplied database."""
     return AnnotatedVcf[annotated_vcf]
 
 
-def aligned_reads(config, rules=r):
+def aligned_reads(config):
     """Construct the import, alignment, and sorting prefix."""
     P = Pipeline()
-    P.fastq = rules.raw_fastq(path=config.path)
-    P.bam, P.align_log = rules.align(P.fastq, reference=config.reference)
-    P.sorted_bam = rules.sort_bam(P.bam)
+    P.fastq = raw_fastq(path=config.path)
+    P.bam, P.align_log = align(P.fastq, reference=config.reference)
+    P.sorted_bam = sort_bam(P.bam)
     return P
 
 
-def quantification_pipeline(config, rules=r):
-    P = aligned_reads(config, rules)
-    P.counts = rules.quantify(P.sorted_bam, gene_model=config.gene_model)
+def quantification_pipeline(config):
+    P = aligned_reads(config)
+    P.counts = quantify(P.sorted_bam, gene_model=config.gene_model)
     return P
 
 
-def variant_pipeline(config, rules=r):
-    P = aligned_reads(config, rules)
-    P.vcf = rules.call_variants(P.sorted_bam, reference=config.reference)
+def variant_pipeline(config):
+    P = aligned_reads(config)
+    P.vcf = call_variants(P.sorted_bam, reference=config.reference)
     return P
 
 
-def extended_pipeline(config, rules=r):
-    P = quantification_pipeline(config, rules)
+def extended_pipeline(config):
+    P = quantification_pipeline(config)
     if config.call_variants:
-        P.vcf = rules.call_variants(P.sorted_bam, reference=config.reference)
-        P.annotated_vcf = rules.annotate(P.vcf, database=config.variant_database)
+        P.vcf = call_variants(P.sorted_bam, reference=config.reference)
+        P.annotated_vcf = annotate(P.vcf, database=config.variant_database)
     return P
 
 

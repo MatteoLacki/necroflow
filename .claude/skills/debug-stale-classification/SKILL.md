@@ -44,11 +44,11 @@ Outside the required subgraph: output exists → `ORPHAN` (deleted by `autoclean
   *string*, never the file content. Editing a config/dataset file at the same path does not
   change the fingerprint, and if the path was passed as a bare string with no ingestion node
   at all, nothing ever notices — the node stays `UP_TO_DATE` forever. Countermeasures: for a
-  dataset, ingest it with `R.symlink_file(name, OutputType)` so the normal mtime/hash STALE
+  dataset, ingest it with `@symlink_file` or `symlink_file_rule(name, OutputType)` so the normal mtime/hash STALE
   machinery covers it (`docs/caching.md#external-dataset-ingestion`) — a `cp`-based import
   does NOT get this for free, since the copy freezes content and nothing revisits the source
   path again. Other options: `NodeType.invalidator` (`examples/custom_invalidation.py`),
-  inline config content via `Rules.text_file` (`docs/generated-config-files.md`), or
+  inline config content via `@text_file` or `text_file_rule` (`docs/generated-config-files.md`), or
   `--invalidate LABEL` to force.
 - **Crash left `.rip/state` = `running`.** Node is compromised → re-runs even though the
   output exists. That is intended.

@@ -10,7 +10,7 @@ Run:
 """
 
 from pathlib import Path
-from necroflow import DAG, Inputs, Outputs, NodeType, Rules, fifo_scheduler
+from necroflow import DAG, NodeType, command, fifo_scheduler
 
 
 class Text(NodeType):
@@ -29,30 +29,34 @@ class Merged(NodeType):
     filename = "merged.txt"
 
 
-R = Rules()
-R.register("make_text", Inputs(word=str), Outputs(text=Text), "echo {word} > {text}")
-R.register(
-    "to_upper", Inputs(text=Text), Outputs(upper=Upper), "tr a-z A-Z < {text} > {upper}"
-)
-R.register(
-    "to_lower", Inputs(text=Text), Outputs(lower=Lower), "tr A-Z a-z < {text} > {lower}"
-)
-R.register(
-    "merge",
-    Inputs(upper=Upper, lower=Lower),
-    Outputs(merged=Merged),
-    "paste {upper} {lower} > {merged}",
-)
+@command("echo {word} > {text}")
+def make_text(word: str):
+    return Text[text]
+
+
+@command("tr a-z A-Z < {text} > {upper}")
+def to_upper(text: Text):
+    return Upper[upper]
+
+
+@command("tr A-Z a-z < {text} > {lower}")
+def to_lower(text: Text):
+    return Lower[lower]
+
+
+@command("paste {upper} {lower} > {merged}")
+def merge(upper: Upper, lower: Lower):
+    return Merged[merged]
 
 
 def diamond(word: str):
     from necroflow import Pipeline
 
     P = Pipeline()
-    P.text = R.make_text(word=word)
-    P.upper = R.to_upper(P.text)
-    P.lower = R.to_lower(P.text)
-    P.merged = R.merge(P.upper, P.lower)
+    P.text = make_text(word=word)
+    P.upper = to_upper(P.text)
+    P.lower = to_lower(P.text)
+    P.merged = merge(P.upper, P.lower)
     return P
 
 

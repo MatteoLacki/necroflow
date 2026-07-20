@@ -1,6 +1,6 @@
 # necroflow
 
-Python pipeline framework inspired by Snakemake. Rules are registered via a `Rules` container;
+Python pipeline framework inspired by Snakemake. Rules are declared as module-level values with `@command`;
 the framework owns path generation, DAG construction, and execution.
 
 **Source of truth is the code.** This file records only stable invariants, conventions, and a
@@ -85,7 +85,7 @@ These have been true since the June refactors and are load-bearing design decisi
 - **`.rip/` per-output metadata**: `dependencies.toml` (accumulated ancestor config),
   `{filename}.hash`, `job.log`, `state`, `run.toml` (timings/size), `graph.txt` (ancestor
   render), `{filename}.invalidation` (NodeType invalidator token, when set).
-- **Explicit over implicit.** Nodes are registered by attribute assignment (`P.bam = R.align(...)`);
+- **Explicit over implicit.** Nodes are registered by attribute assignment (`P.bam = align(...)`);
   there is no context-manager or `ContextVar` auto-registration, and there never should be again.
 
 ## Scheduler protocol (current — 3 arguments)
@@ -120,7 +120,7 @@ Full semantics: the `execute()` docstring and `docs/execution.md`.
 src/necroflow/
   nodes.py           — Node, NodeState, NodeType/NodeTypeMeta, topo sort, connected components,
                        per-node state files (.state_file, .is_compromised, .mark_running/.mark_done)
-  rules.py           — Inputs, Outputs, Constraints, Rule, Rules (decorator + explicit + text_file),
+  rules.py           — Rule internals plus command, text-file, and symlink-file declarations,
                        parse_resource with SI/binary suffixes
   schedulers.py      — Scheduler protocol, fifo_scheduler, ConnectedComponentScheduler
   dag.py             — resolve_paths (incl. path-length checks), resolve_command, write_dependencies,

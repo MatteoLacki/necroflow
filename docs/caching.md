@@ -31,7 +31,7 @@ results/experiment__ref+hg38__aligner+bwa/counts/counts.txt
 counts = "counts/counts.txt"
 ```
 
-The key (`counts`) matches `P.counts = R.count(...)` in the factory function.
+The key (`counts`) matches `P.counts = count(...)` in the factory function.
 
 See `examples/necroalchemy_grid.toml` and `examples/necroalchemy_factory.py`
 for a runnable example.
@@ -47,7 +47,7 @@ During path resolution, necroflow validates generated paths against the filesyst
 Commands may use the built-in `{workdir}` placeholder to refer to the rule-call output directory: `nodes/{rule}/{hash16}` by default. Use it for tools that need to write a directory of side files or temporary computation products that should live next to the declared outputs:
 
 ```python
-@r.command("dosomething --tmp {workdir}/scratch -o {result}")
+@command("dosomething --tmp {workdir}/scratch -o {result}")
 def compute(input: Input):
     return Result[result]
 ```
@@ -87,24 +87,22 @@ Invalidators are evaluated during the initial node classification at the start o
 
 ### External dataset ingestion
 
-A path passed as a bare string config value (e.g. `R.align(fastq="/data/sample.fastq")`)
+A path passed as a bare string config value (e.g. `align(fastq="/data/sample.fastq")`)
 is fingerprinted as *text* — necroflow hashes the path string, never the file's
 bytes. Editing that file in place changes nothing necroflow can see: the
 downstream node stays `UP_TO_DATE` forever. This applies with no ingestion
 node at all; there is nothing to compare against.
 
 The fix is to ingest the file through its own rule, symlinking it in. Use the
-built-in `Rules.symlink_file` registrar instead of hand-writing the same
+built-in `@symlink_file` decorator instead of hand-writing the same
 `ln -s` command for every dataset type:
 
 ```python
-R.symlink_file("raw_spectra", Mzml)
-# equivalent to:
-#   @R.command("ln -s $(realpath {path}) {spectra}")
-#   def raw_spectra(path: str):
-#       return Mzml[spectra]
+@symlink_file
+def raw_spectra(path: str):
+    return Mzml[spectra]
 
-P.spectra = R.raw_spectra(path=config["spectra"])
+P.spectra = raw_spectra(path=config["spectra"])
 ```
 
 `$(realpath ...)` resolves to an absolute path so the symlink survives if the

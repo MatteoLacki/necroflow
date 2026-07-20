@@ -22,14 +22,14 @@ A separate config file can be passed as a normal string parameter when that is
 all the downstream command needs:
 
 ```python
-@R.command("sage --config {sage_config_path} --mzml {spectra} --out {sage_out}")
+@command("sage --config {sage_config_path} --mzml {spectra} --out {sage_out}")
 def run_sage(spectra: Mzml, sage_config_path: str):
     return SageOut[sage_out]
 
 
 def pipeline(config):
     P = Pipeline()
-    P.sage_out = R.run_sage(P.spectra, sage_config_path=config["sage_config"])
+    P.sage_out = run_sage(P.spectra, sage_config_path=config["sage_config"])
     return P
 ```
 
@@ -46,29 +46,26 @@ When the external config should be a typed artifact in the DAG, add an import or
 copy rule and pass the resulting node downstream:
 
 ```python
-from necroflow import NodeType, Rules, Pipeline
+from necroflow import NodeType, Pipeline, command
 
 class SageConfig(NodeType):
     filename = "sage.json"
 
 class SageOut(NodeType):
     filename = "results.sage.tsv"
-
-R = Rules()
-
-@R.command("cp {path} {sage_config}")
+@command("cp {path} {sage_config}")
 def import_sage_config(path: str):
     return SageConfig[sage_config]
 
-@R.command("sage --config {sage_config} --mzml {spectra} --out {sage_out}")
+@command("sage --config {sage_config} --mzml {spectra} --out {sage_out}")
 def run_sage(spectra: Mzml, sage_config: SageConfig):
     return SageOut[sage_out]
 
 
 def pipeline(config):
     P = Pipeline()
-    P.sage_config = R.import_sage_config(path=config["sage_config"])
-    P.sage_out = R.run_sage(P.spectra, P.sage_config)
+    P.sage_config = import_sage_config(path=config["sage_config"])
+    P.sage_out = run_sage(P.spectra, P.sage_config)
     return P
 ```
 
@@ -87,15 +84,15 @@ as `printf {config}`.
 
 ```python
 import json
-from necroflow import NodeType, Rules
+from necroflow import NodeType, command, text_file
 
 class SageConfig(NodeType):
     filename = "sage.json"
+@text_file
+def write_sage_config(text: str):
+    return SageConfig[sage_config]
 
-R = Rules()
-R.text_file("write_sage_config", SageConfig)
-
-@R.command("necromerge2-run-sage {spectra} {fasta} {outdir} {run_info} --config {sage_config}")
+@command("necromerge2-run-sage {spectra} {fasta} {outdir} {run_info} --config {sage_config}")
 def run_sage(spectra: SageInputStaged, fasta: Fasta, sage_config: SageConfig):
     return SageRawOutdir[outdir], SageRunInfo[run_info]
 ```
@@ -109,13 +106,13 @@ min_peaks = 15
 ```
 
 ```python
-P.sage_config = R.write_sage_config(
+P.sage_config = write_sage_config(
     text=json.dumps(config["sage"], sort_keys=True, indent=2) + "\n"
 )
-P.sage_out, P.run_info = R.run_sage(P.spectra, P.fasta, P.sage_config)
+P.sage_out, P.run_info = run_sage(P.spectra, P.fasta, P.sage_config)
 ```
 
-`Rules.text_file(name, output, input_name="text")` creates a normal cached node.
+`@text_file` and `text_file_rule(name, output, input_name="text")` create normal cached nodes.
 The text value participates in the node fingerprint, and the built-in writer
 recipe (`necroflow.text_file/v1`) is hashed in place of shell command text.
 

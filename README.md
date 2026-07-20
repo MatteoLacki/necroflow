@@ -44,9 +44,9 @@ Use `P.section(name)` in a long factory to label the stage for subsequent node a
 ```python
 P = Pipeline()
 P.section("Read alignment")
-P.bam = R.align(P.fastq, ref=config.ref)
+P.bam = align(P.fastq, ref=config.ref)
 P.section("Quantification")
-P.counts = R.count(P.bam, gene_model=config.gene_model)
+P.counts = count(P.bam, gene_model=config.gene_model)
 ```
 
 ## Define a pipeline
@@ -55,7 +55,7 @@ A command-line run points at a Python pipeline factory. Rules describe typed out
 
 ```python
 # pipeline.py
-from necroflow import NodeType, Rules, Pipeline
+from necroflow import NodeType, Pipeline, command, symlink_file
 
 class Fastq(NodeType):
     filename = "reads.fastq.gz"
@@ -65,26 +65,23 @@ class Bam(NodeType):
 
 class Counts(NodeType):
     filename = "counts.txt"
-
-r = Rules()
-
-@r.command("ln -s {path} {fastq}")
+@symlink_file
 def raw_fastq(path: str):
     return Fastq[fastq]
 
-@r.command("bwa mem {ref} {fastq} > {bam}", threads=4)
+@command("bwa mem {ref} {fastq} > {bam}", threads=4)
 def align(fastq: Fastq, ref: str):
     return Bam[bam]
 
-@r.command("featureCounts -a {gene_model} {bam} -o {counts}")
+@command("featureCounts -a {gene_model} {bam} -o {counts}")
 def count(bam: Bam, gene_model: str):
     return Counts[counts]
 
 def rna_pipeline(config):
     P = Pipeline()
-    P.fastq = r.raw_fastq(path=config["path"])
-    P.bam = r.align(P.fastq, ref=config["ref"])
-    P.counts = r.count(P.bam, gene_model=config["gene_model"])
+    P.fastq = raw_fastq(path=config["path"])
+    P.bam = align(P.fastq, ref=config["ref"])
+    P.counts = count(P.bam, gene_model=config["gene_model"])
     return P
 ```
 
@@ -100,13 +97,13 @@ factory without changing the CLI factory signature:
 
 ```python
 def add_alignment(P, config):
-    P.fastq = r.raw_fastq(path=config["path"])
-    P.bam = r.align(P.fastq, ref=config["ref"])
+    P.fastq = raw_fastq(path=config["path"])
+    P.bam = align(P.fastq, ref=config["ref"])
 
 def rna_pipeline(config):
     P = Pipeline()
     add_alignment(P, config)
-    P.counts = r.count(P.bam, gene_model=config["gene_model"])
+    P.counts = count(P.bam, gene_model=config["gene_model"])
     return P
 ```
 

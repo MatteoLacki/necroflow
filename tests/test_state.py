@@ -1,10 +1,11 @@
+from necroflow.rules import Constraints, Inputs, Outputs, Rule
 import hashlib
 import time
 from pathlib import Path
 
 import pytest
 
-from necroflow import Rules, Inputs, Outputs, Pipeline, DAG, NodeType, NodeState
+from necroflow import Pipeline, DAG, NodeType, NodeState
 from necroflow.nodes import Node
 
 
@@ -20,11 +21,12 @@ class C(NodeType):
     pass
 
 
-R = Rules()
-R.register("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
-R.register("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
-R.register("fail_c", Inputs(x=str), Outputs(c=C), "{{ : {c}; exit 1; }}")
-R.register("signal_c", Inputs(x=str), Outputs(c=C), "{{ : {c}; kill -TERM $$; }}")
+R_make_a = Rule("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
+R_make_b = Rule("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
+R_fail_c = Rule("fail_c", Inputs(x=str), Outputs(c=C), "{{ : {c}; exit 1; }}")
+R_signal_c = Rule(
+    "signal_c", Inputs(x=str), Outputs(c=C), "{{ : {c}; kill -TERM $$; }}"
+)
 
 
 def _node(tmp_path, key="rule/fp/out.txt"):
@@ -35,8 +37,8 @@ def _node(tmp_path, key="rule/fp/out.txt"):
 
 def simple_dag(tmp_path):
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
     dag = DAG(outdir=tmp_path)
     dag.add(P, request=[P.b])
     return dag, P
@@ -112,7 +114,7 @@ def test_simulated_crash_reruns_node(tmp_path):
 
 def test_failed_node_state(tmp_path):
     P = Pipeline()
-    P.c = R.fail_c(x="x")
+    P.c = R_fail_c(x="x")
     dag = DAG(outdir=tmp_path)
     dag.add(P, request=[P.c])
 
@@ -129,7 +131,7 @@ def test_failed_node_state(tmp_path):
 
 def test_interrupted_node_state(tmp_path):
     P = Pipeline()
-    P.c = R.signal_c(x="x")
+    P.c = R_signal_c(x="x")
     dag = DAG(outdir=tmp_path)
     dag.add(P, request=[P.c])
 
@@ -152,16 +154,21 @@ class Y(NodeType):
     pass
 
 
-R2 = Rules()
-R2.register("make_x", Inputs(v=str), Outputs(x=X), "touch {x}")
-R2.register("make_y_fail", Inputs(x=X), Outputs(y=Y), "touch {y} && exit 1")
-R2.register("make_y_signal", Inputs(x=X), Outputs(y=Y), "touch {y}; kill -TERM $$")
+R2_make_x = Rule("make_x", Inputs(v=str), Outputs(x=X), "touch {x}")
+R2_make_y_fail = Rule("make_y_fail", Inputs(x=X), Outputs(y=Y), "touch {y} && exit 1")
+R2_make_y_signal = Rule(
+    "make_y_signal", Inputs(x=X), Outputs(y=Y), "touch {y}; kill -TERM $$"
+)
 
 
 def _xy_dag(tmp_path, y_rule="make_y_fail"):
     P = Pipeline()
-    P.x = R2.make_x(v="v")
-    P.y = getattr(R2, y_rule)(P.x)
+    rules = {
+        "make_y_fail": R2_make_y_fail,
+        "make_y_signal": R2_make_y_signal,
+    }
+    P.x = R2_make_x(v="v")
+    P.y = rules[y_rule](P.x)
     dag = DAG(outdir=tmp_path)
     dag.add(P)
     return dag, P
@@ -229,15 +236,14 @@ def test_nodetype_invalidator_external_file_change_reruns_node(tmp_path):
         filename = "external.txt"
         invalidator = external_hash
 
-    r = Rules()
-    r.register(
+    r_make_external = Rule(
         "make_external",
         Inputs(text=str, dependency=str),
         Outputs(out=ExternalInvalidated),
         "echo {text} > {out}",
     )
     P = Pipeline()
-    P.out = r.make_external(text="payload", dependency=str(dependency))
+    P.out = r_make_external(text="payload", dependency=str(dependency))
 
     execute = DAG(outdir=tmp_path)
     execute.add(P)
@@ -259,15 +265,14 @@ def test_nodetype_invalidator_output_file_change_reruns_node(tmp_path):
         filename = "output-hash.txt"
         invalidator = output_hash
 
-    r = Rules()
-    r.register(
+    r_make_output_hash = Rule(
         "make_output_hash",
         Inputs(text=str),
         Outputs(out=OutputHashInvalidated),
         "echo {text} > {out}",
     )
     P = Pipeline()
-    P.out = r.make_output_hash(text="payload")
+    P.out = r_make_output_hash(text="payload")
     dag = DAG(outdir=tmp_path)
     dag.add(P)
     dag.execute()
@@ -288,15 +293,14 @@ def test_nodetype_invalidator_missing_metadata_reruns_node(tmp_path):
         filename = "output.txt"
         invalidator = output_hash
 
-    r = Rules()
-    r.register(
+    r_make_output = Rule(
         "make_output",
         Inputs(text=str),
         Outputs(out=OutputInvalidated),
         "echo {text} > {out}",
     )
     P = Pipeline()
-    P.out = r.make_output(text="payload")
+    P.out = r_make_output(text="payload")
     dag = DAG(outdir=tmp_path)
     dag.add(P)
     dag.execute()
@@ -323,15 +327,14 @@ def test_nodetype_invalidator_exception_fails_fast(tmp_path):
         filename = "raising.txt"
         invalidator = maybe_raise
 
-    r = Rules()
-    r.register(
+    r_make_raising = Rule(
         "make_raising",
         Inputs(text=str),
         Outputs(out=RaisingInvalidator),
         "echo {text} > {out}",
     )
     P = Pipeline()
-    P.out = r.make_raising(text="payload")
+    P.out = r_make_raising(text="payload")
     dag = DAG(outdir=tmp_path)
     dag.add(P)
     dag.execute()
@@ -357,15 +360,14 @@ def test_multi_output_invalidator_reruns_shared_command_once(tmp_path):
     class PlainB(NodeType):
         filename = "b.txt"
 
-    r = Rules()
-    r.register(
+    r_make_pair = Rule(
         "make_pair",
         Inputs(dependency=str, count=str),
         Outputs(a=InvalidatedA, b=PlainB),
         "n=$(cat {count}); n=$((n + 1)); echo $n > {count}; echo a > {a}; echo b > {b}",
     )
     P = Pipeline()
-    P.a, P.b = r.make_pair(dependency=str(dependency), count=str(count))
+    P.a, P.b = r_make_pair(dependency=str(dependency), count=str(count))
     dag = DAG(outdir=tmp_path)
     dag.add(P)
 

@@ -5,7 +5,7 @@ from collections.abc import Callable
 import re
 from types import UnionType
 from string import Formatter
-from typing import get_args, get_origin
+from typing import get_args, get_origin, overload
 
 from necroflow.nodes import Node, _is_nodetype
 
@@ -101,7 +101,7 @@ def _matches_node_type(actual, expected) -> bool:
 
 
 class Rule:
-    """A registered rule: validates inputs and produces output Nodes when called."""
+    """A declared rule: validates inputs and produces output Nodes when called."""
 
     def __init__(
         self,
@@ -255,13 +255,16 @@ def _parse_rule_fn(fn) -> tuple:
     import inspect
     import textwrap
 
+    namespace = dict(fn.__globals__)
+    namespace.update(inspect.getclosurevars(fn).nonlocals)
+
     def _parse_output_items(items):
         specs = {}
         for item in items:
             if isinstance(item, ast.Subscript):
-                specs[item.slice.id] = fn.__globals__[item.value.id]
+                specs[item.slice.id] = namespace[item.value.id]
             elif isinstance(item, ast.Name):
-                specs[_pascal_to_snake(item.id)] = fn.__globals__[item.id]
+                specs[_pascal_to_snake(item.id)] = namespace[item.id]
             else:
                 raise ValueError(
                     f"rule {rule_name!r}: output items must be Type[name] or Type"
@@ -277,7 +280,7 @@ def _parse_rule_fn(fn) -> tuple:
         if pname == "return":
             continue
         if isinstance(ann, str):
-            ann = eval(ann, fn.__globals__)  # noqa: PGH001
+            ann = eval(ann, namespace)  # noqa: PGH001
         inputs_specs[pname] = ann
 
     # Prefer return Type[name] in the function body over -> annotation
@@ -325,202 +328,212 @@ def _parse_rule_fn(fn) -> tuple:
     return rule_name, inputs_specs, outputs_specs, info
 
 
-class Rules:
-    """Container for registered rules. Names must be unique."""
+def _make_rule(
+    *,
+    name: str,
+    inputs: dict,
+    outputs: dict,
+    command: str | list[str] | None,
+    constraints: dict | None = None,
+    info: str | None = None,
+    repeat: int = 1,
+    recipe_identity: str | None = None,
+    materializer: Callable | None = None,
+) -> Rule:
+    """Build a Rule from the internal dictionary representation."""
+    return Rule(
+        name=name,
+        inputs=Inputs(**inputs),
+        outputs=Outputs(**outputs),
+        command=command,
+        constraints=Constraints(**constraints) if constraints else None,
+        info=info,
+        repeat=repeat,
+        recipe_identity=recipe_identity,
+        materializer=materializer,
+    )
 
-    def __init__(self):
-        self._registry: dict = {}
 
-    def register(
-        self,
-        name: str,
-        inputs: Inputs,
-        outputs: Outputs,
-        command: str | list[str] | None,
-        constraints: Constraints | None = None,
-        info: str | None = None,
-        repeat: int = 1,
-        recipe_identity: str | None = None,
-        materializer: Callable | None = None,
-    ) -> None:
-        if name in self._registry:
-            raise ValueError(f"Rule {name!r} already registered")
-        rule = Rule(
+def command(
+    cmd: str | list[str], /, *, repeat: int = 1, **constraints
+) -> Callable[[Callable], Rule]:
+    """Declare a shell-command rule from a typed function signature.
+
+    The decorated function is parsed as a declaration and replaced by the
+    resulting callable Rule; its body is never executed.
+    """
+
+    def decorator(fn: Callable) -> Rule:
+        rule_name, inputs, outputs, info = _parse_rule_fn(fn)
+        return _make_rule(
+            name=rule_name,
+            inputs=inputs,
+            outputs=outputs,
+            command=cmd,
+            constraints=constraints,
+            info=info,
+            repeat=repeat,
+        )
+
+    return decorator
+
+
+def _validate_builtin_declaration(fn: Callable, kind: str) -> tuple:
+    """Parse and validate the single-string-input, single-output built-in shape."""
+    import inspect
+
+    signature = inspect.signature(fn)
+    parameters = list(signature.parameters.values())
+    if len(parameters) != 1:
+        raise TypeError(f"{kind} rule {fn.__name__!r} must declare exactly one input")
+    parameter = parameters[0]
+    if parameter.kind is not inspect.Parameter.POSITIONAL_OR_KEYWORD:
+        raise TypeError(
+            f"{kind} rule {fn.__name__!r} input must be a normal named parameter"
+        )
+    if parameter.default is not inspect.Parameter.empty:
+        raise TypeError(f"{kind} rule {fn.__name__!r} input must not have a default")
+
+    name, inputs, outputs, info = _parse_rule_fn(fn)
+    if len(inputs) != 1 or next(iter(inputs.values()), None) is not str:
+        raise TypeError(f"{kind} rule {name!r} input must be annotated as str")
+    if len(outputs) != 1:
+        raise TypeError(f"{kind} rule {name!r} must declare exactly one output")
+    output_name, output = next(iter(outputs.items()))
+    if not _is_nodetype(output):
+        raise TypeError(
+            f"{kind} rule {name!r} output must be a NodeType, got {output!r}"
+        )
+    return name, parameter.name, output_name, output, info
+
+
+def _make_text_file_rule(
+    name: str,
+    output: type,
+    *,
+    input_name: str,
+    encoding: str,
+    output_name: str | None,
+    info: str | None,
+) -> Rule:
+    if input_name in BUILTIN_COMMAND_PLACEHOLDERS:
+        raise ValueError(f"text_file input_name {input_name!r} is reserved")
+    if not _is_nodetype(output):
+        raise TypeError(f"text_file output must be a NodeType, got {output!r}")
+    oname = output_name or _pascal_to_snake(output.__name__)
+    recipe = (
+        f"necroflow.text_file/v1:encoding={encoding}:"
+        f"input={input_name}:output={oname}"
+    )
+
+    def materializer(node, log) -> None:
+        node.path.write_text(node.config[input_name], encoding=encoding)
+
+    return _make_rule(
+        name=name,
+        inputs={input_name: str},
+        outputs={oname: output},
+        command=None,
+        info=info or f"Write {input_name!r} to {output.__name__}.",
+        recipe_identity=recipe,
+        materializer=materializer,
+    )
+
+
+def text_file_rule(
+    name: str,
+    output: type,
+    *,
+    input_name: str = "text",
+    encoding: str = "utf-8",
+    output_name: str | None = None,
+) -> Rule:
+    """Return a built-in rule that writes a string config value to a file."""
+    return _make_text_file_rule(
+        name,
+        output,
+        input_name=input_name,
+        encoding=encoding,
+        output_name=output_name,
+        info=None,
+    )
+
+
+@overload
+def text_file(fn: Callable, /) -> Rule: ...
+
+
+@overload
+def text_file(*, encoding: str = "utf-8") -> Callable[[Callable], Rule]: ...
+
+
+def text_file(fn: Callable | None = None, /, *, encoding: str = "utf-8"):
+    """Declare a built-in text-file rule, optionally selecting its encoding."""
+
+    def decorator(declaration: Callable) -> Rule:
+        name, input_name, output_name, output, info = _validate_builtin_declaration(
+            declaration, "text_file"
+        )
+        return _make_text_file_rule(
             name,
-            inputs,
-            outputs,
-            command,
-            constraints,
-            info,
-            repeat,
-            recipe_identity,
-            materializer,
-        )
-        self._registry[name] = rule
-        self.__dict__[name] = rule
-
-    def text_file(
-        self,
-        name: str,
-        output: type,
-        *,
-        input_name: str = "text",
-        encoding: str = "utf-8",
-        output_name: str | None = None,
-    ) -> None:
-        """Register a built-in rule that writes a string config value to a file.
-
-        The text is written directly by Python, not passed through the shell.
-        """
-        if input_name in BUILTIN_COMMAND_PLACEHOLDERS:
-            raise ValueError(f"text_file input_name {input_name!r} is reserved")
-        if not _is_nodetype(output):
-            raise TypeError(f"text_file output must be a NodeType, got {output!r}")
-        oname = output_name or _pascal_to_snake(output.__name__)
-        recipe = (
-            f"necroflow.text_file/v1:encoding={encoding}:"
-            f"input={input_name}:output={oname}"
+            output,
+            input_name=input_name,
+            encoding=encoding,
+            output_name=output_name,
+            info=info,
         )
 
-        def materializer(node, log) -> None:
-            node.path.write_text(node.config[input_name], encoding=encoding)
+    return decorator(fn) if fn is not None else decorator
 
-        self.register(
-            name,
-            Inputs(**{input_name: str}),
-            Outputs(**{oname: output}),
-            None,
-            info=f"Write {input_name!r} to {output.__name__}.",
-            recipe_identity=recipe,
-            materializer=materializer,
-        )
 
-    def symlink_file(
-        self,
-        name: str,
-        output: type,
-        *,
-        path_arg: str = "path",
-        output_name: str | None = None,
-    ) -> None:
-        """Register a built-in rule that symlinks an external path into the output tree.
+def _make_symlink_file_rule(
+    name: str,
+    output: type,
+    *,
+    path_arg: str,
+    output_name: str | None,
+    info: str | None,
+) -> Rule:
+    if path_arg in BUILTIN_COMMAND_PLACEHOLDERS:
+        raise ValueError(f"symlink_file path_arg {path_arg!r} is reserved")
+    if not _is_nodetype(output):
+        raise TypeError(f"symlink_file output must be a NodeType, got {output!r}")
+    oname = output_name or _pascal_to_snake(output.__name__)
+    return _make_rule(
+        name=name,
+        inputs={path_arg: str},
+        outputs={oname: output},
+        command=f"ln -s $(realpath {{{path_arg}}}) {{{oname}}}",
+        info=info or f"Symlink an external file into {output.__name__}.",
+    )
 
-        Unlike a bare path passed as a config value, the symlinked node's stat follows
-        through to the real file, so the existing mtime/hash STALE machinery detects
-        upstream edits and reruns downstream consumers automatically — no
-        NodeType.invalidator needed. See docs/caching.md#external-dataset-ingestion.
-        """
-        if path_arg in BUILTIN_COMMAND_PLACEHOLDERS:
-            raise ValueError(f"symlink_file path_arg {path_arg!r} is reserved")
-        if not _is_nodetype(output):
-            raise TypeError(f"symlink_file output must be a NodeType, got {output!r}")
-        oname = output_name or _pascal_to_snake(output.__name__)
-        self.register(
-            name,
-            Inputs(**{path_arg: str}),
-            Outputs(**{oname: output}),
-            f"ln -s $(realpath {{{path_arg}}}) {{{oname}}}",
-            info=f"Symlink an external file into {output.__name__}.",
-        )
 
-    def command(self, cmd: str | list[str], **constraints):
-        """Decorator to register a rule, with the command as the decorator argument.
+def symlink_file_rule(
+    name: str,
+    output: type,
+    *,
+    path_arg: str = "path",
+    output_name: str | None = None,
+) -> Rule:
+    """Return a rule that symlinks an external path into the output tree."""
+    return _make_symlink_file_rule(
+        name,
+        output,
+        path_arg=path_arg,
+        output_name=output_name,
+        info=None,
+    )
 
-        Usage:
-            r = Rules()
 
-            @r.command("ln -s {path} {fastq}")
-            def raw_fastq(path: str):
-                "Symlink a raw FASTQ file into the output tree."
-                return Fastq[fastq]
-
-            @r.command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
-            def align(fastq: Fastq, ref: str):
-                "Align reads with BWA-MEM."
-                return Bam[bam], Log[log]
-        """
-        repeat = constraints.pop("repeat", 1)
-
-        def decorator(fn):
-            rule_name, inputs_specs, outputs_specs, info = _parse_rule_fn(fn)
-            constraints_obj = Constraints(**constraints) if constraints else None
-            self.register(
-                rule_name,
-                Inputs(**inputs_specs),
-                Outputs(**outputs_specs),
-                cmd,
-                constraints_obj,
-                info,
-                repeat,
-            )
-            return self.__dict__[rule_name]
-
-        return decorator
-
-    def rule(self, fn=None, **constraints):
-        """Decorator to register a rule; command is a ``command = ...`` assignment in the body.
-
-        Usage:
-            rule = R.rule
-
-            @rule
-            def sort_bam(bam: Bam):
-                "Sort BAM by coordinate."
-                command = "samtools sort {bam} -o {sorted_bam}"
-                return SortedBam[sorted_bam]
-
-            @rule(threads=4)
-            def align(fastq: Fastq, ref: str):
-                "Align reads with BWA-MEM."
-                command = "bwa mem {ref} {fastq} > {bam} 2> {log}"
-                return Bam[bam], Log[log]
-        """
-        import ast
-        import inspect
-        import textwrap
-
-        repeat = constraints.pop("repeat", 1)
-
-        def decorator(fn):
-            rule_name, inputs_specs, outputs_specs, info = _parse_rule_fn(fn)
-
-            src = textwrap.dedent(inspect.getsource(fn))
-            func_tree = ast.parse(src)
-            func_def = next(
-                n
-                for n in ast.walk(func_tree)
-                if isinstance(n, ast.FunctionDef) and n.name == rule_name
-            )
-            cmd = None
-            for stmt in func_def.body:
-                if (
-                    isinstance(stmt, ast.Assign)
-                    and len(stmt.targets) == 1
-                    and isinstance(stmt.targets[0], ast.Name)
-                    and stmt.targets[0].id == "command"
-                ):
-                    expr = ast.Expression(body=stmt.value)
-                    ast.fix_missing_locations(expr)
-                    cmd = eval(
-                        compile(expr, "<rule>", "eval"), fn.__globals__
-                    )  # noqa: PGH001
-                    break
-
-            if cmd is None:
-                raise ValueError(
-                    f"rule {rule_name!r}: no 'command = ...' found in body"
-                )
-
-            constraints_obj = Constraints(**constraints) if constraints else None
-            self.register(
-                rule_name,
-                Inputs(**inputs_specs),
-                Outputs(**outputs_specs),
-                cmd,
-                constraints_obj,
-                info,
-                repeat,
-            )
-            return self.__dict__[rule_name]
-
-        return decorator(fn) if fn is not None else decorator
+def symlink_file(fn: Callable, /) -> Rule:
+    """Declare a built-in external-file symlink rule."""
+    name, path_arg, output_name, output, info = _validate_builtin_declaration(
+        fn, "symlink_file"
+    )
+    return _make_symlink_file_rule(
+        name,
+        output,
+        path_arg=path_arg,
+        output_name=output_name,
+        info=info,
+    )

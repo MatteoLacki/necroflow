@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from necroflow import NodeType, Pipeline, Rules
+from necroflow import NodeType, Pipeline, command, text_file
 
 
 class RawText(NodeType):
@@ -22,31 +22,32 @@ class Summary(NodeType):
     filename = "summary.txt"
 
 
-R = Rules()
-R.text_file("write_tool_config", ToolConfig)
+@text_file
+def write_tool_config(text: str):
+    return ToolConfig[tool_config]
 
 
-@R.command("cp {path} {raw_text}")
+@command("cp {path} {raw_text}")
 def import_text(path: str):
     return RawText[raw_text]
 
 
-@R.command("tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}")
+@command("tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}")
 def process_text(raw_text: RawText, tool_config: ToolConfig):
     return ProcessedText[processed_text]
 
 
-@R.command("wc -c {processed_text} > {summary}")
+@command("wc -c {processed_text} > {summary}")
 def summarize(processed_text: ProcessedText):
     return Summary[summary]
 
 
 def canonical_pipeline(config: dict) -> Pipeline:
     P = Pipeline()
-    P.raw = R.import_text(path=str(config["input"]))
-    P.tool_config = R.write_tool_config(
+    P.raw = import_text(path=str(config["input"]))
+    P.tool_config = write_tool_config(
         text=json.dumps(config.get("tool", {}), sort_keys=True, indent=2) + "\n"
     )
-    P.processed = R.process_text(P.raw, P.tool_config)
-    P.summary = R.summarize(P.processed)
+    P.processed = process_text(P.raw, P.tool_config)
+    P.summary = summarize(P.processed)
     return P

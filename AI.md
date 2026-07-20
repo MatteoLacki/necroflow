@@ -22,7 +22,7 @@ Built-in placeholders:
 
 ## Rule repeat metadata
 
-Rules accept `repeat=N` via `R.register(...)`, `@r.command(...)`, and `@r.rule(...)`. `repeat` is validated as a positive integer and stored as `rule.repeat`. It is compatibility metadata only: not a scheduler resource, not an execution multiplier, and not part of node fingerprints.
+`@command(..., repeat=N)` accepts repeat compatibility metadata. `repeat` is validated as a positive integer and stored as `rule.repeat`. It is compatibility metadata only: not a scheduler resource, not an execution multiplier, and not part of node fingerprints.
 
 ## CLI forced invalidation
 
@@ -44,7 +44,7 @@ The CLI separates hashed node storage from job-facing links. `--nodes-dir DIR` c
 
 ## Built-in text file rules
 
-`Rules.text_file(name, output, input_name="text", encoding="utf-8")` registers a single-output rule that writes a string config value directly to the output file. It is intended for large tool configs that come from job TOML tables, e.g. serialize `config["sage"]` with `json.dumps(..., sort_keys=True, indent=2) + "\n"` and pass it as `text`.
+`text_file_rule(name, output, input_name="text", encoding="utf-8")` returns a single-output rule that writes a string config value directly to the output file. It is intended for large tool configs that come from job TOML tables, e.g. serialize `config["sage"]` with `json.dumps(..., sort_keys=True, indent=2) + "\n"` and pass it as `text`.
 
 Text-file rules do not run a shell command. The executor calls the built-in materializer, which avoids quoting problems and command-line length limits from `printf`-style config dumping. Their fingerprints hash the stable recipe identity (`necroflow.text_file/v1:...`) instead of command text; the string payload is still included through normal node config hashing.
 

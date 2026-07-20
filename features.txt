@@ -7,10 +7,10 @@ necroflow
 │   ├── NodeType subtype families for format contracts
 │   ├── NodeType union inputs for alternative type contracts
 │   ├── Node objects with parents, config, command, output path, state
-│   ├── Rules container
-│   │   ├── decorator API: @R.command(...)
-│   │   ├── explicit API: R.register(...)
-│   │   ├── function-body command API: @R.rule
+│   ├── Module-level rule declarations
+│   │   ├── shell command API: @command(...)
+│   │   ├── built-in decorators: @text_file / @symlink_file
+│   │   ├── explicit built-in factories: text_file_rule / symlink_file_rule
 │   │   ├── typed Inputs / Outputs
 │   │   ├── multi-output rules
 │   │   ├── co-output execution once per rule call

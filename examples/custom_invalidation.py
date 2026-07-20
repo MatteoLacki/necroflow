@@ -17,7 +17,7 @@ import hashlib
 import time
 from pathlib import Path
 
-from necroflow import DAG, Inputs, NodeType, Outputs, Pipeline, Rules
+from necroflow import DAG, NodeType, Pipeline, command
 
 WORK = Path("/tmp/necroflow_custom_invalidation")
 OUTDIR = WORK / "results"
@@ -33,17 +33,14 @@ class PreparedText(NodeType):
     invalidator = sha256_of_dependency
 
 
-r = Rules()
-
-
-@r.command("cat {dependency} > {prepared_text}")
+@command("cat {dependency} > {prepared_text}")
 def prepare_text(dependency: str):
     return PreparedText[prepared_text]
 
 
 def build_pipeline() -> Pipeline:
     P = Pipeline()
-    P.prepared = r.prepare_text(dependency=str(DEPENDENCY))
+    P.prepared = prepare_text(dependency=str(DEPENDENCY))
     return P
 
 

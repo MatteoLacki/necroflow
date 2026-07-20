@@ -1,75 +1,72 @@
 ---
 name: add-a-rule
-description: How to register a necroflow rule correctly — decorator and explicit APIs, command placeholders, typed outputs, common mistakes. Load before adding or editing rules in a necroflow pipeline.
+description: How to declare a necroflow rule correctly — command decorators, built-in file rules, placeholders, typed outputs, and common mistakes.
 ---
 
 # Adding a necroflow rule
 
 Full reference: `docs/rules.md`, `docs/generated-config-files.md`, `src/necroflow/rules.py`.
 
-## Decorator style (preferred)
+## Shell command rules
 
 ```python
-r = Rules()
+from necroflow import command
 
-@r.command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4, ram="8Gi")
+@command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4, ram="8Gi")
 def align(fastq: Fastq, ref: str):
     """Align reads to a reference genome with BWA-MEM."""
     return Bam[bam], Log[log]
 ```
 
-- First decorator arg = command template; remaining kwargs = `Constraints`.
-- Function params: NodeType annotations = positional node inputs; plain types (`str`, `int`,
-  unions) = config kwargs.
-- Outputs declared in the body as `return Type[name]` (tuple for multiple). The docstring
+- First decorator argument = command template; remaining keywords = resource constraints.
+- Function parameters: NodeType annotations are positional node inputs; plain types
+  (`str`, `int`, unions) are config keywords.
+- Outputs use `return Type[name]`; return a tuple for multiple outputs. The docstring
   becomes `node.info`.
-- Call: `bam, log = r.align(fastq_node, ref="hg38")` — single output returns the Node
-  directly, multiple return a named tuple.
+- Call the decorated name directly: `bam, log = align(fastq_node, ref="hg38")`.
+- There is no registry or explicit shell-rule constructor.
 
-## Explicit style
+## Command placeholders — validated at declaration
 
-```python
-R.register("align", Inputs(fastq=Fastq, ref=str), Outputs(bam=Bam, log=Log),
-           "bwa mem {ref} {fastq} > {bam} 2> {log}", Constraints(threads=4))
-```
+Allowed: declared input names, declared output names, and built-ins:
 
-## Command placeholders — validated at registration
+- `{workdir}` — the rule-call output directory (`nodes/{rule}/{hash16}`), created before
+  execution and reserved as an input/output name.
+- `{threads}` (defaults to 1), `{ram}`, other declared constraints; `{constraint:name}`
+  forces constraint lookup when a config parameter shadows the name.
+- Double literal shell braces: `{{left,right}}`. Bash syntax needs an explicit
+  `shellpath="/bin/bash"` or `--shellpath`.
 
-Allowed: declared input names, declared output names, config keys, and built-ins:
-
-- `{workdir}` — the rule-call output dir (`nodes/{rule}/{hash16}`), created before the
-  command runs; use for retained side/scratch files. Reserved name.
-- `{threads}` (defaults to 1), `{ram}`, other declared constraints; `{constraint:name}` forces
-  constraint lookup when a config key shadows the name.
-- Literal shell braces must be doubled: `{{left,right}}`. Bash-isms need
-  `execute(..., shellpath="/bin/bash")` / `--shellpath`.
-
-An undeclared placeholder fails at registration — read the error, don't guess.
+An undeclared placeholder fails while the module is imported.
 
 ## Rules of the game
 
-- Paths are quoted for you (`shlex.quote`) in string commands; config values are not.
-  List-form commands bypass the shell entirely.
-- The command MUST write every declared output; exit 0 with a missing output raises.
-- Constraints (`threads`, `ram="8Gi"`, custom) are scheduling metadata only — not part of the
-  fingerprint. `repeat=N` is accepted but is compatibility metadata only.
-- **Config values are fingerprinted as strings.** Passing a file *path* as config does not
-  hash the file's content, and if that path is never turned into a node at all, editing the
-  file is invisible — nothing reruns. For an external dataset, ingest it with
-  `R.symlink_file(name, OutputType)` instead: the existing mtime/hash STALE machinery then
-  picks up content changes automatically (see `docs/caching.md#external-dataset-ingestion`).
-  For a config value, prefer inlining content (see below) or a `NodeType.invalidator`.
-- Subtypes are accepted where the parent type is expected (`issubclass` check), so declare
-  the most general NodeType that is truly required.
+- Generated input/output paths are shell-quoted for string commands. List commands bypass
+  the shell.
+- The command must write every output; exit 0 with a missing output is a failure.
+- Constraints are scheduling metadata and do not affect fingerprints. `repeat=N` is
+  compatibility metadata only.
+- Config values are fingerprinted by value. A file path string does not hash that file.
+  Ingest external datasets with `@symlink_file` or
+  `symlink_file_rule(name, OutputType)` so source edits enter stale detection.
+- Subtypes satisfy parent NodeType inputs; declare the most general true contract.
 
-## Generated config files
+## Built-in file rules
 
-For tool configs coming from job TOML, don't echo strings through the shell — use the
-built-in materializer:
+Use decorator sugar for the common case:
 
 ```python
-R.text_file("sage_config", output=SageConfig, input_name="text")
-P.cfg = R.sage_config(text=json.dumps(config["sage"], sort_keys=True, indent=2) + "\n")
+from necroflow import symlink_file, text_file
+
+@symlink_file
+def raw_fastq(path: str):
+    return Fastq[fastq]
+
+@text_file
+def sage_config(text: str):
+    return SageConfig[sage_config]
 ```
 
-No shell involved; content is fingerprinted through normal config hashing.
+Use `symlink_file_rule(...)` or `text_file_rule(...)` for explicit names. The text
+decorator also supports `@text_file(encoding="utf-16")`. Text content participates in
+normal config hashing; neither built-in requires a user-authored shell command.

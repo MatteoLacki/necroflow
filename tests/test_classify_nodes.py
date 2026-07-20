@@ -1,17 +1,9 @@
+from necroflow.rules import Constraints, Inputs, Outputs, Rule
 import time
 import pytest
 from pathlib import Path
 
-from necroflow import (
-    Rules,
-    Inputs,
-    Outputs,
-    Pipeline,
-    DAG,
-    NodeType,
-    NodeState,
-    classify_nodes,
-)
+from necroflow import Pipeline, DAG, NodeType, NodeState, classify_nodes
 
 
 class Fastq(NodeType):
@@ -26,22 +18,21 @@ class Log(NodeType):
     pass
 
 
-R = Rules()
-R.register("raw_fastq", Inputs(path=str), Outputs(fastq=Fastq), "touch {fastq}")
-R.register(
+R_raw_fastq = Rule("raw_fastq", Inputs(path=str), Outputs(fastq=Fastq), "touch {fastq}")
+R_align = Rule(
     "align",
     Inputs(fastq=Fastq, ref=str),
     Outputs(bam=Bam, log=Log),
     "touch {bam} && touch {log}",
 )
-R.register("sort_bam", Inputs(bam=Bam), Outputs(bam=Bam), "touch {bam}")
+R_sort_bam = Rule("sort_bam", Inputs(bam=Bam), Outputs(bam=Bam), "touch {bam}")
 
 
 def make_pipeline(path="/data/s.fastq", ref="hg38"):
     P = Pipeline()
-    P.fastq = R.raw_fastq(path=path)
-    P.bam, P.log = R.align(P.fastq, ref=ref)
-    P.sorted = R.sort_bam(P.bam)
+    P.fastq = R_raw_fastq(path=path)
+    P.bam, P.log = R_align(P.fastq, ref=ref)
+    P.sorted = R_sort_bam(P.bam)
     return P
 
 
@@ -59,21 +50,22 @@ def test_cooutputs_share_fingerprint():
 
 
 def test_command_change_changes_fingerprint():
-    R2 = Rules()
-    R2.register("raw_fastq", Inputs(path=str), Outputs(fastq=Fastq), "touch {fastq}")
-    R2.register(
+    R2_raw_fastq = Rule(
+        "raw_fastq", Inputs(path=str), Outputs(fastq=Fastq), "touch {fastq}"
+    )
+    R2_align = Rule(
         "align",
         Inputs(fastq=Fastq, ref=str),
         Outputs(bam=Bam),
         "bwa mem {ref} {fastq} > {bam}",
     )  # different command
-    R2.register("sort_bam", Inputs(bam=Bam), Outputs(bam=Bam), "touch {bam}")
+    R2_sort_bam = Rule("sort_bam", Inputs(bam=Bam), Outputs(bam=Bam), "touch {bam}")
 
     P1 = make_pipeline()  # uses original R with "touch {bam}"
     P2 = Pipeline()
-    P2.fastq = R2.raw_fastq(path="/data/s.fastq")
-    P2.bam = R2.align(P2.fastq, ref="hg38")
-    P2.sorted = R2.sort_bam(P2.bam)
+    P2.fastq = R2_raw_fastq(path="/data/s.fastq")
+    P2.bam = R2_align(P2.fastq, ref="hg38")
+    P2.sorted = R2_sort_bam(P2.bam)
 
     assert P1.bam.fingerprint != P2.bam.fingerprint
 

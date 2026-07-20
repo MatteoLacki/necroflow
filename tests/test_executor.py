@@ -1,20 +1,20 @@
 """Tests for execute(), schedulers, and thread budget."""
 
+from necroflow.rules import Constraints, Inputs, Outputs, Rule
+from necroflow import (
+    command,
+    symlink_file,
+    symlink_file_rule,
+    text_file,
+    text_file_rule,
+)
+
 import shutil
 from pathlib import Path
 
 import pytest
 import tomlkit
-from necroflow import (
-    NodeType,
-    Inputs,
-    Outputs,
-    Constraints,
-    Rules,
-    Pipeline,
-    DAG,
-    execute,
-)
+from necroflow import NodeType, Pipeline, DAG, execute
 from necroflow import fifo_scheduler, connected_component_scheduler
 from necroflow.schedulers import ConnectedComponentScheduler
 
@@ -43,45 +43,48 @@ class ListOut(NodeType):
     filename = "list.txt"
 
 
-R = Rules()
-R.register("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
-R.register(
+R_make_a = Rule("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
+R_make_a_workdir = Rule(
     "make_a_workdir",
     Inputs(x=str),
     Outputs(a=A),
     "mkdir -p {workdir}/scratch; echo {x} > {workdir}/scratch/value.txt; touch {a}",
 )
-R.register(
+R_make_a_from_workdir = Rule(
     "make_a_from_workdir",
     Inputs(x=str),
     Outputs(a=A),
     "mkdir -p {workdir}/tool-results; echo {x} > {workdir}/tool-results/a.txt; mv {workdir}/tool-results/a.txt {a}",
 )
-R.register("make_ab", Inputs(x=str), Outputs(a=A, b=B), "touch {a} {b}")
-R.register("make_only_a", Inputs(x=str), Outputs(a=A, b=B), "touch {a} {b}; rm {b}")
-R.register("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
-R.register("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
-R.register("make_c_from_b", Inputs(b=B), Outputs(c=C), "touch {c}")
-R.register("fail_a", Inputs(x=str), Outputs(a=A), "{{ : {a}; exit 1; }}")
-R.register(
+R_make_ab = Rule("make_ab", Inputs(x=str), Outputs(a=A, b=B), "touch {a} {b}")
+R_make_only_a = Rule(
+    "make_only_a", Inputs(x=str), Outputs(a=A, b=B), "touch {a} {b}; rm {b}"
+)
+R_make_b = Rule("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
+R_make_c = Rule("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
+R_make_c_from_b = Rule("make_c_from_b", Inputs(b=B), Outputs(c=C), "touch {c}")
+R_fail_a = Rule("fail_a", Inputs(x=str), Outputs(a=A), "{{ : {a}; exit 1; }}")
+R_no_output_a = Rule(
     "no_output_a", Inputs(x=str), Outputs(a=A), "{{ : {a}; true; }}"
 )  # exits 0, creates nothing
-R.register(
+R_make_a_heavy = Rule(
     "make_a_heavy", Inputs(x=str), Outputs(a=A), "touch {a}", Constraints(threads=4)
 )
-R.register(
+R_brace_shell = Rule(
     "brace_shell",
     Inputs(x=str),
     Outputs(out=ShellOut),
     "printf '%s\n' {{left,right}} > {out}",
 )
-R.register(
+R_env_shell = Rule(
     "env_shell",
     Inputs(x=str),
     Outputs(out=ShellOut),
     "printf '%s\n' $NF_TEST_SHELL > {out}",
 )
-R.register("list_shell", Inputs(x=str), Outputs(out=ListOut), ["touch", "{out}"])
+R_list_shell = Rule(
+    "list_shell", Inputs(x=str), Outputs(out=ListOut), ["touch", "{out}"]
+)
 
 
 # ── basic execution ───────────────────────────────────────────────────────────
@@ -89,8 +92,8 @@ R.register("list_shell", Inputs(x=str), Outputs(out=ListOut), ["touch", "{out}"]
 
 def test_execute_creates_outputs(tmp_path):
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
     execute(P, tmp_path)
     assert P.a.path.exists()
     assert P.b.path.exists()
@@ -105,7 +108,7 @@ def test_execute_handles_outdir_with_spaces(tmp_path):
     """
     outdir = tmp_path / "results with spaces"
     P = Pipeline()
-    P.a = R.make_a(x="x")
+    P.a = R_make_a(x="x")
 
     execute(P, outdir)
 
@@ -117,7 +120,7 @@ def test_explicit_shellpath_uses_selected_shell_for_brace_expansion(tmp_path):
     if bash is None:
         pytest.skip("bash is not available")
     P = Pipeline()
-    P.out = R.brace_shell(x="x")
+    P.out = R_brace_shell(x="x")
 
     execute(P, tmp_path, shellpath=bash)
 
@@ -129,7 +132,7 @@ def test_explicit_shellpath_runs_custom_shell_wrapper(tmp_path, monkeypatch):
     wrapper.write_text('#!/bin/sh\nNF_TEST_SHELL=wrapper exec /bin/sh "$@"\n')
     wrapper.chmod(0o755)
     P = Pipeline()
-    P.out = R.env_shell(x="x")
+    P.out = R_env_shell(x="x")
 
     execute(P, tmp_path / "out", shellpath=wrapper)
 
@@ -139,7 +142,7 @@ def test_explicit_shellpath_runs_custom_shell_wrapper(tmp_path, monkeypatch):
 def test_explicit_shellpath_changes_string_command_fingerprint(tmp_path):
     shell = shutil.which("sh") or "/bin/sh"
     P = Pipeline()
-    P.out = R.env_shell(x="x")
+    P.out = R_env_shell(x="x")
     default_key = P.out.key
 
     execute(P, tmp_path / "with-shell", shellpath=shell)
@@ -157,7 +160,7 @@ def test_explicit_shellpath_changes_string_command_fingerprint(tmp_path):
 def test_explicit_shellpath_does_not_change_list_command_fingerprint(tmp_path):
     shell = shutil.which("sh") or "/bin/sh"
     P = Pipeline()
-    P.out = R.list_shell(x="x")
+    P.out = R_list_shell(x="x")
     default_key = P.out.key
 
     execute(P, tmp_path, shellpath=shell)
@@ -168,7 +171,7 @@ def test_explicit_shellpath_does_not_change_list_command_fingerprint(tmp_path):
 
 def test_invalid_shellpath_fails_before_outputs(tmp_path):
     P = Pipeline()
-    P.out = R.make_a(x="x")
+    P.out = R_make_a(x="x")
 
     with pytest.raises(ValueError, match="shellpath does not exist"):
         execute(P, tmp_path, shellpath=tmp_path / "missing-shell")
@@ -179,7 +182,7 @@ def test_invalid_shellpath_fails_before_outputs(tmp_path):
 def test_shellpath_cannot_be_combined_with_node_runner(tmp_path):
     shell = shutil.which("sh") or "/bin/sh"
     P = Pipeline()
-    P.out = R.make_a(x="x")
+    P.out = R_make_a(x="x")
 
     with pytest.raises(ValueError, match="shellpath cannot be combined"):
         execute(P, tmp_path, shellpath=shell, node_runner=lambda node, log_path: None)
@@ -188,7 +191,7 @@ def test_shellpath_cannot_be_combined_with_node_runner(tmp_path):
 def test_workdir_placeholder_resolves_to_rule_output_dir(tmp_path):
     """{workdir} gives commands a retained side-output directory for scratch results."""
     P = Pipeline()
-    P.a = R.make_a_workdir(x="x")
+    P.a = R_make_a_workdir(x="x")
 
     execute(P, tmp_path)
 
@@ -198,7 +201,7 @@ def test_workdir_placeholder_resolves_to_rule_output_dir(tmp_path):
 def test_workdir_can_stage_results_before_final_output_move(tmp_path):
     """A command may write tool results under {workdir}, then move the final artifact to {output}."""
     P = Pipeline()
-    P.a = R.make_a_from_workdir(x="final contents")
+    P.a = R_make_a_from_workdir(x="final contents")
 
     execute(P, tmp_path)
 
@@ -209,8 +212,8 @@ def test_workdir_can_stage_results_before_final_output_move(tmp_path):
 
 def test_execute_via_dag(tmp_path):
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
     dag = DAG(tmp_path)
     dag.add(P)
     dag.execute()
@@ -220,8 +223,8 @@ def test_execute_via_dag(tmp_path):
 
 def test_execute_idempotent(tmp_path):
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
     execute(P, tmp_path)
     mtime_a = P.a.path.stat().st_mtime
     mtime_b = P.b.path.stat().st_mtime
@@ -234,8 +237,8 @@ def test_forced_stale_parent_propagates_to_child(tmp_path):
     import time
 
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
     execute(P, tmp_path)
     mtime_a = P.a.path.stat().st_mtime
     mtime_b = P.b.path.stat().st_mtime
@@ -251,8 +254,8 @@ def test_compromised_parent_propagates_to_child(tmp_path):
     import time
 
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
     execute(P, tmp_path)
     mtime_a = P.a.path.stat().st_mtime
     mtime_b = P.b.path.stat().st_mtime
@@ -274,12 +277,12 @@ def test_conditional_pipeline(tmp_path):
     - the branching config value need not appear in any node's config
     """
     P1 = Pipeline()
-    P1.a = R.make_a(x="x")
-    P1.result = R.make_b(P1.a)  # branch "b"
+    P1.a = R_make_a(x="x")
+    P1.result = R_make_b(P1.a)  # branch "b"
 
     P2 = Pipeline()
-    P2.a = R.make_a(x="x")
-    P2.result = R.make_c(P2.a)  # branch "c"
+    P2.a = R_make_a(x="x")
+    P2.result = R_make_c(P2.a)  # branch "c"
 
     dag = DAG(tmp_path)
     dag.add(P1)
@@ -298,14 +301,14 @@ def test_conditional_pipeline(tmp_path):
 
 def test_execute_failure_raises(tmp_path):
     P = Pipeline()
-    P.a = R.fail_a(x="x")
+    P.a = R_fail_a(x="x")
     with pytest.raises(Exception):
         execute(P, tmp_path)
 
 
 def test_missing_output_raises(tmp_path):
     P = Pipeline()
-    P.a = R.no_output_a(x="x")
+    P.a = R_no_output_a(x="x")
     with pytest.raises(RuntimeError, match="output missing"):
         execute(P, tmp_path)
 
@@ -317,7 +320,7 @@ def test_missing_cooutput_raises(tmp_path):
     the representative co-output was created.
     """
     P = Pipeline()
-    P.a, P.b = R.make_only_a(x="x")
+    P.a, P.b = R_make_only_a(x="x")
     with pytest.raises(RuntimeError, match="output missing"):
         execute(P, tmp_path)
 
@@ -326,7 +329,7 @@ def test_cooutputs_run_once(tmp_path):
     # make_ab writes "touch {a} {b}" — if run twice, both files would be touched twice
     # We verify the command only ran once by checking a single job.log exists
     P = Pipeline()
-    P.a, P.b = R.make_ab(x="x")
+    P.a, P.b = R_make_ab(x="x")
     execute(P, tmp_path)
     assert P.a.path.exists() and P.b.path.exists()
     # both co-outputs share a directory; only one job.log should exist
@@ -342,12 +345,12 @@ def test_shared_node_executed_once(tmp_path):
     only once by checking a single job.log exists for that node's directory.
     """
     P1 = Pipeline()
-    P1.a = R.make_a(x="shared")
-    P1.b = R.make_b(P1.a)
+    P1.a = R_make_a(x="shared")
+    P1.b = R_make_b(P1.a)
 
     P2 = Pipeline()
-    P2.a = R.make_a(x="shared")
-    P2.c = R.make_c(P2.a)
+    P2.a = R_make_a(x="shared")
+    P2.c = R_make_c(P2.a)
 
     dag = DAG(tmp_path)
     dag.add(P1)
@@ -374,10 +377,10 @@ def test_shared_node_path_set_on_first_pipeline(tmp_path):
     execution the first pipeline's object must have path set — not None.
     """
     P1 = Pipeline()
-    P1.a = R.make_a(x="shared")
+    P1.a = R_make_a(x="shared")
 
     P2 = Pipeline()
-    P2.a = R.make_a(x="shared")
+    P2.a = R_make_a(x="shared")
 
     dag = DAG(tmp_path)
     dag.add(P1)
@@ -392,7 +395,7 @@ def test_shared_node_path_set_on_first_pipeline(tmp_path):
 def test_single_node_pipeline_executes(tmp_path):
     # source node (no parents) must be treated as a sink
     P = Pipeline()
-    P.a = R.make_a(x="x")
+    P.a = R_make_a(x="x")
     dag = DAG(tmp_path)
     dag.add(P)
     dag.execute()
@@ -404,17 +407,17 @@ def test_single_node_pipeline_executes(tmp_path):
 
 def test_fifo_scheduler(tmp_path):
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
-    P.c = R.make_c(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
+    P.c = R_make_c(P.a)
     execute(P, tmp_path, scheduler=fifo_scheduler)
     assert P.b.path.exists() and P.c.path.exists()
 
 
 def test_connected_component_scheduler(tmp_path):
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
     execute(P, tmp_path, scheduler=connected_component_scheduler)
     assert P.b.path.exists()
 
@@ -427,7 +430,7 @@ def test_scheduler_receives_available_resources(tmp_path):
         return ready
 
     P = Pipeline()
-    P.a = R.make_a(x="x")
+    P.a = R_make_a(x="x")
     execute(P, tmp_path, scheduler=recording_scheduler, resource_caps={"threads": 3})
     assert seen == [{"threads": 3}]
 
@@ -446,7 +449,7 @@ def test_legacy_two_argument_scheduler_rejected_up_front(tmp_path):
         return ready
 
     P = Pipeline()
-    P.a = R.make_a(x="x")
+    P.a = R_make_a(x="x")
     with pytest.raises(TypeError, match=r"ready, remaining, available_resources"):
         execute(P, tmp_path, scheduler=legacy_scheduler)
     assert not (tmp_path / "make_a").exists()
@@ -464,7 +467,7 @@ def test_scheduler_protocol_accepts_callable_objects(tmp_path):
             return ready
 
     P = Pipeline()
-    P.a = R.make_a(x="x")
+    P.a = R_make_a(x="x")
     execute(P, tmp_path, scheduler=ObjectScheduler())
     assert P.a.path.exists()
 
@@ -477,8 +480,8 @@ def test_custom_scheduler_invoked(tmp_path):
         return ready
 
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
     execute(P, tmp_path, scheduler=recording_scheduler)
     assert len(calls) > 0
 
@@ -490,16 +493,15 @@ class Step(NodeType):
     pass  # reused across all chain rules below
 
 
-Rchain = Rules()
-Rchain.register("c2_s1", Inputs(x=str), Outputs(s=Step), "touch {s}")
-Rchain.register("c2_s2", Inputs(s=Step), Outputs(s=Step), "touch {s}")
-Rchain.register("c3_s1", Inputs(x=str), Outputs(s=Step), "touch {s}")
-Rchain.register("c3_s2", Inputs(s=Step), Outputs(s=Step), "touch {s}")
-Rchain.register("c3_s3", Inputs(s=Step), Outputs(s=Step), "touch {s}")
-Rchain.register("c4_s1", Inputs(x=str), Outputs(s=Step), "touch {s}")
-Rchain.register("c4_s2", Inputs(s=Step), Outputs(s=Step), "touch {s}")
-Rchain.register("c4_s3", Inputs(s=Step), Outputs(s=Step), "touch {s}")
-Rchain.register("c4_s4", Inputs(s=Step), Outputs(s=Step), "touch {s}")
+Rchain_c2_s1 = Rule("c2_s1", Inputs(x=str), Outputs(s=Step), "touch {s}")
+Rchain_c2_s2 = Rule("c2_s2", Inputs(s=Step), Outputs(s=Step), "touch {s}")
+Rchain_c3_s1 = Rule("c3_s1", Inputs(x=str), Outputs(s=Step), "touch {s}")
+Rchain_c3_s2 = Rule("c3_s2", Inputs(s=Step), Outputs(s=Step), "touch {s}")
+Rchain_c3_s3 = Rule("c3_s3", Inputs(s=Step), Outputs(s=Step), "touch {s}")
+Rchain_c4_s1 = Rule("c4_s1", Inputs(x=str), Outputs(s=Step), "touch {s}")
+Rchain_c4_s2 = Rule("c4_s2", Inputs(s=Step), Outputs(s=Step), "touch {s}")
+Rchain_c4_s3 = Rule("c4_s3", Inputs(s=Step), Outputs(s=Step), "touch {s}")
+Rchain_c4_s4 = Rule("c4_s4", Inputs(s=Step), Outputs(s=Step), "touch {s}")
 
 
 def _recording(sched):
@@ -521,15 +523,15 @@ def test_scheduler_exhausts_smallest_chain_first(tmp_path):
     must finish the size-2 chain before starting the size-3, and the size-3
     before the size-4."""
     P = Pipeline()
-    P.c2a = Rchain.c2_s1(x="c2")
-    P.c2b = Rchain.c2_s2(P.c2a)
-    P.c3a = Rchain.c3_s1(x="c3")
-    P.c3b = Rchain.c3_s2(P.c3a)
-    P.c3c = Rchain.c3_s3(P.c3b)
-    P.c4a = Rchain.c4_s1(x="c4")
-    P.c4b = Rchain.c4_s2(P.c4a)
-    P.c4c = Rchain.c4_s3(P.c4b)
-    P.c4d = Rchain.c4_s4(P.c4c)
+    P.c2a = Rchain_c2_s1(x="c2")
+    P.c2b = Rchain_c2_s2(P.c2a)
+    P.c3a = Rchain_c3_s1(x="c3")
+    P.c3b = Rchain_c3_s2(P.c3a)
+    P.c3c = Rchain_c3_s3(P.c3b)
+    P.c4a = Rchain_c4_s1(x="c4")
+    P.c4b = Rchain_c4_s2(P.c4a)
+    P.c4c = Rchain_c4_s3(P.c4b)
+    P.c4d = Rchain_c4_s4(P.c4c)
 
     fn, started = _recording(ConnectedComponentScheduler())
     execute(P, tmp_path, scheduler=fn, resource_caps={"threads": 1})
@@ -570,14 +572,13 @@ class FG(NodeType):
     pass
 
 
-Rfork = Rules()
-Rfork.register("ra", Inputs(x=str), Outputs(a=FA), "touch {a}")
-Rfork.register("rb", Inputs(a=FA), Outputs(b=FB), "touch {b}")
-Rfork.register("rc", Inputs(b=FB), Outputs(c=FC), "touch {c}")
-Rfork.register("rd", Inputs(b=FB), Outputs(d=FD), "touch {d}")
-Rfork.register("re", Inputs(c=FC), Outputs(e=FE), "touch {e}")
-Rfork.register("rf", Inputs(d=FD), Outputs(f=FF), "touch {f}")
-Rfork.register("rg", Inputs(f=FF), Outputs(g=FG), "touch {g}")
+Rfork_ra = Rule("ra", Inputs(x=str), Outputs(a=FA), "touch {a}")
+Rfork_rb = Rule("rb", Inputs(a=FA), Outputs(b=FB), "touch {b}")
+Rfork_rc = Rule("rc", Inputs(b=FB), Outputs(c=FC), "touch {c}")
+Rfork_rd = Rule("rd", Inputs(b=FB), Outputs(d=FD), "touch {d}")
+Rfork_re = Rule("re", Inputs(c=FC), Outputs(e=FE), "touch {e}")
+Rfork_rf = Rule("rf", Inputs(d=FD), Outputs(f=FF), "touch {f}")
+Rfork_rg = Rule("rg", Inputs(f=FF), Outputs(g=FG), "touch {g}")
 
 
 def test_scheduler_fork_prefers_smaller_branch(tmp_path):
@@ -585,13 +586,13 @@ def test_scheduler_fork_prefers_smaller_branch(tmp_path):
     C->E (size 2) and D->F->G (size 3). With threads=1 the scheduler must
     complete C->E entirely before starting D."""
     P = Pipeline()
-    P.a = Rfork.ra(x="x")
-    P.b = Rfork.rb(P.a)
-    P.c = Rfork.rc(P.b)
-    P.d = Rfork.rd(P.b)
-    P.e = Rfork.re(P.c)
-    P.f = Rfork.rf(P.d)
-    P.g = Rfork.rg(P.f)
+    P.a = Rfork_ra(x="x")
+    P.b = Rfork_rb(P.a)
+    P.c = Rfork_rc(P.b)
+    P.d = Rfork_rd(P.b)
+    P.e = Rfork_re(P.c)
+    P.f = Rfork_rf(P.d)
+    P.g = Rfork_rg(P.f)
 
     fn, started = _recording(ConnectedComponentScheduler())
     execute(P, tmp_path, scheduler=fn, resource_caps={"threads": 1})
@@ -604,8 +605,8 @@ def test_scheduler_fork_prefers_smaller_branch(tmp_path):
 
 def test_single_thread_budget(tmp_path):
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
     execute(P, tmp_path, resource_caps={"threads": 1})
     assert P.a.path.exists() and P.b.path.exists()
 
@@ -613,16 +614,16 @@ def test_single_thread_budget(tmp_path):
 def test_autoclean_deletes_orphan(tmp_path):
     # first run: produce a and b
     P1 = Pipeline()
-    P1.a = R.make_a(x="x")
-    P1.b = R.make_b(P1.a)
+    P1.a = R_make_a(x="x")
+    P1.b = R_make_b(P1.a)
     execute(P1, tmp_path)
     b_path = P1.b.path
     assert b_path.exists()
 
     # second run: only request a — b becomes ORPHAN
     P2 = Pipeline()
-    P2.a = R.make_a(x="x")
-    P2.b = R.make_b(P2.a)
+    P2.a = R_make_a(x="x")
+    P2.b = R_make_b(P2.a)
     dag = DAG(tmp_path)
     dag.add(P2, request=[P2.a])
     dag.execute(autoclean=True)
@@ -632,14 +633,14 @@ def test_autoclean_deletes_orphan(tmp_path):
 
 def test_autoclean_false_leaves_orphan(tmp_path):
     P1 = Pipeline()
-    P1.a = R.make_a(x="x")
-    P1.b = R.make_b(P1.a)
+    P1.a = R_make_a(x="x")
+    P1.b = R_make_b(P1.a)
     execute(P1, tmp_path)
     b_path = P1.b.path
 
     P2 = Pipeline()
-    P2.a = R.make_a(x="x")
-    P2.b = R.make_b(P2.a)
+    P2.a = R_make_a(x="x")
+    P2.b = R_make_b(P2.a)
     dag = DAG(tmp_path)
     dag.add(P2, request=[P2.a])
     dag.execute(autoclean=False)
@@ -650,8 +651,8 @@ def test_autoclean_false_leaves_orphan(tmp_path):
 def test_dry_run_does_not_execute(tmp_path):
     """dry_run=True must not create any output files."""
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
     execute(P, tmp_path, dry_run=True)
     assert not P.a.path.exists()
     assert not P.b.path.exists()
@@ -665,15 +666,15 @@ def test_dry_run_autoclean_does_not_delete_orphans(tmp_path):
     report what would be cleaned, but it must not unlink files or directories.
     """
     P1 = Pipeline()
-    P1.a = R.make_a(x="x")
-    P1.b = R.make_b(P1.a)
+    P1.a = R_make_a(x="x")
+    P1.b = R_make_b(P1.a)
     execute(P1, tmp_path)
     b_path = P1.b.path
     assert b_path.exists()
 
     P2 = Pipeline()
-    P2.a = R.make_a(x="x")
-    P2.b = R.make_b(P2.a)
+    P2.a = R_make_a(x="x")
+    P2.b = R_make_b(P2.a)
     dag = DAG(tmp_path)
     dag.add(P2, request=[P2.a])
     dag.execute(autoclean=True, dry_run=True)
@@ -686,7 +687,7 @@ def test_dry_run_shows_missing(tmp_path, caplog):
     import logging
 
     P = Pipeline()
-    P.a = R.make_a(x="x")
+    P.a = R_make_a(x="x")
     with caplog.at_level(logging.INFO, logger="necroflow"):
         execute(P, tmp_path, dry_run=True)
     assert "would-run" in caplog.text
@@ -699,8 +700,8 @@ def test_dry_run_shows_stale(tmp_path, caplog):
     import logging, time
 
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
     execute(P, tmp_path)
     time.sleep(0.01)
     P.a.path.write_bytes(b"updated")  # content change → different hash → STALE
@@ -715,7 +716,7 @@ def test_dry_run_all_up_to_date(tmp_path, caplog):
     import logging
 
     P = Pipeline()
-    P.a = R.make_a(x="x")
+    P.a = R_make_a(x="x")
     execute(P, tmp_path)
     with caplog.at_level(logging.INFO, logger="necroflow"):
         execute(P, tmp_path, dry_run=True)
@@ -728,9 +729,9 @@ def test_autoclean_deletes_intermediates(tmp_path):
     Linear chain a→b→c: after execution, a and b (intermediates) should be gone; c (sink) kept.
     """
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
-    P.c = R.make_c_from_b(P.b)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
+    P.c = R_make_c_from_b(P.b)
     execute(P, tmp_path, autoclean=True)
     assert P.c.path.exists()
     assert not P.b.path.exists()
@@ -740,8 +741,8 @@ def test_autoclean_deletes_intermediates(tmp_path):
 def test_autoclean_deletes_intermediate_workdir(tmp_path):
     """autoclean=True removes the whole rule-call directory, including {workdir} side files."""
     P = Pipeline()
-    P.a = R.make_a_workdir(x="x")
-    P.b = R.make_b(P.a)
+    P.a = R_make_a_workdir(x="x")
+    P.b = R_make_b(P.a)
     execute(P, tmp_path, autoclean=True)
     assert P.b.path.exists()
     assert not P.a.path.parent.exists()
@@ -750,9 +751,9 @@ def test_autoclean_deletes_intermediate_workdir(tmp_path):
 def test_autoclean_false_leaves_intermediates(tmp_path):
     """autoclean=False must leave all intermediate outputs intact."""
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
-    P.c = R.make_c_from_b(P.b)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
+    P.c = R_make_c_from_b(P.b)
     execute(P, tmp_path, autoclean=False)
     assert P.a.path.exists()
     assert P.b.path.exists()
@@ -762,7 +763,7 @@ def test_autoclean_false_leaves_intermediates(tmp_path):
 def test_heavy_job_runs_solo(tmp_path):
     # job needing 4 threads runs even with threads cap=2 (solo fallback when nothing else running)
     P = Pipeline()
-    P.a = R.make_a_heavy(x="x")
+    P.a = R_make_a_heavy(x="x")
     execute(P, tmp_path, resource_caps={"threads": 2})
     assert P.a.path.exists()
 
@@ -800,16 +801,15 @@ def test_parse_resource_si_ne_binary():
 def test_resource_cap_respected(tmp_path):
     """A custom resource cap is enforced: two jobs declaring ram=250Mi each cannot
     run simultaneously under a 300Mi cap."""
-    R2 = Rules()
-    R2.register(
+    R2_make_a = Rule(
         "make_a", Inputs(x=str), Outputs(a=A), "touch {a}", Constraints(ram="250Mi")
     )
-    R2.register(
+    R2_make_b = Rule(
         "make_b", Inputs(x=str), Outputs(b=B), "touch {b}", Constraints(ram="250Mi")
     )
     P = Pipeline()
-    P.a = R2.make_a(x="1")
-    P.b = R2.make_b(x="2")
+    P.a = R2_make_a(x="1")
+    P.b = R2_make_b(x="2")
     # Should complete without error (solo fallback ensures each job runs eventually)
     execute(P, tmp_path, resource_caps={"threads": 8, "ram": parse_resource("300Mi")})
     assert P.a.path.exists() and P.b.path.exists()
@@ -822,10 +822,9 @@ def test_text_file_rule_writes_exact_text(tmp_path):
     class ConfigFile(NodeType):
         filename = "config.json"
 
-    r = Rules()
-    r.text_file("write_config", ConfigFile)
+    r_write_config = text_file_rule("write_config", ConfigFile)
     P = Pipeline()
-    P.config = r.write_config(text='{"a": 1}\n')
+    P.config = r_write_config(text='{"a": 1}\n')
 
     execute(P, tmp_path)
 
@@ -838,10 +837,9 @@ def test_text_file_rule_is_idempotent(tmp_path):
     class ConfigFile(NodeType):
         filename = "config.txt"
 
-    r = Rules()
-    r.text_file("write_config", ConfigFile)
+    r_write_config = text_file_rule("write_config", ConfigFile)
     P = Pipeline()
-    P.config = r.write_config(text="same\n")
+    P.config = r_write_config(text="same\n")
 
     execute(P, tmp_path)
     mtime = P.config.path.stat().st_mtime
@@ -855,20 +853,17 @@ def test_text_file_fingerprint_changes_with_text():
     class ConfigFile(NodeType):
         filename = "config.txt"
 
-    r = Rules()
-    r.text_file("write_config", ConfigFile)
+    r_write_config = text_file_rule("write_config", ConfigFile)
 
-    assert r.write_config(text="a").fingerprint != r.write_config(text="b").fingerprint
+    assert r_write_config(text="a").fingerprint != r_write_config(text="b").fingerprint
 
 
 def test_text_file_recipe_distinguishes_from_shell_rule():
     class ConfigFile(NodeType):
         filename = "config.txt"
 
-    text_rules = Rules()
-    text_rules.text_file("write_config", ConfigFile)
-    shell_rules = Rules()
-    shell_rules.register(
+    text_rules_write_config = text_file_rule("write_config", ConfigFile)
+    shell_rules_write_config = Rule(
         "write_config",
         Inputs(text=str),
         Outputs(config_file=ConfigFile),
@@ -876,8 +871,8 @@ def test_text_file_recipe_distinguishes_from_shell_rule():
     )
 
     assert (
-        text_rules.write_config(text="same").fingerprint
-        != shell_rules.write_config(text="same").fingerprint
+        text_rules_write_config(text="same").fingerprint
+        != shell_rules_write_config(text="same").fingerprint
     )
 
 
@@ -885,25 +880,71 @@ def test_text_file_rejects_non_string_text():
     class ConfigFile(NodeType):
         filename = "config.txt"
 
-    r = Rules()
-    r.text_file("write_config", ConfigFile)
+    r_write_config = text_file_rule("write_config", ConfigFile)
 
     with pytest.raises(TypeError, match="expected <class 'str'>"):
-        r.write_config(text={"not": "text"})
+        r_write_config(text={"not": "text"})
 
 
 def test_text_file_custom_input_name(tmp_path):
     class ConfigFile(NodeType):
         filename = "config.txt"
 
-    r = Rules()
-    r.text_file("write_config", ConfigFile, input_name="serialized_config")
+    r_write_config = text_file_rule(
+        "write_config", ConfigFile, input_name="serialized_config"
+    )
     P = Pipeline()
-    P.config = r.write_config(serialized_config="custom\n")
+    P.config = r_write_config(serialized_config="custom\n")
 
     execute(P, tmp_path)
 
     assert P.config.path.read_text() == "custom\n"
+
+
+def test_text_file_decorator_matches_factory_fingerprint():
+    class ConfigFile(NodeType):
+        filename = "config.txt"
+
+    @text_file
+    def write_config(text: str):
+        """Write the configuration."""
+        return ConfigFile[config_file]
+
+    explicit = text_file_rule(
+        "write_config",
+        ConfigFile,
+        input_name="text",
+        output_name="config_file",
+    )
+
+    assert write_config(text="same").fingerprint == explicit(text="same").fingerprint
+    assert write_config.info == "Write the configuration."
+
+
+def test_text_file_decorator_accepts_encoding(tmp_path):
+    class ConfigFile(NodeType):
+        filename = "config.txt"
+
+    @text_file(encoding="utf-16-le")
+    def write_config(text: str):
+        return ConfigFile[config_file]
+
+    P = Pipeline()
+    P.config = write_config(text="hello")
+    execute(P, tmp_path)
+
+    assert P.config.path.read_text(encoding="utf-16-le") == "hello"
+
+
+def test_text_file_decorator_rejects_invalid_declaration():
+    class ConfigFile(NodeType):
+        filename = "config.txt"
+
+    with pytest.raises(TypeError, match="exactly one input"):
+
+        @text_file
+        def bad_text_file(first: str, second: str):
+            return ConfigFile[config_file]
 
 
 # -- built-in symlink ingestion rule ------------------------------------------
@@ -915,16 +956,42 @@ def test_symlink_file_rule_links_to_source_content(tmp_path):
 
     source = tmp_path / "source.txt"
     source.write_text("hello\n")
-
-    r = Rules()
-    r.symlink_file("ingest_raw", RawData)
+    r_ingest_raw = symlink_file_rule("ingest_raw", RawData)
     P = Pipeline()
-    P.raw = r.ingest_raw(path=str(source))
+    P.raw = r_ingest_raw(path=str(source))
 
     execute(P, tmp_path / "out")
 
     assert P.raw.path.is_symlink()
     assert P.raw.path.read_text() == "hello\n"
+
+
+def test_symlink_file_decorator_matches_factory_and_links(tmp_path):
+    class RawData(NodeType):
+        filename = "raw.txt"
+
+    @symlink_file
+    def ingest_raw(path: str):
+        """Ingest raw data."""
+        return RawData[raw]
+
+    explicit = symlink_file_rule(
+        "ingest_raw",
+        RawData,
+        path_arg="path",
+        output_name="raw",
+    )
+    assert ingest_raw(path="source").fingerprint == explicit(path="source").fingerprint
+    assert ingest_raw.info == "Ingest raw data."
+
+    source = tmp_path / "source.txt"
+    source.write_text("decorated\n")
+    P = Pipeline()
+    P.raw = ingest_raw(path=str(source))
+    execute(P, tmp_path / "out")
+
+    assert P.raw.path.is_symlink()
+    assert P.raw.path.read_text() == "decorated\n"
 
 
 def test_symlink_file_change_reruns_downstream_consumer(tmp_path):
@@ -945,17 +1012,15 @@ def test_symlink_file_change_reruns_downstream_consumer(tmp_path):
 
     source = tmp_path / "source.txt"
     source.write_text("v1\n")
-
-    r = Rules()
-    r.symlink_file("ingest_raw", RawData)
-    r.register(
+    r_ingest_raw = symlink_file_rule("ingest_raw", RawData)
+    r_copy_raw = Rule(
         "copy_raw", Inputs(raw=RawData), Outputs(copied=Copied), "cp {raw} {copied}"
     )
 
     def build():
         P = Pipeline()
-        P.raw = r.ingest_raw(path=str(source))
-        P.copied = r.copy_raw(P.raw)
+        P.raw = r_ingest_raw(path=str(source))
+        P.copied = r_copy_raw(P.raw)
         return P
 
     outdir = tmp_path / "out"
@@ -979,11 +1044,9 @@ def test_symlink_file_custom_path_arg(tmp_path):
 
     source = tmp_path / "source.txt"
     source.write_text("hi\n")
-
-    r = Rules()
-    r.symlink_file("ingest_raw", RawData, path_arg="dataset_path")
+    r_ingest_raw = symlink_file_rule("ingest_raw", RawData, path_arg="dataset_path")
     P = Pipeline()
-    P.raw = r.ingest_raw(dataset_path=str(source))
+    P.raw = r_ingest_raw(dataset_path=str(source))
 
     execute(P, tmp_path / "out")
 
@@ -994,20 +1057,18 @@ def test_symlink_file_rejects_reserved_path_arg():
     class RawData(NodeType):
         filename = "raw.txt"
 
-    r = Rules()
     with pytest.raises(ValueError, match="reserved"):
-        r.symlink_file("ingest_raw", RawData, path_arg="workdir")
+        r_ingest_raw = symlink_file_rule("ingest_raw", RawData, path_arg="workdir")
 
 
 def test_symlink_file_rejects_non_nodetype_output():
-    r = Rules()
     with pytest.raises(TypeError, match="must be a NodeType"):
-        r.symlink_file("ingest_raw", str)
+        r_ingest_raw = symlink_file_rule("ingest_raw", str)
 
 
 def test_execute_returns_report_and_writes_run_stats_with_output_size(tmp_path):
     P = Pipeline()
-    P.a = R.make_a_from_workdir(x="abc")
+    P.a = R_make_a_from_workdir(x="abc")
 
     report = execute(P, tmp_path)
 
@@ -1030,7 +1091,7 @@ def test_execute_returns_report_and_writes_run_stats_with_output_size(tmp_path):
 
 def test_execute_report_marks_cached_nodes_and_measures_size(tmp_path):
     P = Pipeline()
-    P.a = R.make_a_from_workdir(x="cached")
+    P.a = R_make_a_from_workdir(x="cached")
     execute(P, tmp_path)
 
     cached_report = execute(P, tmp_path)

@@ -7,13 +7,13 @@
 Pipeline factory functions are plain Python, so `if/else` branching on config values works naturally:
 
 ```python
-def my_pipeline(config, R):
+def my_pipeline(config):
     P = Pipeline()
-    P.a = R.align(path=config.path, ref=config.ref)
+    P.a = align(path=config.path, ref=config.ref)
     if config.call_variants:
-        P.result = R.call_snps(P.a)
+        P.result = call_snps(P.a)
     else:
-        P.result = R.count_reads(P.a)
+        P.result = count_reads(P.a)
     return P
 ```
 
@@ -25,7 +25,7 @@ Two pipelines sharing the same upstream config (e.g. same `path` and `ref`) will
 
 ```python
 for i, step in enumerate(steps):
-    setattr(P, f"result_{i}", R.process(step_node, mode=step))
+    setattr(P, f"result_{i}", process(step_node, mode=step))
 ```
 
 The idiomatic pattern for multi-sample or multi-condition work is separate `Pipeline` objects added to a shared `DAG` — one pipeline per config, one `dag.add(P)` call per pipeline.
@@ -35,12 +35,12 @@ The idiomatic pattern for multi-sample or multi-condition work is separate `Pipe
 Use `P.section(name)` to mark the author-defined stage for all later node assignments:
 
 ```python
-def my_pipeline(config, R):
+def my_pipeline(config):
     P = Pipeline()
     P.section("Read alignment")
-    P.bam = R.align(path=config.path, ref=config.ref)
+    P.bam = align(path=config.path, ref=config.ref)
     P.section("Quantification")
-    P.counts = R.count_reads(P.bam)
+    P.counts = count_reads(P.bam)
     return P
 ```
 
@@ -60,7 +60,7 @@ The same rendering is available from Python:
 ```python
 from necroflow import resolve_command
 
-P = rna_pipeline(config, R)
+P = rna_pipeline(config)
 print(P)                    # layered ASCII DAG to stdout
 P.save("pipeline.txt")      # same render to a file
 
@@ -80,12 +80,12 @@ class SortedBam(Bam):
     """Coordinate-sorted BAM."""
     filename = "sorted.bam"
 
-@r.command("samtools sort {bam} -o {sorted_bam}")
+@command("samtools sort {bam} -o {sorted_bam}")
 def sort(bam: Bam):
     """Sort BAM by coordinate with samtools."""
     return SortedBam[sorted_bam]
 
-@r.command("featureCounts -a {gene_model} {bam} -o {counts}")
+@command("featureCounts -a {gene_model} {bam} -o {counts}")
 def quantify(bam: SortedBam, gene_model: str):  # only accepts sorted bam
     """Count reads per gene using featureCounts."""
     return Counts[counts]
@@ -117,27 +117,27 @@ class IndexedFilteredPrecursors(FilteredPrecursors, IndexedDataset):
     filename = "indexed-filtered.mmappet"
 
 
-@r.command("filter-mmappet {precursors} > {filtered_precursors}")
+@command("filter-mmappet {precursors} > {filtered_precursors}")
 def filter_precursors(precursors: PrecursorTable):
     return FilteredPrecursors[filtered_precursors]
 
 
-@r.command("index-mmappet {dataset} > {indexed_filtered_precursors}")
+@command("index-mmappet {dataset} > {indexed_filtered_precursors}")
 def index(dataset: FilteredPrecursors):
     return IndexedFilteredPrecursors[indexed_filtered_precursors]
 
 
-@r.command("score-mmappet {dataset} > {scores}")
+@command("score-mmappet {dataset} > {scores}")
 def score(dataset: MmappetDataset):
     return Scores[scores]
 
 
-@r.command("query-index {dataset} > {report}")
+@command("query-index {dataset} > {report}")
 def query(dataset: IndexedDataset):
     return Report[report]
 
 
-@r.command("import-mmappet {dataset} > {precursor_table}")
+@command("import-mmappet {dataset} > {precursor_table}")
 def import_any_mmappet(dataset: PrecursorTable | FilteredPrecursors):
     return PrecursorTable[precursor_table]
 ```
@@ -177,16 +177,18 @@ def validate(config):
 A rule with multiple declared outputs runs its command **once**; all co-outputs are marked complete when the command finishes:
 
 ```python
-R.symlink_file("raw_fastq", Fastq)  # see docs/caching.md#external-dataset-ingestion
+@symlink_file
+def raw_fastq(path: str):
+    return Fastq[fastq]
 
-@r.command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
+@command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
 def align(fastq: Fastq, ref: str):
     """Align reads with BWA-MEM, capturing the log."""
     return Bam[bam], Log[log]
 
 P = Pipeline()
-P.fastq = R.raw_fastq(path=config.path)
-P.bam, P.log = R.align(P.fastq, ref="hg38")
+P.fastq = raw_fastq(path=config.path)
+P.bam, P.log = align(P.fastq, ref="hg38")
 ```
 
 [Previous: Config Validation](config-validation.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)

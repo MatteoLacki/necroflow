@@ -31,7 +31,7 @@ The regression: the original scheduler used `{id(n): ...}` dicts; deduplication 
 ### Single responsibility per module
 When a module grows a second conceptual domain, extract it:
 - `nodes.py` — Node, NodeType, NodeState, topo_sort, connected components
-- `rules.py` — Inputs, Outputs, Constraints, Rule, Rules, parse_resource
+- `rules.py` — Rule internals, command/text/symlink declarations, parse_resource
 - `schedulers.py` — Scheduler protocol, fifo_scheduler, ConnectedComponentScheduler
 - `executor.py` — orchestration only; no state logic, no resource parsing
 
@@ -81,7 +81,7 @@ These were the vibe-coded starting points that all got replaced. Don't recreate 
 
 ### Magic auto-registration via `ContextVar`
 The first pipeline API was `with Pipeline() as P:` — rules auto-registered nodes into the active `ContextVar`. Clever but untestable and surprising.
-Replaced with explicit attribute assignment `P.bam = R.align(...)`. Explicit beats implicit.
+Replaced with explicit attribute assignment `P.bam = align(...)`. Explicit beats implicit.
 
 ### External deps for things pure Python can do
 `pipeline.plot()` used `networkx` + `matplotlib` for DAG rendering. Removed. Replaced with pure terminal ASCII using box-drawing chars. No dependency beats a dependency.

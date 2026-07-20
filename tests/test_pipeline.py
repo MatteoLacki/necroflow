@@ -1,8 +1,10 @@
 """Tests for Pipeline, DAG, and _sinks."""
 
+from necroflow.rules import Constraints, Inputs, Outputs, Rule
+
 import pytest
 from pathlib import Path
-from necroflow import NodeType, Inputs, Outputs, Rules, Pipeline, DAG
+from necroflow import NodeType, Pipeline, DAG, command
 from necroflow.pipeline import _sinks
 
 
@@ -26,22 +28,21 @@ class E(NodeType):
     filename = "e.txt"
 
 
-R = Rules()
-R.register("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
-R.register("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
-R.register("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
-R.register("make_d", Inputs(b=B, c=C), Outputs(d=D), "touch {d}")
-R.register("make_c_from_b", Inputs(b=B), Outputs(c=C), "touch {c}")
-R.register("make_e_from_ac", Inputs(a=A, c=C), Outputs(e=E), "touch {e}")
+R_make_a = Rule("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
+R_make_b = Rule("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
+R_make_c = Rule("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
+R_make_d = Rule("make_d", Inputs(b=B, c=C), Outputs(d=D), "touch {d}")
+R_make_c_from_b = Rule("make_c_from_b", Inputs(b=B), Outputs(c=C), "touch {c}")
+R_make_e_from_ac = Rule("make_e_from_ac", Inputs(a=A, c=C), Outputs(e=E), "touch {e}")
 
 
 def diamond():
     """A → B, A → C, (B,C) → D"""
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
-    P.c = R.make_c(P.a)
-    P.d = R.make_d(P.b, P.c)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
+    P.c = R_make_c(P.a)
+    P.d = R_make_d(P.b, P.c)
     return P
 
 
@@ -51,14 +52,14 @@ def diamond():
 def test_sinks_source_node():
     # single node with no parents and no children — must be a sink
     P = Pipeline()
-    P.a = R.make_a(x="x")
+    P.a = R_make_a(x="x")
     assert _sinks(P) == [P.a]
 
 
 def test_sinks_linear():
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
     assert _sinks(P) == [P.b]
 
 
@@ -69,9 +70,9 @@ def test_sinks_diamond():
 
 def test_sinks_multiple():
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
-    P.c = R.make_c(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
+    P.c = R_make_c(P.a)
     # b and c are both sinks (nothing depends on them)
     assert set(id(n) for n in _sinks(P)) == {id(P.b), id(P.c)}
 
@@ -89,8 +90,8 @@ def test_sinks_excludes_intermediate():
 
 def test_pipeline_nodes_accumulate():
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
     assert len(P.nodes) == 2
 
 
@@ -98,19 +99,19 @@ def test_pipeline_dot_prefix_raises():
     """Label starting with '.' must raise — reserved for .rip internal folder."""
     P = Pipeline()
     with pytest.raises(ValueError, match=r"must not start with '\.'"):
-        setattr(P, ".hidden", R.make_a(x="x"))
+        setattr(P, ".hidden", R_make_a(x="x"))
 
 
 def test_pipeline_duplicate_raises():
     P = Pipeline()
-    P.a = R.make_a(x="x")
+    P.a = R_make_a(x="x")
     with pytest.raises(ValueError):
-        P.a = R.make_a(x="y")
+        P.a = R_make_a(x="y")
 
 
 def test_pipeline_label_single():
     P = Pipeline()
-    P.a = R.make_a(x="x")
+    P.a = R_make_a(x="x")
     assert P.a.pipeline_label == "a"
 
 
@@ -124,20 +125,25 @@ def test_pipeline_save(tmp_path):
 
 def test_workdir_is_reserved_input_output_name():
     with pytest.raises(ValueError, match="reserved command placeholder"):
-        Rules().register("bad_input", Inputs(workdir=str), Outputs(a=A), "touch {a}")
+
+        @command("touch {a}")
+        def bad_input(workdir: str):
+            return A[a]
+
     with pytest.raises(ValueError, match="reserved command placeholder"):
-        Rules().register(
-            "bad_output", Inputs(x=str), Outputs(workdir=A), "touch {workdir}"
-        )
+
+        @command("touch {workdir}")
+        def bad_output(x: str):
+            return A[workdir]
 
 
 def test_pipeline_sections_tag_subsequent_nodes_only():
     P = Pipeline()
-    P.a = R.make_a(x="x")
+    P.a = R_make_a(x="x")
     P.section("Preparation")
-    P.b = R.make_b(P.a)
+    P.b = R_make_b(P.a)
     P.section("Analysis")
-    P.c = R.make_c(P.a)
+    P.c = R_make_c(P.a)
 
     assert P.sections == ("Preparation", "Analysis")
     assert P.section_for(P.a) is None
@@ -185,9 +191,9 @@ def test_png_renderer_clusters_unambiguous_pipeline_sections(tmp_path, monkeypat
 
     P = Pipeline()
     P.section("Preparation")
-    P.a = R.make_a(x="x")
+    P.a = R_make_a(x="x")
     P.section("Analysis")
-    P.b = R.make_b(P.a)
+    P.b = R_make_b(P.a)
     dag = DAG()
     dag.add(P)
 
@@ -212,12 +218,12 @@ def test_png_renderer_clusters_unambiguous_pipeline_sections(tmp_path, monkeypat
 
 def test_dag_deduplicates_shared_nodes():
     P1 = Pipeline()
-    P1.a = R.make_a(x="shared")
-    P1.b = R.make_b(P1.a)
+    P1.a = R_make_a(x="shared")
+    P1.b = R_make_b(P1.a)
 
     P2 = Pipeline()
-    P2.a = R.make_a(x="shared")
-    P2.b = R.make_b(P2.a)
+    P2.a = R_make_a(x="shared")
+    P2.b = R_make_b(P2.a)
 
     dag = DAG()
     dag.add(P1)
@@ -229,11 +235,11 @@ def test_dag_deduplicates_shared_nodes():
 def test_dag_section_is_none_when_shared_nodes_have_conflicting_sections():
     P1 = Pipeline()
     P1.section("Preparation")
-    P1.a = R.make_a(x="shared")
+    P1.a = R_make_a(x="shared")
 
     P2 = Pipeline()
     P2.section("Alternative preparation")
-    P2.a = R.make_a(x="shared")
+    P2.a = R_make_a(x="shared")
 
     dag = DAG()
     dag.add(P1)
@@ -244,12 +250,12 @@ def test_dag_section_is_none_when_shared_nodes_have_conflicting_sections():
 
 def test_dag_keeps_distinct_nodes():
     P1 = Pipeline()
-    P1.a = R.make_a(x="x1")
-    P1.b = R.make_b(P1.a)
+    P1.a = R_make_a(x="x1")
+    P1.b = R_make_b(P1.a)
 
     P2 = Pipeline()
-    P2.a = R.make_a(x="x2")
-    P2.b = R.make_b(P2.a)
+    P2.a = R_make_a(x="x2")
+    P2.b = R_make_b(P2.a)
 
     dag = DAG()
     dag.add(P1)
@@ -280,10 +286,10 @@ def test_str_long_range_edge():
     pass-through nodes are inserted so the connector is drawn through all intermediate layers.
     """
     P = Pipeline()
-    P.a = R.make_a(x="x")
-    P.b = R.make_b(P.a)
-    P.c = R.make_c_from_b(P.b)
-    P.e = R.make_e_from_ac(P.a, P.c)
+    P.a = R_make_a(x="x")
+    P.b = R_make_b(P.a)
+    P.c = R_make_c_from_b(P.b)
+    P.e = R_make_e_from_ac(P.a, P.c)
     rendered = str(P)
     # all node labels present
     for label in ("make_a", "make_b", "make_c_from_b", "make_e_from_ac"):

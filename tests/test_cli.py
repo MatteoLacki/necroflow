@@ -1,5 +1,7 @@
 """Tests for CLI internals: _create_link_outputs, manifest keys, main()."""
 
+from necroflow.rules import Constraints, Inputs, Outputs, Rule
+
 import shutil
 import textwrap
 import time
@@ -8,7 +10,7 @@ import pytest
 
 from necroflow._compat import ExceptionGroup
 from pathlib import Path
-from necroflow import NodeType, Inputs, Outputs, Rules, Pipeline, DAG
+from necroflow import NodeType, Pipeline, DAG
 from necroflow.dag import resolve_paths
 from necroflow.cli import _create_link_outputs, _graph_payload, main
 from necroflow.pipeline import _sinks
@@ -22,16 +24,15 @@ class Log(NodeType):
     filename = "run.log"
 
 
-R = Rules()
-R.register("step1", Inputs(v=str), Outputs(out=Out), "echo {v} > {out}")
-R.register("step2", Inputs(out=Out), Outputs(log=Log), "cat {out} > {log}")
+R_step1 = Rule("step1", Inputs(v=str), Outputs(out=Out), "echo {v} > {out}")
+R_step2 = Rule("step2", Inputs(out=Out), Outputs(log=Log), "cat {out} > {log}")
 
 
 def _make_pipeline_with_outputs(tmp_path) -> tuple[Pipeline, Path]:
     """Build a pipeline, resolve paths, and create real output files."""
     P = Pipeline()
-    P.out = R.step1(v="hello")
-    P.log = R.step2(P.out)
+    P.out = R_step1(v="hello")
+    P.log = R_step2(P.out)
     resolve_paths(P.nodes, tmp_path)
     for node in P.nodes:
         node.path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,7 +83,7 @@ def test_symlinks_point_to_real_files(tmp_path):
 
 def test_skips_missing_outputs(tmp_path):
     P = Pipeline()
-    P.out = R.step1(v="hello")
+    P.out = R_step1(v="hello")
     resolve_paths(P.nodes, tmp_path)
     # do NOT create the output file
     combos = [("run1", P, _sinks(P))]
@@ -143,7 +144,7 @@ def test_manifest_keys_are_pipeline_labels(tmp_path):
     content = (outdir / "run1" / "manifest.toml").read_text()
     doc = tomlkit.parse(content)
     keys = set(doc["outputs"].keys())
-    # sink has pipeline_label "log" (the last node P.log = R.step2(...))
+    # sink has pipeline_label "log" (the last node P.log = R_step2(...))
     assert "log" in keys
 
 
@@ -174,16 +175,19 @@ def test_manifest_values_are_visible_result_paths(tmp_path):
 # ── main() integration ───────────────────────────────────────────────────────
 
 FACTORY_SRC = textwrap.dedent("""\
-    from necroflow import Pipeline, NodeType, Inputs, Outputs, Rules
+    from necroflow import Pipeline, NodeType, command
     class A(NodeType): filename = "a.txt"
     class B(NodeType): filename = "b.txt"
-    R = Rules()
-    R.register("make_a", Inputs(v=str), Outputs(a=A), "touch {a}")
-    R.register("make_b", Inputs(a=A),  Outputs(b=B), "touch {b}")
+    @command("touch {a}")
+    def make_a(v: str):
+        return A[a]
+    @command("touch {b}")
+    def make_b(a: A):
+        return B[b]
     def factory(cfg):
         P = Pipeline()
-        P.a = R.make_a(v=cfg["v"])
-        P.b = R.make_b(P.a)
+        P.a = make_a(v=cfg["v"])
+        P.b = make_b(P.a)
         return P
 """)
 
@@ -668,14 +672,14 @@ def test_narrow_request_combo_excludes_prior_outputs(tmp_path, factory_file):
 
 def test_multiple_combos(tmp_path):
     P1 = Pipeline()
-    P1.out = R.step1(v="alpha")
+    P1.out = R_step1(v="alpha")
     resolve_paths(P1.nodes, tmp_path)
     for n in P1.nodes:
         n.path.parent.mkdir(parents=True, exist_ok=True)
         n.path.touch()
 
     P2 = Pipeline()
-    P2.out = R.step1(v="beta")
+    P2.out = R_step1(v="beta")
     resolve_paths(P2.nodes, tmp_path)
     for n in P2.nodes:
         n.path.parent.mkdir(parents=True, exist_ok=True)
@@ -923,16 +927,19 @@ def test_main_execution_summary_survives_autocleaned_intermediate(
 def test_main_keep_going_failure_writes_execution_summary(tmp_path):
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import Pipeline, NodeType, Inputs, Outputs, Rules
+        from necroflow import Pipeline, NodeType, command
         class A(NodeType): filename = "a.txt"
         class B(NodeType): filename = "b.txt"
-        R = Rules()
-        R.register("fail_a", Inputs(v=str), Outputs(a=A), "touch {a}; exit 1")
-        R.register("make_b", Inputs(v=str), Outputs(b=B), "touch {b}")
+        @command("touch {a}; exit 1")
+        def fail_a(v: str):
+            return A[a]
+        @command("touch {b}")
+        def make_b(v: str):
+            return B[b]
         def factory(cfg):
             P = Pipeline()
-            P.a = R.fail_a(v=cfg["v"])
-            P.b = R.make_b(v=cfg["v"])
+            P.a = fail_a(v=cfg["v"])
+            P.b = make_b(v=cfg["v"])
             return P
     """))
     job = tmp_path / "job.toml"
@@ -1008,9 +1015,9 @@ def test_graph_json_lists_nodes_and_edges(tmp_path, factory_file, capsys):
 def test_graph_json_includes_pipeline_sections(tmp_path):
     P = Pipeline()
     P.section("Preparation")
-    P.out = R.step1(v="hello")
+    P.out = R_step1(v="hello")
     P.section("Analysis")
-    P.log = R.step2(P.out)
+    P.log = R_step2(P.out)
     dag = DAG()
     dag.add(P)
 

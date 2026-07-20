@@ -9,7 +9,13 @@ from necroflow.dag import (
     write_dependencies,
     classify_nodes,
 )
-from necroflow.rules import Inputs, Outputs, Constraints, Rules
+from necroflow.rules import (
+    command,
+    symlink_file,
+    symlink_file_rule,
+    text_file,
+    text_file_rule,
+)
 from necroflow.pipeline import Pipeline, DAG
 from necroflow.executor import execute
 from necroflow.schedulers import (
@@ -24,10 +30,11 @@ __all__ = [
     "__version__",
     "Node",
     "NodeType",
-    "Inputs",
-    "Outputs",
-    "Constraints",
-    "Rules",
+    "command",
+    "symlink_file",
+    "symlink_file_rule",
+    "text_file",
+    "text_file_rule",
     "resolve_paths",
     "resolve_command",
     "write_dependencies",

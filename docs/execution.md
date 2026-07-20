@@ -4,10 +4,10 @@
 
 ## Parallelism and scheduling
 
-`execute()` runs nodes in parallel subject to resource caps. By default the thread cap is all available CPUs. Declare per-job requirements with `Constraints`; set global caps via `resource_caps` (Python API) or CLI flags.
+`execute()` runs nodes in parallel subject to resource caps. By default the thread cap is all available CPUs. Declare per-job requirements as `@command` keyword arguments; set global caps via `resource_caps` (Python API) or CLI flags.
 
 ```python
-@r.command("bwa mem {ref} {fastq} > {bam}", threads=4, ram="8Gi")
+@command("bwa mem {ref} {fastq} > {bam}", threads=4, ram="8Gi")
 def align(fastq: Fastq, ref: str):
     """Align reads with BWA-MEM."""
     return Bam[bam]
@@ -20,20 +20,20 @@ Resource values accept SI (`K M G T P` = powers of 1000) and binary (`Ki Mi Gi T
 Rule constraints are also available to command templates. Direct placeholders such as `{threads}` and `{ram}` resolve to the declared constraint value; `{threads}` defaults to `1` when omitted. Use `{constraint:name}` to force lookup from constraints when a config input has the same name:
 
 ```python
-@r.command("tool --threads {threads} --memory {ram} --gpu {constraint:gpu} -i {inp} -o {out}",
+@command("tool --threads {threads} --memory {ram} --gpu {constraint:gpu} -i {inp} -o {out}",
            threads=8, ram="32Gi", gpu=1)
 def run_tool(inp: Input):
     return Output[out]
 ```
 
-Rules also accept `repeat=N` in `R.register(...)`, `@r.command(...)`, and `@r.rule(...)` for Snakemake-style compatibility. Necroflow stores it as `rule.repeat` and validates that it is a positive integer, but it is currently metadata only: it does not make the executor run the command multiple times and it is not part of scheduling resources or output fingerprints.
+`@command(..., repeat=N)` accepts Snakemake-style repeat compatibility metadata. Necroflow stores it as `rule.repeat` and validates that it is a positive integer, but it is currently metadata only: it does not make the executor run the command multiple times and it is not part of scheduling resources or output fingerprints.
 
 ## Shell selection and brace expansion
 
 String commands use Python's default `shell=True` behavior unless a shell path is provided. Choose a shell explicitly when the command depends on shell-specific behavior such as Bash brace expansion. Literal shell braces must be doubled in rule templates so Python formatting leaves them intact:
 
 ```python
-@r.command("printf '%s\n' {{left,right}} > {out}")
+@command("printf '%s\n' {{left,right}} > {out}")
 def make_out():
     return Out[out]
 
