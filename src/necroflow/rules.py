@@ -196,17 +196,12 @@ class Rule(Generic[_ReturnT]):
         )
         unknown = placeholders - all_names
         unknown_constraints = constraint_placeholders - constraint_names
-        missing_outputs = set(outputs.specs) - placeholders
         errors = []
         if unknown:
             errors.append(f"unknown placeholders: {sorted(unknown)}")
         if unknown_constraints:
             errors.append(
                 f"unknown constraint placeholders: {sorted(unknown_constraints)}"
-            )
-        if missing_outputs:
-            errors.append(
-                f"outputs not referenced in command: {sorted(missing_outputs)}"
             )
         if errors:
             raise ValueError(f"Rule {name!r}: " + "; ".join(errors))
@@ -408,7 +403,7 @@ def _make_rule(
     )
 
 
-def command(
+def _decorator_command(
     cmd: str | list[str], /, *, repeat: int = 1, **constraints
 ) -> Callable[[Callable[..., _ReturnT]], Rule[_ReturnT]]:
     """Declare a shell-command rule from a typed function signature.
@@ -433,6 +428,48 @@ def command(
         )
 
     return decorator
+
+
+def command(
+    cmd: str | list[str],
+    *declarations,
+    name: str | None = None,
+    doc: str | None = None,
+    repeat: int = 1,
+    **constraints,
+):
+    """Create a factory rule or return the decorator-sugar adapter."""
+    if declarations:
+        if len(declarations) not in (2, 3):
+            raise TypeError(
+                "factory command requires Inputs, Outputs, and optional Constraints"
+            )
+        if name is None:
+            raise TypeError("factory command requires an explicit name=")
+        if constraints:
+            raise TypeError(
+                "factory command declarations cannot use constraint keywords"
+            )
+        inputs, outputs = declarations[:2]
+        factory_constraints = declarations[2] if len(declarations) == 3 else None
+        if not isinstance(inputs, Inputs) or not isinstance(outputs, Outputs):
+            raise TypeError("factory command requires Inputs and Outputs declarations")
+        if factory_constraints is not None and not isinstance(
+            factory_constraints, Constraints
+        ):
+            raise TypeError("factory command constraints must be a Constraints object")
+        return _make_rule(
+            name=name,
+            inputs=inputs.specs,
+            outputs=outputs.specs,
+            command=cmd,
+            constraints=factory_constraints.specs if factory_constraints else None,
+            info=doc,
+            repeat=repeat,
+        )
+    if name is not None or doc is not None:
+        raise TypeError("name= and doc= are only valid for factory commands")
+    return _decorator_command(cmd, repeat=repeat, **constraints)
 
 
 def _validate_builtin_declaration(fn: Callable, kind: str) -> tuple:

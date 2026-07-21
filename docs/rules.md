@@ -2,6 +2,21 @@
 
 [Previous: Config Validation](config-validation.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)
 
+The primary API is the explicit factory form. Factory rules require a stable `name=` and may include `doc=`; `Inputs` and `Outputs` preserve declaration order.
+
+```python
+run_sage = command(
+    "sage {config} -f {fasta} -o {workdir} {spectra}",
+    Inputs(spectra=SpectraFile, fasta=Fasta, config=SageConfig),
+    Outputs(results_json=SageResultsJson, results_pin=SageResultsPin),
+    Constraints(threads=4),
+    name="run_sage",
+    doc="Run Sage.",
+)
+```
+
+The decorator form below remains supported as syntactic sugar.
+
 ## Declaring rule outputs
 
 Import `output` with the decorator and bind every output to a real local name:

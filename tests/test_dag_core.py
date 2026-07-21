@@ -558,21 +558,21 @@ def test_command_unknown_placeholder_raises():
         )
 
 
-def test_command_missing_output_raises():
-    with pytest.raises(ValueError, match="outputs not referenced in command"):
-        r_bad = Rule(
-            "bad", Inputs(word=str), Outputs(txt=Txt, log=Log), "echo {word} > {txt}"
-        )
+def test_command_missing_output_is_allowed():
+    r_ok = Rule(
+        "bad", Inputs(word=str), Outputs(txt=Txt, log=Log), "echo {word} > {txt}"
+    )
+    assert r_ok.outputs.specs == {"txt": Txt, "log": Log}
 
 
-def test_command_list_missing_output_raises():
-    with pytest.raises(ValueError, match="outputs not referenced in command"):
-        r_bad = Rule(
-            "bad",
-            Inputs(word=str),
-            Outputs(txt=Txt, log=Log),
-            ["echo {word} > {txt}", "echo done"],
-        )
+def test_command_list_missing_output_is_allowed():
+    r_ok = Rule(
+        "bad",
+        Inputs(word=str),
+        Outputs(txt=Txt, log=Log),
+        ["echo {word} > {txt}", "echo done"],
+    )
+    assert r_ok.outputs.specs == {"txt": Txt, "log": Log}
 
 
 def test_command_unreferenced_input_is_allowed():
@@ -811,13 +811,31 @@ def test_command_decorator_preserves_runtime_shape_and_fingerprint():
     assert result.log.output_name == "log"
 
 
+def test_command_factory_preserves_order_and_doc():
+    rule = command(
+        "tool --input {text} --workdir {workdir}",
+        Inputs(text=str),
+        Outputs(left=Txt, right=Log),
+        Constraints(threads=2),
+        name="factory_rule",
+        doc="Factory documentation.",
+    )
+    assert rule.__name__ == "factory_rule"
+    assert rule.info == "Factory documentation."
+    assert rule.resources["threads"] == 2
+    result = rule(text="value")
+    assert result._fields == ("left", "right")
+    assert result.left.node_type is Txt
+    assert result.right.node_type is Log
+
+
 def test_registry_construction_api_is_not_exported():
     import necroflow
 
     assert not hasattr(necroflow, "Rules")
-    assert not hasattr(necroflow, "Inputs")
-    assert not hasattr(necroflow, "Outputs")
-    assert not hasattr(necroflow, "Constraints")
+    assert hasattr(necroflow, "Inputs")
+    assert hasattr(necroflow, "Outputs")
+    assert hasattr(necroflow, "Constraints")
 
 
 def test_command_unannotated_input_raises():

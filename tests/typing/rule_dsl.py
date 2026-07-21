@@ -1,6 +1,15 @@
 """Static-analysis fixture for rule output and dynamic pipeline shapes."""
 
-from necroflow import Node, NodeType, Pipeline, command, output
+from necroflow import (
+    Constraints,
+    Inputs,
+    Node,
+    NodeType,
+    Outputs,
+    Pipeline,
+    command,
+    output,
+)
 
 
 class Source(NodeType):
@@ -27,6 +36,15 @@ def split_source(source: Source):
     right = output(Right)
     return left, right
 
+
+factory_rule = command(
+    "cp {source} {factory_left}",
+    Inputs(source=Source),
+    Outputs(factory_left=Left),
+    Constraints(threads=2),
+    name="factory_rule",
+    doc="Factory rule.",
+)
 
 source_node: Node = make_source(text="value")
 left_node: Node

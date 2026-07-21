@@ -10,6 +10,9 @@ from necroflow.dag import (
     classify_nodes,
 )
 from necroflow.rules import (
+    Constraints,
+    Inputs,
+    Outputs,
     command,
     output,
     symlink_file,
@@ -31,6 +34,9 @@ __all__ = [
     "__version__",
     "Node",
     "NodeType",
+    "Inputs",
+    "Outputs",
+    "Constraints",
     "command",
     "output",
     "symlink_file",
