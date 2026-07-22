@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from functools import partial
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
@@ -235,42 +234,6 @@ def _record_failure_event(
     )
 
 
-def _normalize_shellpath(shellpath) -> str | None:
-    if shellpath is None:
-        return None
-    path = Path(shellpath).expanduser()
-    try:
-        resolved = path.resolve(strict=True)
-    except FileNotFoundError as exc:
-        raise ValueError(f"shellpath does not exist: {path}") from exc
-    if not resolved.is_file():
-        raise ValueError(f"shellpath is not a file: {resolved}")
-    if not os.access(resolved, os.X_OK):
-        raise ValueError(f"shellpath is not executable: {resolved}")
-    return str(resolved)
-
-
-def _apply_shell_execution_context(pipeline, shellpath: str | None) -> dict[str, str]:
-    all_nodes = getattr(pipeline, "_all_nodes", None)
-    nodes = list(all_nodes if all_nodes is not None else pipeline.nodes)
-    required_nodes = list(getattr(pipeline, "required_nodes", [])) or None
-    old_keys = {id(node): node.key for node in nodes}
-    for node in nodes:
-        previous = node.execution_context.get("shellpath")
-        if node.command is not None and shellpath is not None:
-            node.execution_context["shellpath"] = shellpath
-        else:
-            node.execution_context.pop("shellpath", None)
-        current = node.execution_context.get("shellpath")
-        if previous != current and node.rule_call is not None:
-            node.rule_call._full_fingerprint = None
-            node.rule_call.clear_realized_command()
-    rebuild = getattr(pipeline, "rebuild_index", None)
-    if rebuild is not None:
-        rebuild(required_nodes=required_nodes)
-    return {old: node.key for node in nodes if (old := old_keys[id(node)]) != node.key}
-
-
 @contextmanager
 def _acquire_lock(outdir: Path):
     """Context manager holding an exclusive fcntl lock on outdir/.rip/necroflow.lock.
@@ -376,7 +339,6 @@ def _propagate_stale(active: list, active_keys: set) -> None:
 
 def _prepare_active(
     pipeline,
-    outdir: Path,
     autoclean: bool,
     dry_run: bool,
     forced_stale_keys: set[str] | None = None,
@@ -388,7 +350,6 @@ def _prepare_active(
       active_keys — set of their keys
       n_cleaned   — number of orphan outputs deleted (only non-zero when autoclean=True)
     """
-    pipeline.resolve_paths(outdir)
     nodes = list(pipeline.nodes)
 
     # After DAG deduplication, unique nodes may hold parent references to
@@ -519,7 +480,6 @@ def _validate_scheduler(scheduler: Scheduler) -> None:
 
 def execute(
     pipeline: _GraphBase,
-    outdir,
     resource_caps: dict[str, int] | None = None,
     scheduler: Scheduler = connected_component_scheduler,
     keep_going: bool = False,
@@ -527,7 +487,6 @@ def execute(
     dry_run: bool = False,
     node_runner=None,
     forced_stale_keys: set[str] | None = None,
-    shellpath: str | Path | None = None,
 ) -> ExecutionReport:
     """Run required nodes in the pipeline, respecting declared resource caps.
 
@@ -545,29 +504,17 @@ def execute(
 
     node_runner: optional callable(node, log_path) replacing _run_node. Use this to
     intercept subprocess execution (e.g. to feed output to a TUI).
-    shellpath: optional executable shell path for string commands. If omitted,
-    Python's default shell=True behavior is used.
     """
     _validate_scheduler(scheduler)
-    shellpath = _normalize_shellpath(shellpath)
-    if shellpath is not None and node_runner is not None:
-        raise ValueError("shellpath cannot be combined with node_runner")
-    key_map = _apply_shell_execution_context(pipeline, shellpath)
-    if forced_stale_keys:
-        forced_stale_keys = {key_map.get(key, key) for key in forced_stale_keys}
-    _run = (
-        node_runner
-        if node_runner is not None
-        else partial(_run_node, shellpath=shellpath)
-    )
+    _run = node_runner if node_runner is not None else _run_node
     _logger.setup()
     caps: dict[str, int] = {"threads": os.cpu_count() or 1}
     if resource_caps:
         caps.update(resource_caps)
-    outdir = Path(outdir)
+    outdir = pipeline.nodes_dir
     with _acquire_lock(outdir):
         active, active_keys, n_cleaned = _prepare_active(
-            pipeline, outdir, autoclean, dry_run, forced_stale_keys
+            pipeline, autoclean, dry_run, forced_stale_keys
         )
         report = ExecutionReport()
         _record_cached_events(report, active)
@@ -725,12 +672,12 @@ def execute(
             "necroflow: some nodes failed",
             errors,
         )
-        exc.execution_report = report
+        setattr(exc, "execution_report", report)
         raise exc
     return report
 
 
-def _run_node(node, log_path, *, shellpath: str | None = None) -> None:
+def _run_node(node, log_path) -> None:
     node.path.parent.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "w") as log:
@@ -739,6 +686,11 @@ def _run_node(node, log_path, *, shellpath: str | None = None) -> None:
             materializer(node, log)
             return
         cmd = resolve_command(node)
+        if cmd is None:
+            raise RuntimeError(
+                f"rule {node.rule.__name__!r} has neither a command nor a materializer"
+            )
+        shellpath = node.rule_call.pipeline.shellpath
         if shellpath is not None:
             subprocess.run(
                 cmd,

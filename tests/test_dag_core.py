@@ -10,7 +10,6 @@ import necroflow.dag as dag_core
 from necroflow import NodeType, Pipeline
 from necroflow.dag import (
     _accumulated_config,
-    resolve_paths,
     resolve_command,
     write_dependencies,
 )
@@ -53,73 +52,72 @@ R_sort_txt = Rule(
     Outputs(sorted_txt=SortedTxt),
     "sort {txt} > {sorted_txt}",
 )
+P = Pipeline("/tmp/necroflow-test-dag-core")
 
 
 # ── path generation ───────────────────────────────────────────────────────────
 
 
-def test_resolve_paths_structure(tmp_path):
-    txt = R_make_txt(word="hi")
-    resolve_paths([txt], tmp_path)
-    assert txt.path == tmp_path / "make_txt" / txt.fingerprint / "out.txt"
+def test_compiled_paths_structure(tmp_path):
+    P = Pipeline(tmp_path)
+    txt = R_make_txt(P, word="hi")
+    assert txt.path == tmp_path.resolve() / "make_txt" / txt.fingerprint / "out.txt"
 
 
-def test_resolve_paths_cooutputs_share_dir(tmp_path):
-    txt = R_make_txt(word="hi")
-    upper, log = R_to_upper(txt, n=3)
-    resolve_paths([txt, upper, log], tmp_path)
+def test_compiled_paths_cooutputs_share_dir(tmp_path):
+    P = Pipeline(tmp_path)
+    txt = R_make_txt(P, word="hi")
+    upper, log = R_to_upper(P, txt, n=3)
     assert upper.path.parent == log.path.parent
     assert upper.path != log.path
 
 
-def test_resolve_paths_hash_is_16_chars(tmp_path):
-    txt = R_make_txt(word="hi")
-    resolve_paths([txt], tmp_path)
+def test_compiled_paths_hash_is_16_chars(tmp_path):
+    P = Pipeline(tmp_path)
+    txt = R_make_txt(P, word="hi")
     assert len(txt.path.parent.name) == 16
 
 
-def test_resolve_paths_rejects_component_over_name_max(tmp_path, monkeypatch):
+def test_rule_call_rejects_component_over_name_max(tmp_path, monkeypatch):
     class LongName(NodeType):
         filename = "x" * 11
 
     r_make_long_name = Rule(
         "make_long_name", Inputs(word=str), Outputs(out=LongName), "echo {word} > {out}"
     )
-    node = r_make_long_name(word="hi")
     monkeypatch.setattr(dag_core, "_filesystem_limits", lambda path: (10, 4096))
 
     with pytest.raises(ValueError, match="NAME_MAX"):
-        resolve_paths([node], tmp_path)
+        r_make_long_name(Pipeline(tmp_path), word="hi")
 
 
-def test_resolve_paths_rejects_total_path_over_path_max(tmp_path, monkeypatch):
-    node = R_make_txt(word="hi")
+def test_rule_call_rejects_total_path_over_path_max(tmp_path, monkeypatch):
     monkeypatch.setattr(dag_core, "_filesystem_limits", lambda path: (255, 20))
 
     with pytest.raises(ValueError, match="PATH_MAX"):
-        resolve_paths([node], tmp_path)
+        R_make_txt(Pipeline(tmp_path), word="hi")
 
 
 # ── fingerprinting ────────────────────────────────────────────────────────────
 
 
 def test_fingerprint_stable():
-    txt1 = R_make_txt(word="hi")
-    txt2 = R_make_txt(word="hi")
+    txt1 = R_make_txt(P, word="hi")
+    txt2 = R_make_txt(P, word="hi")
     assert txt1.fingerprint == txt2.fingerprint
 
 
 def test_fingerprint_differs_on_config():
-    txt_a = R_make_txt(word="hello")
-    txt_b = R_make_txt(word="world")
+    txt_a = R_make_txt(P, word="hello")
+    txt_b = R_make_txt(P, word="world")
     assert txt_a.fingerprint != txt_b.fingerprint
 
 
 def test_fingerprint_differs_on_parent():
-    txt_a = R_make_txt(word="hello")
-    txt_b = R_make_txt(word="world")
-    upper_a, _ = R_to_upper(txt_a, n=1)
-    upper_b, _ = R_to_upper(txt_b, n=1)
+    txt_a = R_make_txt(P, word="hello")
+    txt_b = R_make_txt(P, word="world")
+    upper_a, _ = R_to_upper(P, txt_a, n=1)
+    upper_b, _ = R_to_upper(P, txt_b, n=1)
     assert upper_a.fingerprint != upper_b.fingerprint
 
 
@@ -141,8 +139,8 @@ def test_fingerprint_changes_on_inputs_type_change():
         "align", Inputs(fastq=FastqB, ref=str), Outputs(txt=Txt), "touch {txt}"
     )
 
-    bam_a = Ra_align(Ra_raw(path="/d/s.fq"), ref="hg38")
-    bam_b = Rb_align(Rb_raw(path="/d/s.fq"), ref="hg38")
+    bam_a = Ra_align(P, Ra_raw(P, path="/d/s.fq"), ref="hg38")
+    bam_b = Rb_align(P, Rb_raw(P, path="/d/s.fq"), ref="hg38")
     assert bam_a.fingerprint != bam_b.fingerprint
 
 
@@ -158,19 +156,19 @@ def test_fingerprint_changes_on_outputs_type_change():
     Ra_align = Rule("align", Inputs(path=str), Outputs(bam=BamA), "touch {bam}")
     Rb_align = Rule("align", Inputs(path=str), Outputs(bam=BamB), "touch {bam}")
 
-    bam_a = Ra_align(path="/d/s.fq")
-    bam_b = Rb_align(path="/d/s.fq")
+    bam_a = Ra_align(P, path="/d/s.fq")
+    bam_b = Rb_align(P, path="/d/s.fq")
     assert bam_a.fingerprint != bam_b.fingerprint
 
 
 def test_node_key_unique_for_cooutputs():
-    txt = R_make_txt(word="hi")
-    upper, log = R_to_upper(txt, n=1)
+    txt = R_make_txt(P, word="hi")
+    upper, log = R_to_upper(P, txt, n=1)
     assert upper.key != log.key
 
 
 def test_node_key_contains_rule_and_filename():
-    txt = R_make_txt(word="hi")
+    txt = R_make_txt(P, word="hi")
     assert txt.key.startswith("make_txt/")
     assert txt.key.endswith("/out.txt")
 
@@ -179,41 +177,39 @@ def test_node_key_contains_rule_and_filename():
 
 
 def test_resolve_command_input_substitution(tmp_path):
-    txt = R_make_txt(word="hi")
-    upper, _ = R_to_upper(txt, n=2)
-    resolve_paths([txt, upper], tmp_path)
+    P = Pipeline(tmp_path)
+    txt = R_make_txt(P, word="hi")
+    upper, _ = R_to_upper(P, txt, n=2)
     cmd = resolve_command(upper)
     assert str(txt.path) in cmd
 
 
 def test_resolve_command_config_substitution(tmp_path):
-    txt = R_make_txt(word="hello")
-    resolve_paths([txt], tmp_path)
+    P = Pipeline(tmp_path)
+    txt = R_make_txt(P, word="hello")
     cmd = resolve_command(txt)
     assert "hello" in cmd
 
 
 def test_resolve_command_quotes_string_config_for_shell_commands(tmp_path):
+    P = Pipeline(tmp_path)
     r_filter_txt = Rule(
         "filter_txt",
         Inputs(filter=str),
         Outputs(txt=Txt),
         "tool --filter {filter} > {txt}",
     )
-    txt = r_filter_txt(filter="a > b")
-
-    resolve_paths([txt], tmp_path)
+    txt = r_filter_txt(P, filter="a > b")
 
     assert resolve_command(txt) == f"tool --filter 'a > b' > {txt.path}"
 
 
 def test_resolve_command_scalar_config_stays_bare_when_shell_safe(tmp_path):
+    P = Pipeline(tmp_path)
     r_number_txt = Rule(
         "number_txt", Inputs(n=int), Outputs(txt=Txt), "tool -n {n} > {txt}"
     )
-    txt = r_number_txt(n=5)
-
-    resolve_paths([txt], tmp_path)
+    txt = r_number_txt(P, n=5)
 
     assert resolve_command(txt) == f"tool -n 5 > {txt.path}"
 
@@ -229,23 +225,24 @@ def test_list_commands_are_rejected():
 
 
 def test_resolve_command_output_substitution(tmp_path):
-    txt = R_make_txt(word="hi")
-    upper, log = R_to_upper(txt, n=1)
-    resolve_paths([txt, upper, log], tmp_path)
+    P = Pipeline(tmp_path)
+    txt = R_make_txt(P, word="hi")
+    upper, log = R_to_upper(P, txt, n=1)
     cmd = resolve_command(upper)
     assert str(upper.path) in cmd
     assert str(log.path) in cmd
 
 
 def test_resolve_command_none_for_no_command(tmp_path):
+    P = Pipeline(tmp_path)
     # node with no command returns None
-    txt = R_make_txt(word="hi")
+    txt = R_make_txt(P, word="hi")
     txt.command = None
-    resolve_paths([txt], tmp_path)
     assert resolve_command(txt) is None
 
 
 def test_resolve_command_direct_constraint_placeholders(tmp_path):
+    P = Pipeline(tmp_path)
     r_constrained = Rule(
         "constrained",
         Inputs(word=str),
@@ -253,9 +250,7 @@ def test_resolve_command_direct_constraint_placeholders(tmp_path):
         "tool --threads {threads} --ram {ram} --gpu {constraint:gpu} --word {word} > {txt}",
         Constraints(threads=8, ram="4Gi", gpu=2),
     )
-    txt = r_constrained(word="hi")
-
-    resolve_paths([txt], tmp_path)
+    txt = r_constrained(P, word="hi")
 
     assert (
         resolve_command(txt)
@@ -264,34 +259,34 @@ def test_resolve_command_direct_constraint_placeholders(tmp_path):
 
 
 def test_resolve_command_threads_defaults_to_one(tmp_path):
+    P = Pipeline(tmp_path)
     r_default_threads = Rule(
         "default_threads",
         Inputs(word=str),
         Outputs(txt=Txt),
         "tool --threads {threads} > {txt}",
     )
-    txt = r_default_threads(word="hi")
-
-    resolve_paths([txt], tmp_path)
+    txt = r_default_threads(P, word="hi")
 
     assert resolve_command(txt) == f"tool --threads 1 > {txt.path}"
 
 
 def test_resolve_command_preserves_escaped_shell_braces(tmp_path):
+    P = Pipeline(tmp_path)
     r_brace = Rule(
         "brace",
         Inputs(word=str),
         Outputs(txt=Txt),
         "printf '%s\n' {{left,right}} {word} > {txt}",
     )
-    txt = r_brace(word="hi")
-
-    resolve_paths([txt], tmp_path)
+    txt = r_brace(P, word="hi")
 
     assert resolve_command(txt) == f"printf '%s\n' {{left,right}} hi > {txt.path}"
 
 
 def test_resolve_command_substitutes_union_typed_input(tmp_path):
+    P = Pipeline(tmp_path)
+
     # Regression test: resolve_command used to build its {name} substitution dict by
     # filtering node.rule.inputs.specs with _is_nodetype(), which is a strict
     # isclass()-and-issubclass()-NodeType check -- False for a `TypeA | TypeB` union,
@@ -305,16 +300,15 @@ def test_resolve_command_substitutes_union_typed_input(tmp_path):
         txt = output(Txt)
         return txt
 
-    src = R_make_txt(word="hi")
-    doc = read_either(src)
-
-    resolve_paths([src, doc], tmp_path)
+    src = R_make_txt(P, word="hi")
+    doc = read_either(P, src)
     cmd = resolve_command(doc)
     assert str(src.path) in cmd
     assert str(doc.path) in cmd
 
 
 def test_constraint_placeholder_forces_constraint_when_config_name_collides(tmp_path):
+    P = Pipeline(tmp_path)
     r_colliding_threads = Rule(
         "colliding_threads",
         Inputs(threads=int),
@@ -322,9 +316,7 @@ def test_constraint_placeholder_forces_constraint_when_config_name_collides(tmp_
         "tool --arg {threads} --scheduler {constraint:threads} > {txt}",
         Constraints(threads=8),
     )
-    txt = r_colliding_threads(threads=2)
-
-    resolve_paths([txt], tmp_path)
+    txt = r_colliding_threads(P, threads=2)
 
     assert resolve_command(txt) == f"tool --arg 2 --scheduler 8 > {txt.path}"
 
@@ -349,14 +341,14 @@ def test_unknown_constraint_placeholder_is_rejected():
 
 
 def test_accumulated_config_single_node():
-    txt = R_make_txt(word="hello")
+    txt = R_make_txt(P, word="hello")
     cfg = _accumulated_config(txt)
     assert cfg["word"] == "hello"
 
 
 def test_accumulated_config_multi_hop():
-    txt = R_make_txt(word="hello")
-    upper, _ = R_to_upper(txt, n=5)
+    txt = R_make_txt(P, word="hello")
+    upper, _ = R_to_upper(P, txt, n=5)
     cfg = _accumulated_config(upper)
     assert cfg["word"] == "hello"
     assert cfg["n"] == 5
@@ -366,8 +358,8 @@ def test_accumulated_config_multi_hop():
 
 
 def test_write_dependencies_creates_file(tmp_path):
-    txt = R_make_txt(word="hi")
-    resolve_paths([txt], tmp_path)
+    P = Pipeline(tmp_path)
+    txt = R_make_txt(P, word="hi")
     txt.path.parent.mkdir(parents=True, exist_ok=True)
     txt.path.touch()
     write_dependencies(txt)
@@ -375,8 +367,8 @@ def test_write_dependencies_creates_file(tmp_path):
 
 
 def test_write_dependencies_content(tmp_path):
-    txt = R_make_txt(word="hi")
-    resolve_paths([txt], tmp_path)
+    P = Pipeline(tmp_path)
+    txt = R_make_txt(P, word="hi")
     txt.path.parent.mkdir(parents=True, exist_ok=True)
     txt.path.touch()
     write_dependencies(txt)
@@ -389,21 +381,21 @@ def test_write_dependencies_content(tmp_path):
 
 
 def test_wrong_nodetype_raises():
-    txt = R_make_txt(word="hi")
-    upper, _ = R_to_upper(txt, n=1)
+    txt = R_make_txt(P, word="hi")
+    upper, _ = R_to_upper(P, txt, n=1)
     with pytest.raises(TypeError):
-        R_to_upper(upper, n=1)  # Upper passed where Txt expected
+        R_to_upper(P, upper, n=1)  # Upper passed where Txt expected
 
 
 def test_wrong_config_type_raises():
-    txt = R_make_txt(word="hi")
+    txt = R_make_txt(P, word="hi")
     with pytest.raises(TypeError):
-        R_to_upper(txt, n="not_an_int")  # str passed where int expected
+        R_to_upper(P, txt, n="not_an_int")  # str passed where int expected
 
 
 def test_missing_positional_input_raises():
     with pytest.raises(TypeError, match="missing required inputs"):
-        R_to_upper(n=1)  # txt input omitted
+        R_to_upper(P, n=1)  # txt input omitted
 
 
 def test_missing_config_input_raises():
@@ -413,7 +405,9 @@ def test_missing_config_input_raises():
     during command formatting or execution.
     """
     with pytest.raises(TypeError, match="missing required inputs"):
-        R_make_txt()  # word config omitted
+        R_make_txt(
+            P,
+        )  # word config omitted
 
 
 def test_extra_positional_input_raises():
@@ -422,16 +416,16 @@ def test_extra_positional_input_raises():
     Extra nodes should not silently become parents, because that creates
     dependencies outside the rule's declared input contract.
     """
-    txt = R_make_txt(word="hi")
-    extra = R_make_txt(word="extra")
+    txt = R_make_txt(P, word="hi")
+    extra = R_make_txt(P, word="extra")
     with pytest.raises(TypeError, match="too many positional inputs"):
-        R_to_upper(txt, extra, n=1)
+        R_to_upper(P, txt, extra, n=1)
 
 
 def test_subtype_accepted():
     # SortedTxt is a subclass of Txt — to_upper accepts Txt and must accept SortedTxt too
-    stxt = R_make_sorted_txt(word="hi")
-    result, _ = R_to_upper(stxt, n=1)
+    stxt = R_make_sorted_txt(P, word="hi")
+    result, _ = R_to_upper(P, stxt, n=1)
     assert result is not None
 
 
@@ -440,31 +434,31 @@ def test_nodetype_union_accepts_either_member():
         "use_txt_or_upper", Inputs(data=Txt | Upper), Outputs(log=Log), "touch {log}"
     )
 
-    txt = R_make_txt(word="hi")
-    upper, _ = R_to_upper(txt, n=1)
+    txt = R_make_txt(P, word="hi")
+    upper, _ = R_to_upper(P, txt, n=1)
 
-    assert r_use_txt_or_upper(txt) is not None
-    assert r_use_txt_or_upper(upper) is not None
+    assert r_use_txt_or_upper(P, txt) is not None
+    assert r_use_txt_or_upper(P, upper) is not None
 
 
 def test_nodetype_union_accepts_subclass_of_member():
     r_use_txt_or_upper = Rule(
         "use_txt_or_upper", Inputs(data=Txt | Upper), Outputs(log=Log), "touch {log}"
     )
-    stxt = R_make_sorted_txt(word="hi")
+    stxt = R_make_sorted_txt(P, word="hi")
 
-    assert r_use_txt_or_upper(stxt) is not None
+    assert r_use_txt_or_upper(P, stxt) is not None
 
 
 def test_nodetype_union_rejects_unrelated_type():
     r_use_txt_or_upper = Rule(
         "use_txt_or_upper", Inputs(data=Txt | Upper), Outputs(log=Log), "touch {log}"
     )
-    txt = R_make_txt(word="hi")
-    log = r_use_txt_or_upper(txt)
+    txt = R_make_txt(P, word="hi")
+    log = r_use_txt_or_upper(P, txt)
 
     with pytest.raises(TypeError, match=r"expected Txt \| Upper"):
-        r_use_txt_or_upper(log)
+        r_use_txt_or_upper(P, log)
 
 
 def test_mixed_nodetype_union_rejected_at_declaration():
@@ -484,10 +478,10 @@ def test_config_union_still_supported():
         "echo {value} > {txt}",
     )
 
-    assert r_config_union(value="hi") is not None
-    assert r_config_union(value=3) is not None
+    assert r_config_union(P, value="hi") is not None
+    assert r_config_union(P, value=3) is not None
     with pytest.raises(TypeError):
-        r_config_union(value=object())
+        r_config_union(P, value=object())
 
 
 def test_fingerprint_changes_for_nodetype_union_contract():
@@ -497,9 +491,9 @@ def test_fingerprint_changes_for_nodetype_union_contract():
     r_union_consume = Rule(
         "consume", Inputs(data=Txt | Upper), Outputs(log=Log), "touch {log}"
     )
-    txt = R_make_txt(word="hi")
+    txt = R_make_txt(P, word="hi")
 
-    assert r_single_consume(txt).fingerprint != r_union_consume(txt).fingerprint
+    assert r_single_consume(P, txt).fingerprint != r_union_consume(P, txt).fingerprint
 
 
 def test_nodetype_union_fingerprint_order_is_stable():
@@ -509,33 +503,33 @@ def test_nodetype_union_fingerprint_order_is_stable():
     r_ba_consume = Rule(
         "consume", Inputs(data=Upper | Txt), Outputs(log=Log), "touch {log}"
     )
-    txt = R_make_txt(word="hi")
+    txt = R_make_txt(P, word="hi")
 
-    assert r_ab_consume(txt).fingerprint == r_ba_consume(txt).fingerprint
+    assert r_ab_consume(P, txt).fingerprint == r_ba_consume(P, txt).fingerprint
 
 
 # ── pipeline_label ────────────────────────────────────────────────────────────
 
 
-def test_pipeline_label_stamped():
-    P = Pipeline()
-    P.txt = R_make_txt(word="hi")
+def test_pipeline_label_stamped(tmp_path):
+    P = Pipeline(tmp_path)
+    P.txt = R_make_txt(P, word="hi")
     assert P.txt.pipeline_label == "txt"
 
 
-def test_pipeline_label_cooutputs():
-    P = Pipeline()
-    P.txt = R_make_txt(word="hi")
-    P.upper, P.log = R_to_upper(P.txt, n=1)
+def test_pipeline_label_cooutputs(tmp_path):
+    P = Pipeline(tmp_path)
+    P.txt = R_make_txt(P, word="hi")
+    P.upper, P.log = R_to_upper(P, P.txt, n=1)
     assert P.upper.pipeline_label == "upper"
     assert P.log.pipeline_label == "log"
 
 
-def test_pipeline_duplicate_raises():
-    P = Pipeline()
-    P.txt = R_make_txt(word="hi")
+def test_pipeline_duplicate_raises(tmp_path):
+    P = Pipeline(tmp_path)
+    P.txt = R_make_txt(P, word="hi")
     with pytest.raises(ValueError):
-        P.txt = R_make_txt(word="world")
+        P.txt = R_make_txt(P, word="world")
 
 
 # ── command placeholder validation ────────────────────────────────────────────
@@ -613,7 +607,7 @@ def test_repeat_does_not_affect_fingerprint():
     r2_make = Rule(
         "make", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=3
     )
-    assert r1_make(word="hi").fingerprint == r2_make(word="hi").fingerprint
+    assert r1_make(P, word="hi").fingerprint == r2_make(P, word="hi").fingerprint
 
 
 # ── body return style ─────────────────────────────────────────────────────────
@@ -760,7 +754,7 @@ def test_command_decorator_rejects_invalid_output_declarations():
             txt = output(Txt)
             return txt
 
-    with pytest.raises(ValueError, match="Type\[name\] output syntax was removed"):
+    with pytest.raises(ValueError, match=r"Type\[name\] output syntax was removed"):
 
         @command("touch {txt}")
         def removed_syntax(word: str):
@@ -787,7 +781,7 @@ def test_command_decorator_preserves_runtime_shape_and_fingerprint():
         Outputs(txt=Txt),
         "echo {word} > {txt}",
     )
-    assert make_txt(word="same").fingerprint == explicit(word="same").fingerprint
+    assert make_txt(P, word="same").fingerprint == explicit(P, word="same").fingerprint
 
     @command("tr a-z A-Z < {txt} | tee {log} > {upper}")
     def to_upper(txt: Txt):
@@ -795,7 +789,7 @@ def test_command_decorator_preserves_runtime_shape_and_fingerprint():
         log = output(Log)
         return upper, log
 
-    result = to_upper(make_txt(word="same"))
+    result = to_upper(P, make_txt(P, word="same"))
     assert tuple(result) == (result.upper, result.log)
     assert result.upper.output_name == "upper"
     assert result.log.output_name == "log"
@@ -813,7 +807,7 @@ def test_command_factory_preserves_order_and_doc():
     assert rule.__name__ == "factory_rule"
     assert rule.info == "Factory documentation."
     assert rule.resources["threads"] == 2
-    result = rule(text="value")
+    result = rule(P, text="value")
     assert result._fields == ("left", "right")
     assert result.left.node_type is Txt
     assert result.right.node_type is Log

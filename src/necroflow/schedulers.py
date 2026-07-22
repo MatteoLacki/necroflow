@@ -27,7 +27,7 @@ class ConnectedComponentScheduler:
     """
 
     def __init__(self) -> None:
-        self._adj: dict[str, list[str]] | None = None
+        self._adj: dict[str, list[str]] = {}
         self._component_of: dict[str, int] = {}
         self._members: dict[int, set[str]] = {}
         self._sizes: dict[int, int] = {}

@@ -31,11 +31,11 @@ R_make_d = Rule("make_d", Inputs(c=C), Outputs(d=D), "touch {d}")
 
 def two_branch_dag(tmp_path):
     """Two independent branches: make_a→fail_c→make_d  and  make_b (independent)."""
-    P = Pipeline()
-    P.a = R_make_a(x="input")
-    P.b = R_make_b(x="input")
-    P.c = R_fail_c(P.a)
-    P.d = R_make_d(P.c)
+    P = Pipeline(tmp_path)
+    P.a = R_make_a(P, x="input")
+    P.b = R_make_b(P, x="input")
+    P.c = R_fail_c(P, P.a)
+    P.d = R_make_d(P, P.c)
     dag = DAG(outdir=tmp_path)
     dag.add(P, request=[P.d, P.b])
     return dag, P
@@ -74,9 +74,9 @@ def test_keep_going_downstream_of_failure_is_failed(tmp_path):
 
 
 def test_keep_going_no_error_when_all_succeed(tmp_path):
-    P = Pipeline()
-    P.a = R_make_a(x="x1")
-    P.b = R_make_b(x="x2")
+    P = Pipeline(tmp_path)
+    P.a = R_make_a(P, x="x1")
+    P.b = R_make_b(P, x="x2")
     dag = DAG(outdir=tmp_path)
     dag.add(P, request=[P.a, P.b])
     dag.execute(keep_going=True)  # should not raise

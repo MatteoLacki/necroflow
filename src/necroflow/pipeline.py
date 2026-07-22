@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import os
+from pathlib import Path
 
 from necroflow.nodes import Node
-from necroflow.dag import resolve_paths as _resolve_paths
-from necroflow.fingerprints import validate_fingerprint_function
+from necroflow.fingerprints import (
+    DEFAULT_FINGERPRINT_PROVIDER,
+    default_fingerprint,
+    validate_fingerprint_function,
+)
 
 # Maps frozenset of active directions {U,D,L,R} to box-drawing char
 _BOX = {
@@ -54,8 +59,7 @@ def _render_connector(edges: list[tuple[int, int]]) -> list[str]:
 def _label(node: Node) -> str:
     parts = [node.rule.__name__]
     suffix = ""
-    if node.node_type:
-        suffix = node.node_type.__name__
+    suffix = node.node_type.__name__
     if node.output_name and node.output_name != suffix:
         suffix += f":{node.output_name}" if suffix else node.output_name
     if suffix:
@@ -63,7 +67,7 @@ def _label(node: Node) -> str:
     # needs human review: config omitted from label — a single long config value
     # (e.g. write_*_config rules embedding a full TOML file as `text=`) used to
     # blow up box width to ~1400 chars and make the ASCII DAG unreadable.
-    if node.rule and node.rule.constraints:
+    if node.rule.constraints:
         res = ", ".join(f"{k}={v}" for k, v in node.rule.constraints.items())
         parts.append(f"[{res}]")
     return " ".join(parts)
@@ -82,6 +86,10 @@ class _GraphBase:
     def nodes(self) -> list:
         raise NotImplementedError
 
+    @property
+    def nodes_dir(self) -> Path:
+        raise NotImplementedError
+
     def _header(self) -> str:
         raise NotImplementedError
 
@@ -90,9 +98,6 @@ class _GraphBase:
 
     def _node_color(self, node: Node) -> str:
         return "steelblue"
-
-    def resolve_paths(self, outdir) -> None:
-        _resolve_paths(self.nodes, outdir)
 
     def __repr__(self) -> str:
         return str(self)
@@ -237,12 +242,46 @@ def write_ancestor_graph(node) -> None:
 
 
 class Pipeline(_GraphBase):
-    def __init__(self):
+    def __init__(
+        self,
+        nodes_dir: str | Path,
+        *,
+        fingerprint_function: Callable = default_fingerprint,
+        fingerprint_provider: str = DEFAULT_FINGERPRINT_PROVIDER,
+        shellpath: str | Path | None = None,
+    ):
         self._nodes_list = []
         self._node_names = {}
         self._sections = []
         self._active_section = None
         self._section_by_node_id = {}
+        self._nodes_dir = Path(nodes_dir).expanduser().resolve()
+        self._fingerprint_function = fingerprint_function
+        self._fingerprint_provider = fingerprint_provider
+        self._shellpath = _normalize_shellpath(shellpath)
+        validate_fingerprint_function(
+            fingerprint_function, provider=fingerprint_provider
+        )
+
+    @property
+    def nodes_dir(self) -> Path:
+        return self._nodes_dir
+
+    @property
+    def fingerprint_function(self) -> Callable:
+        return self._fingerprint_function
+
+    @property
+    def fingerprint_provider(self) -> str:
+        return self._fingerprint_provider
+
+    @property
+    def shellpath(self) -> str | None:
+        return self._shellpath
+
+    @property
+    def execution_context(self) -> dict[str, str]:
+        return {"shellpath": self._shellpath} if self._shellpath is not None else {}
 
     def section(self, name: str) -> None:
         """Start a named presentation section for subsequently assigned nodes."""
@@ -269,49 +308,53 @@ class Pipeline(_GraphBase):
     def nodes(self) -> list[Node]:
         return self._nodes_list
 
-    def set_fingerprint_function(
-        self, function: Callable, *, provider: str | None = None
-    ) -> None:
-        """Select the complete fingerprint policy for this pipeline's rule calls."""
-
-        provider = provider or (
-            f"{getattr(function, '__module__', type(function).__module__)}:"
-            f"{getattr(function, '__qualname__', type(function).__qualname__)}"
-        )
-        validate_fingerprint_function(function, provider=provider)
-        seen_nodes: set[int] = set()
-        seen_calls: set[int] = set()
-        frontier = list(self.nodes)
-        while frontier:
-            node = frontier.pop()
-            if id(node) in seen_nodes:
-                continue
-            seen_nodes.add(id(node))
-            frontier.extend(node.parents)
-            call = node.rule_call
-            if call is not None and id(call) not in seen_calls:
-                seen_calls.add(id(call))
-                call.set_fingerprint_function(function, provider=provider)
-
     def __getattr__(self, name: str) -> Node:
         try:
             return self._node_names[name]
         except KeyError as exc:
             raise AttributeError(name) from exc
 
+    def __getitem__(self, name: str) -> Node:
+        if not isinstance(name, str):
+            raise TypeError("Pipeline label must be a string")
+        return self._node_names[name]
+
+    def _assign_node(self, name: str, value: Node) -> None:
+        if not isinstance(name, str):
+            raise TypeError("Pipeline label must be a string")
+        if not name:
+            raise ValueError("Pipeline label must not be empty")
+        if name.startswith("."):
+            raise ValueError(f"Pipeline label {name!r} must not start with '.'")
+        if name in self._node_names:
+            raise ValueError(f"Pipeline label {name!r} already assigned")
+        if value.rule_call.pipeline is not self:
+            raise ValueError(
+                f"Node assigned as {name!r} was compiled for a different Pipeline"
+            )
+        self._nodes_list.append(value)
+        self._node_names[name] = value
+        self._section_by_node_id[id(value)] = self._active_section
+        value.pipeline_label = name
+
+    def __setitem__(self, name: str, value: Node) -> None:
+        if not isinstance(value, Node):
+            raise TypeError(
+                f"Pipeline labels require Node values, got {type(value).__name__}"
+            )
+        self._assign_node(name, value)
+
     def __setattr__(self, name: str, value: object) -> None:
         if name.startswith("_"):
             object.__setattr__(self, name, value)
             return
-        if name.startswith("."):
-            raise ValueError(f"Pipeline attribute {name!r} must not start with '.'")
-        if name in self._node_names:
-            raise ValueError(f"Pipeline attribute {name!r} already assigned")
         if isinstance(value, Node):
-            self._nodes_list.append(value)
-            self._node_names[name] = value
-            self._section_by_node_id[id(value)] = self._active_section
-            value.pipeline_label = name
+            if any(name in cls.__dict__ for cls in type(self).__mro__):
+                raise ValueError(
+                    f"Pipeline attribute {name!r} is reserved; use item syntax "
+                    f"P[{name!r}] if this label is intentional"
+                )
+            self._assign_node(name, value)
         object.__setattr__(self, name, value)
 
     def _header(self) -> str:
@@ -322,19 +365,26 @@ class DAG(_GraphBase):
     """Aggregator for multiple pipelines. Stores nodes by content-addressed hash;
     deduplicates shared upstream computations automatically."""
 
-    def __init__(self, outdir=None):
-        from pathlib import Path
-
+    def __init__(self, outdir):
         self._nodes: dict[str, object] = {}  # key -> canonical Node
         self._all_nodes: list = []  # all nodes including duplicates
         self._required: set[str] = set()
         self._sections_by_key: dict[str, set[str | None]] = {}
         self._section_by_node_id: dict[int, str | None] = {}
-        self.outdir = Path(outdir) if outdir is not None else Path.cwd()
+        self.outdir = Path(outdir).expanduser().resolve()
         self.last_execution_report = None
+
+    @property
+    def nodes_dir(self) -> Path:
+        return self.outdir
 
     def add(self, pipeline: Pipeline, request=None) -> None:
         """Add a pipeline's nodes. request defaults to pipeline sinks."""
+        if pipeline.nodes_dir != self.outdir:
+            raise ValueError(
+                f"Pipeline node store {pipeline.nodes_dir} does not match "
+                f"DAG node store {self.outdir}"
+            )
         if request is None:
             request = _sinks(pipeline)
         for node in pipeline.nodes:
@@ -345,20 +395,6 @@ class DAG(_GraphBase):
             self._sections_by_key.setdefault(node.key, set()).add(section)
         for node in request:
             self._required.add(node.key)
-
-    def rebuild_index(self, required_nodes=None) -> None:
-        """Rebuild deduplication indexes after execution context changes keys."""
-        required_nodes = (
-            self.required_nodes if required_nodes is None else required_nodes
-        )
-        self._nodes = {}
-        self._sections_by_key = {}
-        for node in self._all_nodes:
-            self._nodes.setdefault(node.key, node)
-            self._sections_by_key.setdefault(node.key, set()).add(
-                self._section_by_node_id.get(id(node))
-            )
-        self._required = {node.key for node in required_nodes}
 
     @property
     def nodes(self) -> list:
@@ -375,9 +411,6 @@ class DAG(_GraphBase):
             return next(iter(sections))
         return None
 
-    def resolve_paths(self, outdir) -> None:
-        _resolve_paths(self._all_nodes, outdir)
-
     def _header(self) -> str:
         return f"DAG  {len(self._nodes)} nodes  ({len(self._required)} required)"
 
@@ -392,5 +425,20 @@ class DAG(_GraphBase):
     def execute(self, **kwargs):
         from necroflow.executor import execute
 
-        self.last_execution_report = execute(self, self.outdir, **kwargs)
+        self.last_execution_report = execute(self, **kwargs)
         return self.last_execution_report
+
+
+def _normalize_shellpath(shellpath: str | Path | None) -> str | None:
+    if shellpath is None:
+        return None
+    path = Path(shellpath).expanduser()
+    try:
+        resolved = path.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise ValueError(f"shellpath does not exist: {path}") from exc
+    if not resolved.is_file():
+        raise ValueError(f"shellpath is not a file: {resolved}")
+    if not os.access(resolved, os.X_OK):
+        raise ValueError(f"shellpath is not executable: {resolved}")
+    return str(resolved)

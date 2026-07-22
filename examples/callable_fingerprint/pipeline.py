@@ -35,12 +35,11 @@ def sort_text(source: SourceText, reverse: bool, unique: bool):
     return sorted_text
 
 
-def sorting_pipeline(config: dict) -> Pipeline:
-    pipeline = Pipeline()
-    pipeline.source = source_text(path=str(config["input"]))
+def sorting_pipeline(pipeline: Pipeline, config: dict) -> None:
+    pipeline.source = source_text(pipeline, path=str(config["input"]))
     pipeline.sorted = sort_text(
+        pipeline,
         pipeline.source,
         reverse=config.get("reverse", False),
         unique=config.get("unique", False),
     )
-    return pipeline

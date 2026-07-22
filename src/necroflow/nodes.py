@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import inspect
 from types import UnionType
 from collections import deque
@@ -9,6 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, get_args, get_origin
 
+from necroflow.fingerprints import validate_fingerprint_result
 from necroflow.rule_call import RuleCall
 
 _COMPROMISED_STATES = {"running", "failed", "interrupted"}
@@ -26,10 +26,13 @@ class NodeState(Enum):
 
 
 class NodeTypeMeta(type):
-    """Metaclass so that Fastq("output_name") returns a Node, not a Fastq instance."""
+    """Metaclass for declarative node types."""
 
     def __call__(cls, output_name: str | None = None) -> Node:
-        return Node(output_name=output_name, node_type=cls)
+        raise TypeError(
+            f"{cls.__name__} is a NodeType declaration, not a Node constructor; "
+            "create managed Nodes by calling a Rule with a Pipeline"
+        )
 
     def __repr__(cls) -> str:
         return cls.__name__
@@ -57,22 +60,22 @@ class NodeType(metaclass=NodeTypeMeta):
 
 @dataclass
 class Node:
-    output_name: str | None = None
-    node_type: type[NodeType] | None = None
-    parents: list[Node] = field(default_factory=list)
-    config: dict[str, Any] = field(default_factory=dict)
-    rule: Any | None = None
-    command: str | Callable | None = None
-    path: Path | None = None
+    output_name: str
+    node_type: type[NodeType]
+    parents: list[Node]
+    config: dict[str, Any]
+    rule: Any
+    command: str | Callable | None
+    path: Path
+    rule_call: RuleCall
     output_nodes: dict[str, Node] = field(default_factory=dict)
     state: NodeState | None = None
     info: str | None = None
     pipeline_label: str | None = None
     execution_context: dict[str, Any] = field(default_factory=dict)
-    rule_call: RuleCall | None = None
 
     def __post_init__(self):
-        if self.info is None and self.node_type is not None:
+        if self.info is None:
             doc = self.node_type.__doc__
             if doc:
                 self.info = doc.strip()
@@ -81,11 +84,7 @@ class Node:
     def full_fingerprint(self) -> str:
         """Full version-2 digest shared by co-outputs of one rule call."""
 
-        if self.rule_call is not None:
-            return self.rule_call.full_fingerprint
-        return hashlib.sha256(
-            f"necroflow.unbound/v2:{self.output_name}:{self.node_type!r}".encode()
-        ).hexdigest()
+        return self.rule_call.full_fingerprint
 
     @property
     def fingerprint(self) -> str:
@@ -97,12 +96,8 @@ class Node:
     def key(self) -> str:
         """Unique key for a node: rule_name/fingerprint/filename.
         Distinct for co-outputs because filename differs."""
-        rule_name = self.rule.__name__ if self.rule else "unknown"
-        filename = (
-            self.node_type.filename
-            if self.node_type and self.node_type.filename
-            else self.output_name or "output"
-        )
+        rule_name = self.rule.__name__
+        filename = self.node_type.filename or self.output_name
         return f"{rule_name}/{self.fingerprint}/{filename}"
 
     @property
@@ -125,23 +120,48 @@ class Node:
 
     @classmethod
     def make_outputs(
-        cls, rule, parents: list[Node], config: dict, command, outputs_specs: dict
+        cls,
+        pipeline,
+        rule,
+        parents: list[Node],
+        config: dict,
+        command,
+        outputs_specs: dict,
     ) -> list[Node]:
-        call = RuleCall(rule=rule, parents=parents, config=config, command=command)
-        nodes = [
-            cls(
+        from necroflow.dag import _check_path_limits
+
+        execution_context = pipeline.execution_context if command is not None else {}
+        call = RuleCall(
+            pipeline=pipeline,
+            rule=rule,
+            parents=parents,
+            config=config,
+            command=command,
+            execution_context=execution_context,
+            fingerprint_provider=pipeline.fingerprint_provider,
+        )
+        value = pipeline.fingerprint_function(call.fingerprint_args())
+        call._full_fingerprint = validate_fingerprint_result(
+            value, provider=pipeline.fingerprint_provider
+        )
+        workdir = pipeline.nodes_dir / rule.__name__ / call.full_fingerprint[:16]
+        nodes: list[Node] = [
+            Node(
                 output_name=oname,
                 node_type=otype,
                 parents=parents,
                 config=config,
                 rule=rule,
                 command=command,
+                path=workdir / (otype.filename or oname),
                 execution_context=call.execution_context,
                 rule_call=call,
             )
             for oname, otype in outputs_specs.items()
         ]
-        all_outputs = {n.output_name: n for n in nodes}
+        for node in nodes:
+            _check_path_limits(node.path)
+        all_outputs: dict[str, Node] = {n.output_name: n for n in nodes}
         for n in nodes:
             n.output_nodes = all_outputs
         call.output_nodes = all_outputs

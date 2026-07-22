@@ -220,7 +220,14 @@ class Rule(Generic[_ReturnT]):
         result.setdefault("threads", 1)
         return result
 
-    def __call__(self, *args: Any, **kwargs: Any) -> _ReturnT:
+    def __call__(self, pipeline, /, *args: Any, **kwargs: Any) -> _ReturnT:
+        from necroflow.pipeline import Pipeline
+
+        if not isinstance(pipeline, Pipeline):
+            raise TypeError(
+                f"{self.__name__}: first argument must be the owning Pipeline, "
+                f"got {type(pipeline).__name__}"
+            )
         name = self.__name__
         if len(args) < len(self._pos_inputs):
             missing = [pname for pname, _ in self._pos_inputs[len(args) :]]
@@ -237,11 +244,13 @@ class Rule(Generic[_ReturnT]):
                 raise TypeError(
                     f"{name}: {pname!r} expected Node, got {type(val).__name__!r}"
                 )
-            if val.node_type is None or not _matches_node_type(val.node_type, ptype):
+            if not _matches_node_type(val.node_type, ptype):
                 got = val.node_type.__name__ if val.node_type else "None"
                 raise TypeError(
                     f"{name}: {pname!r} expected {_type_contract_name(ptype)}, got {got}"
                 )
+            if val.rule_call.pipeline is not pipeline:
+                raise ValueError(f"{name}: {pname!r} belongs to a different Pipeline")
         for kname, val in kwargs.items():
             if kname not in self._kw_inputs:
                 continue
@@ -257,9 +266,13 @@ class Rule(Generic[_ReturnT]):
 
         parents = [a for a in args if isinstance(a, Node)]
         nodes = Node.make_outputs(
-            self, parents, kwargs, self.command, self.outputs.specs
+            pipeline, self, parents, kwargs, self.command, self.outputs.specs
         )
-        value = self._return_type(*nodes) if self._multi else nodes[0]
+        if self._multi:
+            assert self._return_type is not None
+            value = self._return_type(*nodes)
+        else:
+            value = nodes[0]
         return cast(_ReturnT, value)
 
 
@@ -366,7 +379,7 @@ def _parse_rule_fn(fn) -> tuple:
         raise ValueError(
             f"rule {rule_name!r}: final return must contain only declared output names"
         )
-    returned_names = [item.id for item in items]
+    returned_names = [cast(ast.Name, item).id for item in items]
     if len(returned_names) != len(set(returned_names)):
         raise ValueError(
             f"rule {rule_name!r}: each output must be returned exactly once"
@@ -580,7 +593,9 @@ def text_file(
 ) -> Callable[[Callable[..., _ReturnT]], Rule[_ReturnT]]: ...
 
 
-def text_file(fn: Callable | None = None, /, *, encoding: str = "utf-8"):
+def text_file(  # pyright: ignore[reportInconsistentOverload]
+    fn: Callable | None = None, *, encoding: str = "utf-8"
+):
     """Declare a built-in text-file rule, optionally selecting its encoding."""
 
     def decorator(declaration: Callable) -> Rule:

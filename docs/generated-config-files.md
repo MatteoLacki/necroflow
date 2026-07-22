@@ -26,10 +26,10 @@ all the downstream command needs:
 def run_sage(spectra: Mzml, sage_config_path: str):
     sage_out = output(SageOut)
     return sage_out
-def pipeline(config):
-    P = Pipeline()
-    P.sage_out = run_sage(P.spectra, sage_config_path=config["sage_config"])
-    return P
+def pipeline(P: Pipeline, config: dict) -> None:
+    P.sage_out = run_sage(
+        P, P.spectra, sage_config_path=config["sage_config"]
+    )
 ```
 
 ```toml
@@ -60,11 +60,9 @@ def import_sage_config(path: str):
 def run_sage(spectra: Mzml, sage_config: SageConfig):
     sage_out = output(SageOut)
     return sage_out
-def pipeline(config):
-    P = Pipeline()
-    P.sage_config = import_sage_config(path=config["sage_config"])
-    P.sage_out = run_sage(P.spectra, P.sage_config)
-    return P
+def pipeline(P: Pipeline, config: dict) -> None:
+    P.sage_config = import_sage_config(P, path=config["sage_config"])
+    P.sage_out = run_sage(P, P.spectra, P.sage_config)
 ```
 
 This keeps the config as a normal upstream artifact. If in-place edits to the

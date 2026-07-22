@@ -156,7 +156,7 @@ def _output_mtime(path: Path) -> float:
 
 
 def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
-    """Set node.state for each node. Requires resolve_paths() to have been called first.
+    """Set each eagerly addressed node's state from cache and dependency metadata.
 
     Nodes in the required subgraph (required_nodes + all ancestors) get Missing/Stale/UpToDate.
     Nodes outside the subgraph with existing output get Orphan.
@@ -237,13 +237,12 @@ def _quote_command_substitution(value: Any) -> Any:
 def resolve_command(node: Node) -> str | None:
     """Format node.command with input/output paths and config values.
 
-    Requires resolve_paths() to have been called first.
     Substitutions: {input_name} -> parent.path, {output_name} -> node.path, {config_key} -> value.
     """
     if node.command is None:
         return None
     call = node.rule_call
-    if call is not None and call._command_realized:
+    if call._command_realized:
         return call._realized_command
     if callable(node.command):
         if call is None:
@@ -280,23 +279,3 @@ def resolve_command(node: Node) -> str | None:
         call._realized_command = result
         call._command_realized = True
     return result
-
-
-def resolve_paths(nodes: list[Node], outdir: Path | str) -> None:
-    """Set node.path for each node: outdir / rule_name / hash8 / filename.
-
-    Filename is node_type.name if set, else output_name (no extension).
-    Co-outputs of the same rule call share the same hash directory.
-    """
-    outdir = Path(outdir)
-    calls = {
-        id(node.rule_call): node.rule_call
-        for node in nodes
-        if node.rule_call is not None
-    }
-    for call in calls.values():
-        call.set_resolved_root(outdir.resolve())
-    for node in nodes:
-        path = outdir / node.key
-        _check_path_limits(path)
-        node.path = path

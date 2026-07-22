@@ -58,15 +58,15 @@ def callback_rule(source: Source):
     return callback_left
 
 
-source_node: Node = make_source(text="value")
+pipeline = Pipeline("/tmp/necroflow-typing")
+source_node: Node = make_source(pipeline, text="value")
 left_node: Node
 right_node: Node
-left_node, right_node = split_source(source_node)
-callback_node: Node = callback_rule(source_node)
+left_node, right_node = split_source(pipeline, source_node)
+callback_node: Node = callback_rule(pipeline, source_node)
 
-pipeline = Pipeline()
 pipeline.source = source_node
-pipeline.left, pipeline.right = split_source(pipeline.source)
+pipeline.left, pipeline.right = split_source(pipeline, pipeline.source)
 
 
 def accepts_node(node: Node) -> None:

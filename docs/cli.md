@@ -4,7 +4,11 @@
 
 ## Command-line interface
 
-necroflow ships a `necroflow` command. Each positional argument is a **job TOML** — a self-contained file that specifies the pipeline factory, optional requested outputs, and user config params.
+necroflow ships a `necroflow` command. Each positional argument is a **job
+TOML** — a self-contained file that specifies the pipeline factory, optional
+requested outputs, and user config params. For each expanded job, the CLI
+constructs `Pipeline(nodes_dir, fingerprint_function=..., shellpath=...)` and
+calls `factory(P, config)`; the factory mutates `P` and returns `None`.
 
 ```bash
 necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \

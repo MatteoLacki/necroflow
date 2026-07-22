@@ -19,7 +19,9 @@ necroflow
 │   │   ├── repeat=N compatibility metadata
 │   │   └── built-in text_file rules for generated config files
 │   ├── Pipeline
-│   │   ├── attribute-based node registration
+│   │   ├── owns node-store, fingerprint, and shell compile context
+│   │   ├── explicit first argument to every rule call
+│   │   ├── attribute/item node registration in one label namespace
 │   │   ├── pipeline labels for manifests and requests
 │   │   ├── author-declared presentation sections via P.section(...)
 │   │   └── conditional Python pipeline construction
@@ -44,6 +46,7 @@ necroflow
 │
 ├── Caching and paths
 │   ├── content-addressed node paths
+│   ├── fingerprints and absolute paths compiled during rule calls
 │   ├── full framed fingerprint-v2 digests with 16-char path form
 │   ├── filesystem cache as source of truth
 │   ├── parent/content/config/type-aware fingerprints
@@ -124,6 +127,7 @@ necroflow
 │
 ├── Job TOML
 │   ├── .pipeline factory reference
+│   ├── CLI-supplied Pipeline via factory(P, config) -> None
 │   ├── .requests target selection
 │   ├── metadata-stripped config passed to factory
 │   ├── __grid expansion

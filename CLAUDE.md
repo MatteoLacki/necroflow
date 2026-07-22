@@ -86,7 +86,11 @@ These have been true since the June refactors and are load-bearing design decisi
   `{filename}.hash`, `job.log`, `state`, `run.toml` (timings/size), `graph.txt` (ancestor
   render), `{filename}.invalidation` (NodeType invalidator token, when set).
 - **Explicit over implicit.** Nodes are registered by attribute assignment (`P.bam = align(...)`);
-  there is no context-manager or `ContextVar` auto-registration, and there never should be again.
+  item assignment (`P["bam"] = ...`) shares the same namespace. Every rule receives the owning
+  Pipeline first. There is no context-manager or `ContextVar` auto-registration.
+- **Addresses are eager.** `Pipeline(nodes_dir, fingerprint_function=..., shellpath=...)` owns all
+  compile-time context. A rule call returns Nodes with final full fingerprints and absolute paths;
+  there is no late path resolution, fingerprint-policy mutation, or DAG reindexing.
 
 ## Scheduler protocol (current — 3 arguments)
 
@@ -107,8 +111,8 @@ def my_scheduler(ready: list[Node], remaining: list[Node],
 
 ## `execute()` — check the docstring for details
 
-`necroflow.executor.execute(pipeline, outdir, resource_caps=None, scheduler=..., keep_going=False,
-autoclean=False, dry_run=False, node_runner=None, forced_stale_keys=None, shellpath=None)
+`necroflow.executor.execute(pipeline, resource_caps=None, scheduler=..., keep_going=False,
+autoclean=False, dry_run=False, node_runner=None, forced_stale_keys=None)
 -> ExecutionReport`
 
 `DAG.execute()` forwards all kwargs and stores the report as `dag.last_execution_report`.
@@ -126,7 +130,7 @@ src/necroflow/
   rules.py           — Rule internals plus command, text-file, and symlink-file declarations,
                        parse_resource with SI/binary suffixes
   schedulers.py      — Scheduler protocol, fifo_scheduler, ConnectedComponentScheduler
-  dag.py             — resolve_paths (incl. path-length checks), resolve_command, write_dependencies,
+  dag.py             — path-length checks, resolve_command, write_dependencies,
                        classify_nodes, content hashing
   pipeline.py        — _GraphBase, Pipeline (sections, labels), DAG, ASCII rendering, save()
   executor.py        — execute(), resource caps, lock, ExecutionReport, autoclean, keep_going

@@ -3,6 +3,8 @@
 import importlib.util
 from pathlib import Path
 
+from necroflow import Pipeline
+
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "simple_dag.py"
 
 
@@ -18,7 +20,8 @@ def test_paper_example_factories_have_consistent_contracts():
     example = _load_example()
     config = example.example_config()
 
-    extended = example.extended_pipeline(config)
+    extended = Pipeline("/tmp/necroflow-paper-example")
+    example.extended_pipeline(extended, config)
     assert extended.counts.node_type is example.Counts
     assert extended.vcf.node_type is example.Vcf
     assert extended.annotated_vcf.node_type is example.AnnotatedVcf

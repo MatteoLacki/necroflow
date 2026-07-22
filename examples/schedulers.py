@@ -10,7 +10,7 @@ Run:
 """
 
 from pathlib import Path
-from necroflow import DAG, NodeType, command, fifo_scheduler, output
+from necroflow import DAG, NodeType, Pipeline, command, fifo_scheduler, output
 
 
 class Text(NodeType):
@@ -53,15 +53,11 @@ def merge(upper: Upper, lower: Lower):
     return merged
 
 
-def diamond(word: str):
-    from necroflow import Pipeline, output
-
-    P = Pipeline()
-    P.text = make_text(word=word)
-    P.upper = to_upper(P.text)
-    P.lower = to_lower(P.text)
-    P.merged = merge(P.upper, P.lower)
-    return P
+def diamond(P, word: str) -> None:
+    P.text = make_text(P, word=word)
+    P.upper = to_upper(P, P.text)
+    P.lower = to_lower(P, P.text)
+    P.merged = merge(P, P.upper, P.lower)
 
 
 OUTDIR = Path("/tmp/schedulers_example")
@@ -69,13 +65,17 @@ OUTDIR = Path("/tmp/schedulers_example")
 # default scheduler
 dag1 = DAG(OUTDIR / "default")
 for word in ["hello", "world"]:
-    dag1.add(diamond(word))
+    pipeline = Pipeline(dag1.nodes_dir)
+    diamond(pipeline, word)
+    dag1.add(pipeline)
 print("--- connected_component_scheduler (default) ---")
 dag1.execute()
 
 # fifo scheduler
 dag2 = DAG(OUTDIR / "fifo")
 for word in ["hello", "world"]:
-    dag2.add(diamond(word))
+    pipeline = Pipeline(dag2.nodes_dir)
+    diamond(pipeline, word)
+    dag2.add(pipeline)
 print("--- fifo_scheduler ---")
 dag2.execute(scheduler=fifo_scheduler)

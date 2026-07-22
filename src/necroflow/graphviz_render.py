@@ -29,7 +29,7 @@ def _group_key(node_key: str) -> str:
 def render_png(
     dag, *, output_path: Path, title: str | None = None, dpi: int = 170
 ) -> None:
-    """Render `dag` (a necroflow DAG, after resolve_paths) to a PNG at output_path.
+    """Render an eagerly addressed necroflow DAG to a PNG at output_path.
 
     Raises SystemExit with an actionable message if networkx isn't installed
     or the `dot` binary isn't on PATH.

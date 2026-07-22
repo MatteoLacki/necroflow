@@ -92,14 +92,12 @@ shape through pipeline assignments.
 Pipeline factory functions are plain Python, so `if/else` branching on config values works naturally:
 
 ```python
-def my_pipeline(config):
-    P = Pipeline()
-    P.a = align(path=config.path, ref=config.ref)
+def my_pipeline(P: Pipeline, config) -> None:
+    P.a = align(P, path=config.path, ref=config.ref)
     if config.call_variants:
-        P.result = call_snps(P.a)
+        P.result = call_snps(P, P.a)
     else:
-        P.result = count_reads(P.a)
-    return P
+        P.result = count_reads(P, P.a)
 ```
 
 The branching config value (`config.call_variants`) does not need to be passed to any node. The rule name already encodes which branch was taken in the fingerprint, so `call_snps` and `count_reads` always produce distinct output paths regardless.
@@ -110,23 +108,24 @@ Two pipelines sharing the same upstream config (e.g. same `path` and `ref`) will
 
 ```python
 for i, step in enumerate(steps):
-    setattr(P, f"result_{i}", process(step_node, mode=step))
+    P[f"result_{i}"] = process(P, step_node, mode=step)
 ```
 
-The idiomatic pattern for multi-sample or multi-condition work is separate `Pipeline` objects added to a shared `DAG` — one pipeline per config, one `dag.add(P)` call per pipeline.
+The idiomatic pattern for multi-sample or multi-condition work is separate
+`Pipeline` objects, constructed with the same node-store directory and added to
+a shared `DAG` — one pipeline per config, one `dag.add(P)` call per pipeline.
+Attribute and item labels (`P.result` and `P["result"]`) share one namespace.
 
 ## Pipeline sections
 
 Use `P.section(name)` to mark the author-defined stage for all later node assignments:
 
 ```python
-def my_pipeline(config):
-    P = Pipeline()
+def my_pipeline(P: Pipeline, config) -> None:
     P.section("Read alignment")
-    P.bam = align(path=config.path, ref=config.ref)
+    P.bam = align(P, path=config.path, ref=config.ref)
     P.section("Quantification")
-    P.counts = count_reads(P.bam)
-    return P
+    P.counts = count_reads(P, P.bam)
 ```
 
 A section is presentation metadata, not computational input: it does not change node fingerprints, paths, cache hits, execution, or provenance. `necroflow graph --json` includes the section for each unambiguous node, and `necroflow graph --png` uses section clusters only when every displayed rule call has one unambiguous section. A shared node assigned to conflicting sections across pipelines falls back to the ordinary dependency-depth layout.
@@ -145,13 +144,13 @@ The same rendering is available from Python:
 ```python
 from necroflow import resolve_command
 
-P = rna_pipeline(config)
+P = Pipeline("results")
+rna_pipeline(P, config)
 print(P)                    # layered ASCII DAG to stdout
 P.save("pipeline.txt")      # same render to a file
 
 dag.save("dag.txt")         # works on DAG too
 
-P.resolve_paths("results")
 for node in P.nodes:
     print(resolve_command(node))   # fully-resolved shell command
 ```
@@ -270,9 +269,9 @@ def align(fastq: Fastq, ref: str):
     bam = output(Bam)
     log = output(Log)
     return bam, log
-P = Pipeline()
-P.fastq = raw_fastq(path=config.path)
-P.bam, P.log = align(P.fastq, ref="hg38")
+P = Pipeline("nodes")
+P.fastq = raw_fastq(P, path=config.path)
+P.bam, P.log = align(P, P.fastq, ref="hg38")
 ```
 
 [Previous: Config Validation](config-validation.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)

@@ -85,33 +85,28 @@ def annotate(vcf: Vcf, database: str):
     return annotated_vcf
 
 
-def aligned_reads(config):
+def aligned_reads(P: Pipeline, config) -> None:
     """Construct the import, alignment, and sorting prefix."""
-    P = Pipeline()
-    P.fastq = raw_fastq(path=config.path)
-    P.bam, P.align_log = align(P.fastq, reference=config.reference)
-    P.sorted_bam = sort_bam(P.bam)
-    return P
+    P.fastq = raw_fastq(P, path=config.path)
+    P.bam, P.align_log = align(P, P.fastq, reference=config.reference)
+    P.sorted_bam = sort_bam(P, P.bam)
 
 
-def quantification_pipeline(config):
-    P = aligned_reads(config)
-    P.counts = quantify(P.sorted_bam, gene_model=config.gene_model)
-    return P
+def quantification_pipeline(P: Pipeline, config) -> None:
+    aligned_reads(P, config)
+    P.counts = quantify(P, P.sorted_bam, gene_model=config.gene_model)
 
 
-def variant_pipeline(config):
-    P = aligned_reads(config)
-    P.vcf = call_variants(P.sorted_bam, reference=config.reference)
-    return P
+def variant_pipeline(P: Pipeline, config) -> None:
+    aligned_reads(P, config)
+    P.vcf = call_variants(P, P.sorted_bam, reference=config.reference)
 
 
-def extended_pipeline(config):
-    P = quantification_pipeline(config)
+def extended_pipeline(P: Pipeline, config) -> None:
+    quantification_pipeline(P, config)
     if config.call_variants:
-        P.vcf = call_variants(P.sorted_bam, reference=config.reference)
-        P.annotated_vcf = annotate(P.vcf, database=config.variant_database)
-    return P
+        P.vcf = call_variants(P, P.sorted_bam, reference=config.reference)
+        P.annotated_vcf = annotate(P, P.vcf, database=config.variant_database)
 
 
 def example_config(**overrides):
@@ -128,15 +123,17 @@ def example_config(**overrides):
 
 def inspect_example():
     config = example_config()
-    pipeline = extended_pipeline(config)
-    pipeline.resolve_paths("results")
+    pipeline = Pipeline("results")
+    extended_pipeline(pipeline, config)
     return pipeline, [resolve_command(node) for node in pipeline.nodes]
 
 
 def shared_dag(outdir="results"):
     config = example_config()
-    quant = quantification_pipeline(config)
-    variants = variant_pipeline(config)
+    quant = Pipeline(outdir)
+    quantification_pipeline(quant, config)
+    variants = Pipeline(outdir)
+    variant_pipeline(variants, config)
     dag = DAG(outdir)
     dag.add(quant)
     dag.add(variants)

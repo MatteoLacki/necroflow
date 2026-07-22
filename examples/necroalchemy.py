@@ -259,26 +259,24 @@ def grand_summary(stats: Stats, line_counts: LineCounts, final_mix: FinalMix):
 # ── pipeline factory ──────────────────────────────────────────────────────────
 
 
-def alchemy_pipeline(word: str, n: int = 3) -> Pipeline:
+def alchemy_pipeline(P: Pipeline, word: str, n: int = 3) -> None:
     """Build one necroalchemy pipeline for a given word."""
-    P = Pipeline()
-    P.seed = make_seed(word=word)
-    P.upper = to_upper(P.seed)
-    P.lower = to_lower(P.seed)
-    P.reversed = reverse_it(P.seed)
-    P.sorted_chars = sort_chars(P.seed)
-    P.rot13 = encode_rot13(P.upper)
-    P.repeated = repeat_word(P.lower, n=n)
-    P.merged = merge_cases(P.upper, P.lower)
-    P.unique_chars = unique_chars(P.sorted_chars)
-    P.combined = combine_all(P.merged, P.rot13, P.repeated, P.reversed)
-    P.stats, P.audit = make_stats(P.combined, P.unique_chars)
-    P.upper_rot = shout_rot(P.rot13)
-    P.sorted_combined = sort_combined(P.combined)
-    P.line_counts = count_lines(P.combined)
-    P.final_mix = final_mix(P.upper_rot, P.sorted_combined)
-    P.summary = grand_summary(P.stats, P.line_counts, P.final_mix)
-    return P
+    P.seed = make_seed(P, word=word)
+    P.upper = to_upper(P, P.seed)
+    P.lower = to_lower(P, P.seed)
+    P.reversed = reverse_it(P, P.seed)
+    P.sorted_chars = sort_chars(P, P.seed)
+    P.rot13 = encode_rot13(P, P.upper)
+    P.repeated = repeat_word(P, P.lower, n=n)
+    P.merged = merge_cases(P, P.upper, P.lower)
+    P.unique_chars = unique_chars(P, P.sorted_chars)
+    P.combined = combine_all(P, P.merged, P.rot13, P.repeated, P.reversed)
+    P.stats, P.audit = make_stats(P, P.combined, P.unique_chars)
+    P.upper_rot = shout_rot(P, P.rot13)
+    P.sorted_combined = sort_combined(P, P.combined)
+    P.line_counts = count_lines(P, P.combined)
+    P.final_mix = final_mix(P, P.upper_rot, P.sorted_combined)
+    P.summary = grand_summary(P, P.stats, P.line_counts, P.final_mix)
 
 
 # ── run ───────────────────────────────────────────────────────────────────────
@@ -287,13 +285,16 @@ WORDS = ["necroflow", "snakemake", "python"]
 OUTDIR = Path("/tmp/necroalchemy_out")
 
 if __name__ == "__main__":
-    P = alchemy_pipeline("hello", n=2)
+    P = Pipeline(OUTDIR)
+    alchemy_pipeline(P, "hello", n=2)
     P.save("/tmp/necroalchemy_hello.txt")
     print("Pipeline render → /tmp/necroalchemy_hello.txt")
 
     dag = DAG(OUTDIR)
     for word in WORDS:
-        dag.add(alchemy_pipeline(word, n=3))
+        P = Pipeline(OUTDIR)
+        alchemy_pipeline(P, word, n=3)
+        dag.add(P)
 
     dag.save("/tmp/necroalchemy_dag.txt")
     print("DAG render      → /tmp/necroalchemy_dag.txt")

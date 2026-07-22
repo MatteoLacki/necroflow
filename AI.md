@@ -28,8 +28,9 @@ complete parent identity.
 `default_fingerprint(FingerprintArgs)` uses framed canonical serialization.
 Callable command identity uses canonical AST plus Python implementation/version.
 Job metadata `".fingerprint" = "path.py:function"` or
-`Pipeline.set_fingerprint_function()` replaces the complete policy for every
-rule call; a project function may call the public default to compose with it.
+the `Pipeline(..., fingerprint_function=..., fingerprint_provider=...)`
+constructor arguments replace the complete policy for every rule call; a
+project function may call the public default to compose with it.
 
 ## NodeType invalidators
 
@@ -37,7 +38,12 @@ rule call; a project function may call the public default to compose with it.
 
 ## Path limit checks
 
-`resolve_paths()` validates each generated path before assigning `node.path`. It checks component byte lengths against `PC_NAME_MAX` and the full path byte length against `PC_PATH_MAX`, using `os.pathconf()` on the nearest existing parent. Violations raise `ValueError` before execution. Tests monkeypatch `_filesystem_limits()` for deterministic `NAME_MAX` and `PATH_MAX` cases.
+`Pipeline(nodes_dir, ...)` owns the absolute node-store root. Every rule call
+computes and validates its full fingerprint and assigns each output's final
+absolute path immediately. Path checks cover component byte lengths against
+`PC_NAME_MAX` and the full path byte length against `PC_PATH_MAX`, using
+`os.pathconf()` on the nearest existing parent. Violations raise during the rule
+call, before assignment or execution.
 
 ## Rule repeat metadata
 
@@ -85,10 +91,10 @@ Rule constraints can be interpolated into command templates. `{threads}` always 
 
 ## Shellpath execution context
 
-`execute(..., shellpath=PATH)` and CLI `--shellpath PATH` choose the executable
+`Pipeline(..., shellpath=PATH)` and CLI `--shellpath PATH` choose the executable
 shell via `subprocess.run(..., shell=True, executable=PATH)`. The default
 remains Python's normal `shell=True` behavior and is not fingerprint-salted.
 Explicit shellpaths are normalized, stored in execution context, included in
 all command-rule fingerprints, and written to provenance. Built-in
-materializers remain unaffected. DAG indexes rebuild after shell context
-changes because node keys depend on fingerprints.
+materializers remain unaffected. Shell context is immutable for the lifetime of
+a compiled pipeline; there is no late key rebuild.

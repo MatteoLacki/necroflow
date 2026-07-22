@@ -83,11 +83,15 @@ def project_fingerprint(args: FingerprintArgs) -> str:
     return digest
 ```
 
-Select it programmatically with `P.set_fingerprint_function(...)` or in job
-TOML with `".fingerprint" = "hashing.py:project_fingerprint"`. The function
+Select it when constructing a pipeline with
+`Pipeline(nodes_dir, fingerprint_function=project_fingerprint,
+fingerprint_provider="project.project_fingerprint/v1")`, or in job TOML with
+`".fingerprint" = "hashing.py:project_fingerprint"`. The function
 receives the original command and all logical rule-call fields, before output
-paths exist. It replaces the default but may call `default_fingerprint(args)`
-to compose standard identity with project-specific dependencies.
+paths are derived. It replaces the default but may call
+`default_fingerprint(args)` to compose standard identity with project-specific
+dependencies. Each rule call computes this digest and its absolute output paths
+immediately.
 
 ### Custom invalidation
 

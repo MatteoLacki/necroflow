@@ -30,15 +30,15 @@ R_signal_c = Rule(
 
 
 def _node(tmp_path, key="rule/fp/out.txt"):
-    n = Node()
+    n = object.__new__(Node)
     n.path = tmp_path / key
     return n
 
 
 def simple_dag(tmp_path):
-    P = Pipeline()
-    P.a = R_make_a(x="x")
-    P.b = R_make_b(P.a)
+    P = Pipeline(tmp_path)
+    P.a = R_make_a(P, x="x")
+    P.b = R_make_b(P, P.a)
     dag = DAG(outdir=tmp_path)
     dag.add(P, request=[P.b])
     return dag, P
@@ -85,7 +85,6 @@ def test_successful_run_not_compromised(tmp_path):
     dag, P = simple_dag(tmp_path)
     dag.execute()
 
-    dag.resolve_paths(tmp_path)
     for n in dag.nodes:
         assert not n.is_compromised
 
@@ -97,7 +96,6 @@ def test_simulated_crash_reruns_node(tmp_path):
     dag, P = simple_dag(tmp_path)
     dag.execute()
 
-    dag.resolve_paths(tmp_path)
     b_node = next(n for n in dag.nodes if n.rule.__name__ == "make_b")
 
     # simulate crash: overwrite state file directly
@@ -113,8 +111,8 @@ def test_simulated_crash_reruns_node(tmp_path):
 
 
 def test_failed_node_state(tmp_path):
-    P = Pipeline()
-    P.c = R_fail_c(x="x")
+    P = Pipeline(tmp_path)
+    P.c = R_fail_c(P, x="x")
     dag = DAG(outdir=tmp_path)
     dag.add(P, request=[P.c])
 
@@ -130,8 +128,8 @@ def test_failed_node_state(tmp_path):
 
 
 def test_interrupted_node_state(tmp_path):
-    P = Pipeline()
-    P.c = R_signal_c(x="x")
+    P = Pipeline(tmp_path)
+    P.c = R_signal_c(P, x="x")
     dag = DAG(outdir=tmp_path)
     dag.add(P, request=[P.c])
 
@@ -162,13 +160,13 @@ R2_make_y_signal = Rule(
 
 
 def _xy_dag(tmp_path, y_rule="make_y_fail"):
-    P = Pipeline()
+    P = Pipeline(tmp_path)
     rules = {
         "make_y_fail": R2_make_y_fail,
         "make_y_signal": R2_make_y_signal,
     }
-    P.x = R2_make_x(v="v")
-    P.y = rules[y_rule](P.x)
+    P.x = R2_make_x(P, v="v")
+    P.y = rules[y_rule](P, P.x)
     dag = DAG(outdir=tmp_path)
     dag.add(P)
     return dag, P
@@ -180,7 +178,6 @@ def test_failed_node_reruns_on_retry(tmp_path):
     with pytest.raises(Exception):
         dag.execute()
 
-    dag.resolve_paths(tmp_path)
     x = next(n for n in dag.nodes if n.rule.__name__ == "make_x")
     y = next(n for n in dag.nodes if n.rule.__name__ == "make_y_fail")
     assert x.path.exists() and y.path.exists()
@@ -202,7 +199,6 @@ def test_interrupted_node_reruns_on_retry(tmp_path):
     with pytest.raises(Exception):
         dag.execute()
 
-    dag.resolve_paths(tmp_path)
     x = next(n for n in dag.nodes if n.rule.__name__ == "make_x")
     y = next(n for n in dag.nodes if n.rule.__name__ == "make_y_signal")
     assert x.path.exists() and y.path.exists()
@@ -242,8 +238,8 @@ def test_nodetype_invalidator_external_file_change_reruns_node(tmp_path):
         Outputs(out=ExternalInvalidated),
         "echo {text} > {out}",
     )
-    P = Pipeline()
-    P.out = r_make_external(text="payload", dependency=str(dependency))
+    P = Pipeline(tmp_path)
+    P.out = r_make_external(P, text="payload", dependency=str(dependency))
 
     execute = DAG(outdir=tmp_path)
     execute.add(P)
@@ -271,8 +267,8 @@ def test_nodetype_invalidator_output_file_change_reruns_node(tmp_path):
         Outputs(out=OutputHashInvalidated),
         "echo {text} > {out}",
     )
-    P = Pipeline()
-    P.out = r_make_output_hash(text="payload")
+    P = Pipeline(tmp_path)
+    P.out = r_make_output_hash(P, text="payload")
     dag = DAG(outdir=tmp_path)
     dag.add(P)
     dag.execute()
@@ -299,8 +295,8 @@ def test_nodetype_invalidator_missing_metadata_reruns_node(tmp_path):
         Outputs(out=OutputInvalidated),
         "echo {text} > {out}",
     )
-    P = Pipeline()
-    P.out = r_make_output(text="payload")
+    P = Pipeline(tmp_path)
+    P.out = r_make_output(P, text="payload")
     dag = DAG(outdir=tmp_path)
     dag.add(P)
     dag.execute()
@@ -333,8 +329,8 @@ def test_nodetype_invalidator_exception_fails_fast(tmp_path):
         Outputs(out=RaisingInvalidator),
         "echo {text} > {out}",
     )
-    P = Pipeline()
-    P.out = r_make_raising(text="payload")
+    P = Pipeline(tmp_path)
+    P.out = r_make_raising(P, text="payload")
     dag = DAG(outdir=tmp_path)
     dag.add(P)
     dag.execute()
@@ -366,8 +362,8 @@ def test_multi_output_invalidator_reruns_shared_command_once(tmp_path):
         Outputs(a=InvalidatedA, b=PlainB),
         "n=$(cat {count}); n=$((n + 1)); echo $n > {count}; echo a > {a}; echo b > {b}",
     )
-    P = Pipeline()
-    P.a, P.b = r_make_pair(dependency=str(dependency), count=str(count))
+    P = Pipeline(tmp_path)
+    P.a, P.b = r_make_pair(P, dependency=str(dependency), count=str(count))
     dag = DAG(outdir=tmp_path)
     dag.add(P)
 

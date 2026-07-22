@@ -8,6 +8,8 @@ examples/sage_recal/README.md for the Docker-based end-to-end run against real S
 import importlib.util
 from pathlib import Path
 
+from necroflow import Pipeline
+
 EXAMPLE = (
     Path(__file__).resolve().parents[1] / "examples" / "sage_recal" / "pipeline.py"
 )
@@ -31,8 +33,8 @@ def test_no_tof_specific_types_remain():
 def test_run_sage_calls_get_distinct_lineage_and_caching():
     example = _load_example()
     config = example.example_config()
-    pipeline = example.recalibrated_sage_search(config)
-    pipeline.resolve_paths("/results")
+    pipeline = Pipeline("/results")
+    example.recalibrated_sage_search(pipeline, config)
 
     # Both run_sage calls produce the same four output types...
     for tsv_node in (pipeline.recal_tsv, pipeline.tsv):
@@ -68,7 +70,8 @@ def test_run_sage_calls_get_distinct_lineage_and_caching():
 
 def test_second_pass_depends_transitively_on_first_pass():
     example = _load_example()
-    pipeline = example.recalibrated_sage_search(example.example_config())
+    pipeline = Pipeline("/results")
+    example.recalibrated_sage_search(pipeline, example.example_config())
 
     # recalibrated_config is built from the plain sage_config plus the tolerance fitted
     # from the first pass's own results -- this is what sequences pass 2 after pass 1.
@@ -104,11 +107,12 @@ def test_spectra_dispatch_picks_the_matching_node_type_by_extension():
     # zero spectra ("0 spectra/s", 0 PSMs, exit 0).
     example = _load_example()
 
-    mzml_node = example.raw_spectra("/data/run.mzML")
+    pipeline = Pipeline("/results")
+    mzml_node = example.raw_spectra(pipeline, "/data/run.mzML")
     assert mzml_node.node_type is example.MzMlSpectra
     assert issubclass(example.MzMlSpectra, example.SpectraFile)
 
-    mgf_node = example.raw_spectra("/data/run.mgf")
+    mgf_node = example.raw_spectra(pipeline, "/data/run.mgf")
     assert mgf_node.node_type is example.MgfSpectra
     assert issubclass(example.MgfSpectra, example.SpectraFile)
 
@@ -117,7 +121,7 @@ def test_spectra_dispatch_picks_the_matching_node_type_by_extension():
     import pytest
 
     with pytest.raises(ValueError):
-        example.raw_spectra("/data/run.raw")
+        example.raw_spectra(pipeline, "/data/run.raw")
 
 
 def test_spectra_file_is_a_union_not_a_shared_base_type():

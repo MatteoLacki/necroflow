@@ -11,7 +11,6 @@ import pytest
 from necroflow._compat import ExceptionGroup
 from pathlib import Path
 from necroflow import NodeType, Pipeline, DAG, output
-from necroflow.dag import resolve_paths
 from necroflow.cli import _create_link_outputs, _graph_payload, main
 from necroflow.pipeline import _sinks
 
@@ -29,11 +28,10 @@ R_step2 = Rule("step2", Inputs(out=Out), Outputs(log=Log), "cat {out} > {log}")
 
 
 def _make_pipeline_with_outputs(tmp_path) -> tuple[Pipeline, Path]:
-    """Build a pipeline, resolve paths, and create real output files."""
-    P = Pipeline()
-    P.out = R_step1(v="hello")
-    P.log = R_step2(P.out)
-    resolve_paths(P.nodes, tmp_path)
+    """Build a pipeline and create real output files."""
+    P = Pipeline(tmp_path)
+    P.out = R_step1(P, v="hello")
+    P.log = R_step2(P, P.out)
     for node in P.nodes:
         node.path.parent.mkdir(parents=True, exist_ok=True)
         node.path.touch()
@@ -82,9 +80,8 @@ def test_symlinks_point_to_real_files(tmp_path):
 
 
 def test_skips_missing_outputs(tmp_path):
-    P = Pipeline()
-    P.out = R_step1(v="hello")
-    resolve_paths(P.nodes, tmp_path)
+    P = Pipeline(tmp_path)
+    P.out = R_step1(P, v="hello")
     # do NOT create the output file
     combos = [("run1", P, _sinks(P))]
     _create_link_outputs(results_dir=tmp_path, combos=combos)
@@ -144,7 +141,7 @@ def test_manifest_keys_are_pipeline_labels(tmp_path):
     content = (outdir / "run1" / "manifest.toml").read_text()
     doc = tomlkit.parse(content)
     keys = set(doc["outputs"].keys())
-    # sink has pipeline_label "log" (the last node P.log = R_step2(...))
+    # sink has pipeline_label "log" (the last node P.log = R_step2(P, ...))
     assert "log" in keys
 
 
@@ -186,11 +183,9 @@ FACTORY_SRC = textwrap.dedent("""\
     def make_b(a: A):
         b = output(B)
         return b
-    def factory(cfg):
-        P = Pipeline()
-        P.a = make_a(v=cfg["v"])
-        P.b = make_b(P.a)
-        return P
+    def factory(P, cfg):
+        P.a = make_a(P, v=cfg["v"])
+        P.b = make_b(P, P.a)
 """)
 
 
@@ -703,16 +698,14 @@ def test_narrow_request_combo_excludes_prior_outputs(tmp_path, factory_file):
 
 
 def test_multiple_combos(tmp_path):
-    P1 = Pipeline()
-    P1.out = R_step1(v="alpha")
-    resolve_paths(P1.nodes, tmp_path)
+    P1 = Pipeline(tmp_path)
+    P1.out = R_step1(P1, v="alpha")
     for n in P1.nodes:
         n.path.parent.mkdir(parents=True, exist_ok=True)
         n.path.touch()
 
-    P2 = Pipeline()
-    P2.out = R_step1(v="beta")
-    resolve_paths(P2.nodes, tmp_path)
+    P2 = Pipeline(tmp_path)
+    P2.out = R_step1(P2, v="beta")
     for n in P2.nodes:
         n.path.parent.mkdir(parents=True, exist_ok=True)
         n.path.touch()
@@ -988,11 +981,9 @@ def test_main_keep_going_failure_writes_execution_summary(tmp_path):
         def make_b(v: str):
             b = output(B)
             return b
-        def factory(cfg):
-            P = Pipeline()
-            P.a = fail_a(v=cfg["v"])
-            P.b = make_b(v=cfg["v"])
-            return P
+        def factory(P, cfg):
+            P.a = fail_a(P, v=cfg["v"])
+            P.b = make_b(P, v=cfg["v"])
     """))
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory}:factory"\nv = "hello"\n')
@@ -1065,12 +1056,12 @@ def test_graph_json_lists_nodes_and_edges(tmp_path, factory_file, capsys):
 
 
 def test_graph_json_includes_pipeline_sections(tmp_path):
-    P = Pipeline()
+    P = Pipeline(tmp_path)
     P.section("Preparation")
-    P.out = R_step1(v="hello")
+    P.out = R_step1(P, v="hello")
     P.section("Analysis")
-    P.log = R_step2(P.out)
-    dag = DAG()
+    P.log = R_step2(P, P.out)
+    dag = DAG(tmp_path)
     dag.add(P)
 
     payload = _graph_payload(dag, [("job", P, [P.log])], nodes_dir=tmp_path)

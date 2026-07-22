@@ -42,11 +42,11 @@ necroflow supports POSIX systems (Linux and macOS). We do not offer native Windo
 Use `P.section(name)` in a long factory to label the stage for subsequent node assignments. Sections are presentation metadata: they appear in graph JSON and group `necroflow graph --png` output when unambiguous, but do not affect execution, cache identity, or provenance.
 
 ```python
-P = Pipeline()
+P = Pipeline("nodes")
 P.section("Read alignment")
-P.bam = align(P.fastq, ref=config.ref)
+P.bam = align(P, P.fastq, ref=config.ref)
 P.section("Quantification")
-P.counts = count(P.bam, gene_model=config.gene_model)
+P.counts = count(P, P.bam, gene_model=config.gene_model)
 ```
 
 ## Define a pipeline
@@ -77,19 +77,19 @@ def align(fastq: Fastq, ref: str):
 def count(bam: Bam, gene_model: str):
     counts = output(Counts)
     return counts
-def rna_pipeline(config):
-    P = Pipeline()
-    P.fastq = raw_fastq(path=config["path"])
-    P.bam = align(P.fastq, ref=config["ref"])
-    P.counts = count(P.bam, gene_model=config["gene_model"])
-    return P
+def rna_pipeline(P: Pipeline, config: dict) -> None:
+    P.fastq = raw_fastq(P, path=config["path"])
+    P.bam = align(P, P.fastq, ref=config["ref"])
+    P.counts = count(P, P.bam, gene_model=config["gene_model"])
 ```
 
 ## Compose pipeline fragments
 
-A command-line pipeline factory creates and returns a fresh `Pipeline`:
-`factory(config) -> Pipeline`. This keeps each CLI invocation self-contained and
-gives it a clear set of named requested outputs.
+A command-line pipeline factory receives the owning `Pipeline` and mutates it:
+`factory(P, config) -> None`. The CLI creates `P` with the node-store path,
+fingerprint policy, and shell context before calling the factory. Consequently,
+every rule call receives `P` first and returns Nodes whose absolute paths and
+fingerprints are already final.
 
 For reusable internal fragments, pass an existing pipeline to a helper that
 adds its named nodes. This lets several fragments contribute to one public
@@ -97,21 +97,24 @@ factory without changing the CLI factory signature:
 
 ```python
 def add_alignment(P, config):
-    P.fastq = raw_fastq(path=config["path"])
-    P.bam = align(P.fastq, ref=config["ref"])
+    P.fastq = raw_fastq(P, path=config["path"])
+    P.bam = align(P, P.fastq, ref=config["ref"])
 
-def rna_pipeline(config):
-    P = Pipeline()
+def rna_pipeline(P, config):
     add_alignment(P, config)
-    P.counts = count(P.bam, gene_model=config["gene_model"])
-    return P
+    P.counts = count(P, P.bam, gene_model=config["gene_model"])
 ```
 
 An assembler mutates the supplied pipeline, so its labels must not conflict
 with labels added by another fragment. Use this form for components that belong
-to one pipeline. Independently runnable factories should still each create a
-fresh `Pipeline`; when they are added to one `DAG`, Necroflow canonicalizes
+to one pipeline. The caller creates a fresh `Pipeline` for each independent
+config; when those pipelines are added to one `DAG`, Necroflow canonicalizes
 identical upstream rule calls and executes their shared work once.
+
+Attribute and item labels share one namespace. Use `P.counts` for ordinary
+Python identifiers and `P["sample-1 counts"]` for generated or non-identifier
+labels; either form can read ordinary labels assigned by the other. Labels that
+collide with Pipeline API attributes such as `nodes` are item-only.
 
 ## Run from the CLI
 

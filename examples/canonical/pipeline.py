@@ -46,12 +46,11 @@ def summarize(processed_text: ProcessedText):
     return summary
 
 
-def canonical_pipeline(config: dict) -> Pipeline:
-    P = Pipeline()
-    P.raw = import_text(path=str(config["input"]))
+def canonical_pipeline(P: Pipeline, config: dict) -> None:
+    P.raw = import_text(P, path=str(config["input"]))
     P.tool_config = write_tool_config(
-        text=json.dumps(config.get("tool", {}), sort_keys=True, indent=2) + "\n"
+        P,
+        text=json.dumps(config.get("tool", {}), sort_keys=True, indent=2) + "\n",
     )
-    P.processed = process_text(P.raw, P.tool_config)
-    P.summary = summarize(P.processed)
-    return P
+    P.processed = process_text(P, P.raw, P.tool_config)
+    P.summary = summarize(P, P.processed)

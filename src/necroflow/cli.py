@@ -37,7 +37,7 @@ from typing import Callable
 import tomlkit
 
 from necroflow._compat import ExceptionGroup
-from necroflow import DAG, connected_component_scheduler, fifo_scheduler
+from necroflow import DAG, Pipeline, connected_component_scheduler, fifo_scheduler
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import (
     NodeState,
@@ -46,15 +46,10 @@ from necroflow.dag import (
     _output_mtime,
     parse_resource,
     resolve_command,
-    resolve_paths,
 )
-from necroflow.pipeline import _sinks
+from necroflow.pipeline import _normalize_shellpath, _sinks
 from necroflow.graphviz_render import render_png
-from necroflow.executor import (
-    _apply_shell_execution_context,
-    _normalize_shellpath,
-    _prepare_active,
-)
+from necroflow.executor import _prepare_active
 
 
 def _load_factory(spec: str) -> Callable:
@@ -201,13 +196,23 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
                 if validators:
                     _validate_job_config(job_config, validators, job_path)
                 factory = _load_factory(job_config.pipeline_spec)
-                pipeline = factory(job_config.config)
                 if job_config.fingerprint_spec:
-                    pipeline.set_fingerprint_function(
-                        _load_fingerprint(job_config.fingerprint_spec),
-                        provider=job_config.fingerprint_spec,
+                    pipeline = Pipeline(
+                        nodes_dir,
+                        shellpath=shellpath,
+                        fingerprint_function=_load_fingerprint(
+                            job_config.fingerprint_spec
+                        ),
+                        fingerprint_provider=job_config.fingerprint_spec,
                     )
-                _apply_shell_execution_context(pipeline, shellpath)
+                else:
+                    pipeline = Pipeline(nodes_dir, shellpath=shellpath)
+                result = factory(pipeline, job_config.config)
+                if result is not None:
+                    raise TypeError(
+                        f"pipeline factory {job_config.pipeline_spec!r} must mutate "
+                        "the supplied Pipeline and return None"
+                    )
                 request = (
                     _resolve_request(pipeline, job_config.request_labels)
                     if job_config.request_labels is not None
@@ -313,7 +318,6 @@ def _edge_json(nodes: list) -> list[dict]:
 def _outputs_payload(combos, *, nodes_dir: Path, results_dir: Path) -> dict:
     jobs = []
     for label, pipeline, request in combos:
-        resolve_paths(pipeline.nodes, nodes_dir)
         requested = []
         for node in request:
             node_rel = node.path.relative_to(nodes_dir)
@@ -334,7 +338,6 @@ def _outputs_payload(combos, *, nodes_dir: Path, results_dir: Path) -> dict:
 
 
 def _graph_payload(dag, combos, *, nodes_dir: Path) -> dict:
-    dag.resolve_paths(nodes_dir)
     requested = {node.key for node in dag.required_nodes}
     return {
         "nodes": [
@@ -431,12 +434,8 @@ def _classification_reasons(node, forced_stale_keys: set[str]) -> list[dict]:
 def _explain_payload(args) -> dict:
     nodes_dir, _results_dir = _resolve_roots(args)
     dag, combos, forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
-    shellpath = _normalize_arg_shellpath(args)
-    key_map = _apply_shell_execution_context(dag, shellpath)
-    forced_stale_keys = {key_map.get(key, key) for key in forced_stale_keys}
     active, _active_keys, _n_cleaned = _prepare_active(
         dag,
-        nodes_dir,
         autoclean=False,
         dry_run=True,
         forced_stale_keys=forced_stale_keys,
@@ -519,10 +518,6 @@ def _doctor_payload(args) -> dict:
         issues.append(_issue("NF_CONFIG_PARSE_FAILED", "error", str(exc)))
         return {"ok": False, "issues": issues}
 
-    try:
-        dag.resolve_paths(nodes_dir)
-    except ValueError as exc:
-        issues.append(_issue("NF_OUTPUT_PATH_TOO_LONG", "error", str(exc)))
     for directory, label in ((nodes_dir, "nodes_dir"), (results_dir, "results_dir")):
         try:
             directory.mkdir(parents=True, exist_ok=True)
@@ -557,8 +552,6 @@ def _doctor_payload(args) -> dict:
 
 
 def _finalize_link_outputs(combos, *, nodes_dir: Path, results_dir: Path) -> None:
-    for _label, pipeline, _nodes in combos:
-        resolve_paths(pipeline.nodes, nodes_dir)
     _create_link_outputs(results_dir, combos, nodes_dir=nodes_dir)
 
 
@@ -573,7 +566,6 @@ def _run(args) -> None:
             autoclean=args.autoclean,
             dry_run=args.dry_run,
             forced_stale_keys=forced_stale_keys,
-            shellpath=_normalize_arg_shellpath(args),
         )
     except ExceptionGroup as exc:
         report = getattr(exc, "execution_report", None)
@@ -589,11 +581,9 @@ def _run(args) -> None:
 def _graph(args) -> None:
     nodes_dir, _results_dir = _resolve_roots(args)
     dag, combos, _forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
-    _apply_shell_execution_context(dag, _normalize_arg_shellpath(args))
     if args.json:
         _emit_json(_graph_payload(dag, combos, nodes_dir=nodes_dir))
         return
-    dag.resolve_paths(nodes_dir)
     if args.png:
         title = ", ".join(Path(j).stem for j in args.jobs)
         render_png(dag, output_path=Path(args.png), title=title)
@@ -608,14 +598,12 @@ def _graph(args) -> None:
 def _outputs(args) -> None:
     nodes_dir, results_dir = _resolve_roots(args)
     dag, combos, _forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
-    _apply_shell_execution_context(dag, _normalize_arg_shellpath(args))
     if args.json:
         _emit_json(
             _outputs_payload(combos, nodes_dir=nodes_dir, results_dir=results_dir)
         )
         return
     for label, pipeline, request in combos:
-        resolve_paths(pipeline.nodes, nodes_dir)
         print(f"[{label}]")
         for node in request:
             key = _node_display_label(node)
@@ -682,15 +670,18 @@ def _init(args) -> None:
     if dest.exists() and any(dest.iterdir()) and not args.force:
         raise SystemExit(f"error: {dest} is not empty; pass --force to overwrite")
     dest.mkdir(parents=True, exist_ok=True)
-    template_root = resources.files("necroflow") / "templates" / "canonical"
-    for item in template_root.iterdir():
-        target = dest / item.name
-        if item.is_dir():
-            shutil.copytree(item, target, dirs_exist_ok=args.force)
-        else:
-            if target.exists() and not args.force:
-                raise SystemExit(f"error: {target} exists; pass --force to overwrite")
-            target.write_bytes(item.read_bytes())
+    template = resources.files("necroflow") / "templates" / "canonical"
+    with resources.as_file(template) as template_root:
+        for item in template_root.iterdir():
+            target = dest / item.name
+            if item.is_dir():
+                shutil.copytree(item, target, dirs_exist_ok=args.force)
+            else:
+                if target.exists() and not args.force:
+                    raise SystemExit(
+                        f"error: {target} exists; pass --force to overwrite"
+                    )
+                target.write_bytes(item.read_bytes())
     print(f"created {dest}")
 
 

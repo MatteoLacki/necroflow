@@ -26,6 +26,6 @@ pipelines share the same DAG (upstream nodes common across configs run once).
 from necroalchemy import alchemy_pipeline
 
 
-def factory(cfg: dict):
+def factory(P, cfg: dict) -> None:
     """Build one alchemy pipeline from a plain config dict."""
-    return alchemy_pipeline(cfg["word"], n=cfg["n"])
+    alchemy_pipeline(P, cfg["word"], n=cfg["n"])

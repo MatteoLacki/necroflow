@@ -40,8 +40,8 @@ def prepare_text(dependency: str):
 
 
 def build_pipeline() -> Pipeline:
-    P = Pipeline()
-    P.prepared = prepare_text(dependency=str(DEPENDENCY))
+    P = Pipeline(OUTDIR)
+    P.prepared = prepare_text(P, dependency=str(DEPENDENCY))
     return P
 
 
