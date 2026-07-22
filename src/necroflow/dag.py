@@ -15,6 +15,7 @@ from necroflow.nodes import (
     NodeTypeMeta,
     _topo_sort,
 )
+from necroflow.fingerprints import command_ast, python_identity
 from necroflow.rules import parse_resource, _is_node_input_contract
 
 
@@ -115,8 +116,26 @@ def write_dependencies(node: Node) -> None:
         "hash": node.path.parent.name,
         "config": _accumulated_config(node),
     }
+    if node.rule_call is not None:
+        data["fingerprint"] = {
+            "format": "v2",
+            "provider": node.rule_call.fingerprint_provider,
+            "digest": node.full_fingerprint,
+        }
     if node.execution_context:
         data["execution"] = dict(node.execution_context)
+    if node.command is not None:
+        command_data = {
+            "kind": "python" if callable(node.command) else "shell",
+            "realized": resolve_command(node),
+        }
+        if callable(node.command):
+            _tree, source_path = command_ast(node.command)
+            command_data["source"] = os.path.relpath(source_path, node.path.parents[2])
+            command_data["python"] = python_identity()
+        else:
+            command_data["template"] = node.command
+        data["command"] = command_data
     rip = node.path.parent / ".rip"
     rip.mkdir(parents=True, exist_ok=True)
     (rip / "dependencies.toml").write_text(tomlkit.dumps(data))
@@ -215,7 +234,7 @@ def _quote_command_substitution(value: Any) -> Any:
     return shlex.quote(str(value))
 
 
-def resolve_command(node: Node) -> str | list[str] | None:
+def resolve_command(node: Node) -> str | None:
     """Format node.command with input/output paths and config values.
 
     Requires resolve_paths() to have been called first.
@@ -223,6 +242,21 @@ def resolve_command(node: Node) -> str | list[str] | None:
     """
     if node.command is None:
         return None
+    call = node.rule_call
+    if call is not None and call._command_realized:
+        return call._realized_command
+    if callable(node.command):
+        if call is None:
+            raise RuntimeError("callable command is missing its RuleCall")
+        result = node.command(call.command_args())
+        if not isinstance(result, str) or not result.strip():
+            raise TypeError(
+                f"Python command callback {node.command.__qualname__!r} must return "
+                f"a non-empty shell string, got {result!r}"
+            )
+        call._realized_command = result
+        call._command_realized = True
+        return result
     pos_input_names = [
         n for n, t in node.rule.inputs.specs.items() if _is_node_input_contract(t)
     ]
@@ -240,10 +274,12 @@ def resolve_command(node: Node) -> str | list[str] | None:
     for oname, onode in node.output_nodes.items():
         subs[oname] = onode.path
     subs["workdir"] = node.path.parent
-    if isinstance(node.command, list):
-        return [c.format(**subs) for c in node.command]
     quoted = {k: _quote_command_substitution(v) for k, v in subs.items()}
-    return node.command.format(**quoted)
+    result = node.command.format(**quoted)
+    if call is not None:
+        call._realized_command = result
+        call._command_realized = True
+    return result
 
 
 def resolve_paths(nodes: list[Node], outdir: Path | str) -> None:
@@ -253,6 +289,13 @@ def resolve_paths(nodes: list[Node], outdir: Path | str) -> None:
     Co-outputs of the same rule call share the same hash directory.
     """
     outdir = Path(outdir)
+    calls = {
+        id(node.rule_call): node.rule_call
+        for node in nodes
+        if node.rule_call is not None
+    }
+    for call in calls.values():
+        call.set_resolved_root(outdir.resolve())
     for node in nodes:
         path = outdir / node.key
         _check_path_limits(path)

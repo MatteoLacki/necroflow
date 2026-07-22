@@ -157,7 +157,11 @@ The same pipeline can also be assembled and executed from Python directly; see [
 
 ## Manual
 
-Start with the canonical workflow in [examples/canonical](examples/canonical/), or copy it with `necroflow init my-workflow`.
+Start with the canonical workflow in [examples/canonical](examples/canonical/),
+or copy it with `necroflow init my-workflow`. The focused
+[callable command and project fingerprint example](examples/callable_fingerprint/)
+shows how to construct commands from resolved values and customize cache
+identity.
 
 ### CLI subcommands
 

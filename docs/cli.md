@@ -51,6 +51,15 @@ necroflow outputs --shellpath /bin/bash job.toml
 
 Explicit shell paths affect node hashes for string commands, so `outputs --shellpath PATH` reports the same paths that `run --shellpath PATH` will produce.
 
+Job TOML may also select a project-wide fingerprint function:
+
+```toml
+".fingerprint" = "hashing.py:project_fingerprint"
+```
+
+It is loaded and applied before requested labels, invalidations, or DAG
+deduplication observe node keys.
+
 ## Project scaffolding
 
 Create a starter workflow with:

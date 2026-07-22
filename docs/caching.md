@@ -38,7 +38,15 @@ for a runnable example.
 
 ## Caching
 
-Each hashed node output lives at `nodes/{rule}/{hash16}/{filename}` by default. The 16-character hash captures the entire upstream config chain, including rule name, command, config values, parent fingerprints, and declared `Inputs`/`Outputs` types (`Constraints` are excluded — execution resources don't affect output identity).
+Each hashed node output lives at `nodes/{rule}/{hash16}/{filename}` by default.
+Fingerprint v2 calculates a full 64-character SHA-256 digest from a
+type-tagged, length-framed representation of the rule name, command, config,
+full parent digests, execution context, and declared `Inputs`/`Outputs` types.
+`node.full_fingerprint` exposes that digest; `node.fingerprint` and paths use
+its first 16 characters. Constraints and `repeat` are excluded.
+
+Fingerprint v2 intentionally changed every pre-v2 output address. Old cache
+directories are not migrated or reused automatically.
 
 During path resolution, necroflow validates generated paths against the filesystem's `NAME_MAX` and `PATH_MAX` limits. If a rule name, filename, output directory, or complete generated path would exceed those limits, path resolution fails before execution starts.
 
@@ -55,7 +63,31 @@ def compute(input: Input):
 
 The `{workdir}` directory is created before the command runs. Files written there are kept by default, just like declared outputs, because the directory is part of the cached rule-call result. The name `workdir` is reserved for this built-in placeholder and cannot be used as an input or output name.
 
-Command template validation is intentionally strict about outputs: every declared output name must appear in the command template. Declared inputs and config values may be unused; if they are passed to the rule call, they still participate in the output fingerprint. Any placeholder that does appear must be a declared input, a declared output, or a built-in placeholder such as `{workdir}`.
+Declared inputs, config values, and outputs may be unused by a command; they
+still participate in identity. Any static-template placeholder that does
+appear must be a declared input/output, a command-visible constraint, or a
+built-in placeholder such as `{workdir}`.
+
+The built-in v2 fingerprint canonically supports ordinary scalar values,
+paths, dates/times, sequences, string-keyed mappings, and sets. Unsupported
+custom objects fail with a diagnostic identifying the config field.
+
+Projects may replace the complete policy:
+
+```python
+from necroflow import FingerprintArgs, default_fingerprint
+
+def project_fingerprint(args: FingerprintArgs) -> str:
+    digest = default_fingerprint(args)
+    # Return any complete 64-character lowercase hexadecimal digest.
+    return digest
+```
+
+Select it programmatically with `P.set_fingerprint_function(...)` or in job
+TOML with `".fingerprint" = "hashing.py:project_fingerprint"`. The function
+receives the original command and all logical rule-call fields, before output
+paths exist. It replaces the default but may call `default_fingerprint(args)`
+to compose standard identity with project-specific dependencies.
 
 ### Custom invalidation
 

@@ -8,6 +8,7 @@ from string import Formatter
 from typing import Any, Generic, TypeVar, cast, get_args, get_origin, overload
 
 from necroflow.nodes import Node, NodeType, _is_nodetype
+from necroflow.fingerprints import validate_command_callback
 
 BUILTIN_COMMAND_PLACEHOLDERS = {"workdir"}
 
@@ -123,7 +124,7 @@ class Rule(Generic[_ReturnT]):
         name: str,
         inputs: Inputs,
         outputs: Outputs,
-        command: str | list[str] | None,
+        command: str | Callable | None,
         constraints: Constraints | None = None,
         info: str | None = None,
         repeat: int = 1,
@@ -159,7 +160,14 @@ class Rule(Generic[_ReturnT]):
         self._return_type = (
             namedtuple(f"{name}_outputs", output_names) if self._multi else None
         )
-        if command is not None:
+        if isinstance(command, list):
+            raise TypeError(
+                f"Rule {name!r}: argv list commands were removed in fingerprint v2; "
+                "use a shell string or a Python callback returning a shell string"
+            )
+        if callable(command):
+            validate_command_callback(command)
+        elif command is not None:
             self._validate_command(name, inputs, outputs, command, self.constraints)
 
     @staticmethod
@@ -170,7 +178,7 @@ class Rule(Generic[_ReturnT]):
 
     @staticmethod
     def _validate_command(name, inputs, outputs, command, constraints):
-        pieces = [command] if isinstance(command, str) else [str(c) for c in command]
+        pieces = [command]
         placeholders: set[str] = set()
         constraint_placeholders: set[str] = set()
         for piece in pieces:
@@ -382,7 +390,7 @@ def _make_rule(
     name: str,
     inputs: dict,
     outputs: dict,
-    command: str | list[str] | None,
+    command: str | Callable | None,
     constraints: dict | None = None,
     info: str | None = None,
     repeat: int = 1,
@@ -404,7 +412,7 @@ def _make_rule(
 
 
 def _decorator_command(
-    cmd: str | list[str], /, *, repeat: int = 1, **constraints
+    cmd: str | Callable, /, *, repeat: int = 1, **constraints
 ) -> Callable[[Callable[..., _ReturnT]], Rule[_ReturnT]]:
     """Declare a shell-command rule from a typed function signature.
 
@@ -431,7 +439,7 @@ def _decorator_command(
 
 
 def command(
-    cmd: str | list[str],
+    cmd: str | Callable,
     *declarations,
     name: str | None = None,
     doc: str | None = None,
@@ -439,6 +447,15 @@ def command(
     **constraints,
 ):
     """Create a factory rule or return the decorator-sugar adapter."""
+    if isinstance(cmd, list):
+        raise TypeError(
+            "argv list commands were removed in fingerprint v2; use a shell "
+            "string or a Python callback returning a shell string"
+        )
+    if not isinstance(cmd, str) and not callable(cmd):
+        raise TypeError(
+            f"command requires a shell string or Python callback, got {type(cmd).__name__}"
+        )
     if declarations:
         if len(declarations) not in (2, 3):
             raise TypeError(

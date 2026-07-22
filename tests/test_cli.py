@@ -214,6 +214,36 @@ def _real_output(outdir: Path, filename: str) -> Path:
     return matches[0]
 
 
+def test_callable_fingerprint_example_runs_and_records_provenance(
+    tmp_path, monkeypatch
+):
+    example_dir = (
+        Path(__file__).resolve().parents[1] / "examples" / "callable_fingerprint"
+    )
+    nodes_dir = tmp_path / "nodes"
+    results_dir = tmp_path / "results"
+    monkeypatch.chdir(example_dir)
+
+    main(
+        [
+            "--nodes-dir",
+            str(nodes_dir),
+            "--results-dir",
+            str(results_dir),
+            "job.toml",
+        ]
+    )
+
+    result = results_dir / "job" / "sorted" / "sorted.txt"
+    assert result.read_text() == "pear\nbanana\napple\n"
+    metadata_paths = list((nodes_dir / "sort_text").glob("*/.rip/dependencies.toml"))
+    assert len(metadata_paths) == 1
+    metadata = tomlkit.parse(metadata_paths[0].read_text())
+    assert metadata["fingerprint"]["provider"] == "fingerprint.py:project_fingerprint"
+    assert metadata["command"]["kind"] == "python"
+    assert "sort -r -u" in metadata["command"]["realized"]
+
+
 def test_main_invalidate_parent_reruns_parent_and_child(tmp_path, factory_file):
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
@@ -804,6 +834,24 @@ def test_provenance_subcommand_prints_metadata(tmp_path, factory_file, capsys):
     captured = capsys.readouterr().out
     assert "rule = make_b" in captured
     assert "v = 'hello'" in captured
+
+
+def test_job_fingerprint_function_is_installed_before_output_addressing(
+    tmp_path, factory_file, capsys
+):
+    fingerprint_file = tmp_path / "fingerprint.py"
+    fingerprint_file.write_text("def fingerprint(args):\n" "    return 'b' * 64\n")
+    job = tmp_path / "job.toml"
+    job.write_text(
+        f'".pipeline" = "{factory_file}:factory"\n'
+        f'".fingerprint" = "{fingerprint_file}:fingerprint"\n'
+        'v = "hello"\n'
+    )
+
+    main(["outputs", "--nodes-dir", str(tmp_path / "nodes"), str(job)])
+
+    captured = capsys.readouterr().out
+    assert "/bbbbbbbbbbbbbbbb/" in captured
 
 
 def test_outputs_shellpath_matches_run_shellpath_paths(tmp_path, factory_file, capsys):

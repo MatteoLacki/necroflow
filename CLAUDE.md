@@ -72,10 +72,10 @@ These have been true since the June refactors and are load-bearing design decisi
 - **Content-addressed, not time-addressed.** Staleness uses an mtime fast path, then falls back
   to the stored SHA-256 content hash (`.rip/{filename}.hash`). A parent that re-ran but produced
   identical output must NOT invalidate children.
-- **Fingerprints name directories.** `node.fingerprint` (16-hex) hashes rule name + command +
-  config + parent fingerprints + Inputs/Outputs types; co-outputs of one rule call share it.
-  `node.key` = `rule/fingerprint/filename` is the unique identity. Constraints (`threads`,
-  `ram`) are intentionally excluded — execution resources are not computation identity.
+- **Fingerprints name directories.** Fingerprint v2 uses framed canonical values and a full
+  64-hex digest; `node.fingerprint` exposes its first 16 characters for paths and
+  `node.full_fingerprint` retains the complete lineage identity. Co-outputs share one
+  `RuleCall`, digest, and realized command. Constraints and `repeat` remain excluded.
 - **Identity via `node.key`, never `id()`.** DAG deduplication aliases node objects; `id()`-keyed
   dicts and sets break. Use `.key` for adjacency, visited-sets, done-tracking.
 - **Co-outputs run once.** All outputs of one rule call are produced by a single submission; the
@@ -119,7 +119,10 @@ Full semantics: the `execute()` docstring and `docs/execution.md`.
 ```
 src/necroflow/
   nodes.py           — Node, NodeState, NodeType/NodeTypeMeta, topo sort, connected components,
-                       per-node state files (.state_file, .is_compromised, .mark_running/.mark_done)
+                       per-node state files
+  rule_call.py       — concrete rule invocation, shared identity and command state
+  contexts.py        — immutable NamedValues, CommandArgs, and FingerprintArgs public views
+  fingerprints.py    — canonical v2 encoding, callable AST identity, default/project protocols
   rules.py           — Rule internals plus command, text-file, and symlink-file declarations,
                        parse_resource with SI/binary suffixes
   schedulers.py      — Scheduler protocol, fifo_scheduler, ConnectedComponentScheduler

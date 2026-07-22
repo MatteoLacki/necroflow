@@ -11,12 +11,18 @@
 # optional — pipeline_label names to request (defaults to all sinks)
 ".requests" = ["counts", "qc"]
 
+# optional — complete project fingerprint policy
+".fingerprint" = "path/to/hashing.py:project_fingerprint"
+
 # user config — passed as a plain dict to the factory
 ref    = "hg38"
 sample = "NA12878"
 ```
 
-Keys starting with `.` are necroflow metadata — stripped before the dict reaches the factory. They never appear in node configs or affect output hashes. User config can freely use any name, including `pipeline` or `request`.
+Keys starting with `.` are necroflow metadata and are stripped before the dict
+reaches the factory. `.fingerprint` is the exception that deliberately selects
+the function used to compute output identity; the other metadata keys are not
+node config. User config can freely use names such as `pipeline` or `request`.
 
 ## Parameter grids
 

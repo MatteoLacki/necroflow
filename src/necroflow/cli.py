@@ -65,6 +65,13 @@ def _load_factory(spec: str) -> Callable:
         raise SystemExit(f"error: {exc}") from exc
 
 
+def _load_fingerprint(spec: str) -> Callable:
+    try:
+        return load_callable(spec, kind="fingerprint")
+    except Exception as exc:
+        raise SystemExit(f"error: {exc}") from exc
+
+
 def _load_validators(specs: list[str]) -> list[Callable]:
     validators: list[Callable] = []
     for spec in specs:
@@ -180,6 +187,7 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
     dag = DAG(nodes_dir)
     combos: list[tuple[str, object, list]] = []
     forced_stale_keys: set[str] = set()
+    shellpath = _normalize_arg_shellpath(args)
 
     for job_path_str in args.jobs:
         job_path = Path(job_path_str)
@@ -194,6 +202,12 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
                     _validate_job_config(job_config, validators, job_path)
                 factory = _load_factory(job_config.pipeline_spec)
                 pipeline = factory(job_config.config)
+                if job_config.fingerprint_spec:
+                    pipeline.set_fingerprint_function(
+                        _load_fingerprint(job_config.fingerprint_spec),
+                        provider=job_config.fingerprint_spec,
+                    )
+                _apply_shell_execution_context(pipeline, shellpath)
                 request = (
                     _resolve_request(pipeline, job_config.request_labels)
                     if job_config.request_labels is not None

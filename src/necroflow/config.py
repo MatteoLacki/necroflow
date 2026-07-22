@@ -21,6 +21,7 @@ class JobConfig:
     label: str
     config: dict[str, Any]
     pipeline_spec: str | None
+    fingerprint_spec: str | None
     request_labels: list[str] | None
 
 
@@ -65,6 +66,7 @@ def iter_job_configs(
     doc = tomlkit.parse(job_path.read_text(encoding="utf-8"))
     for label, config_dict in iter_configs(doc, base_stem=job_path.stem):
         pipeline_spec = config_dict.get(".pipeline")
+        fingerprint_spec = config_dict.get(".fingerprint")
         if require_pipeline and not pipeline_spec:
             raise ValueError(f"job TOML {job_path} has no '.pipeline' key")
         request_labels = config_dict.get(".requests", None)
@@ -75,5 +77,6 @@ def iter_job_configs(
             label=label,
             config=factory_config,
             pipeline_spec=pipeline_spec,
+            fingerprint_spec=fingerprint_spec,
             request_labels=request_labels,
         )

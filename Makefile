@@ -31,7 +31,7 @@ $(PYRIGHT): pyproject.toml
 	uv pip install --python .venv/bin/python -e ".[dev]"
 
 typecheck: $(PYRIGHT)
-	$(PYRIGHT) --pythonversion 3.10 tests/typing/rule_dsl.py examples/canonical/pipeline.py examples/sage_recal/pipeline.py
+	$(PYRIGHT) --pythonversion 3.10 tests/typing/rule_dsl.py examples/canonical/pipeline.py examples/callable_fingerprint/pipeline.py examples/callable_fingerprint/fingerprint.py examples/sage_recal/pipeline.py
 
 example:
 	$(PYTHON) -m necroflow.cli --outdir $(EXAMPLE_OUTDIR) examples/necroalchemy_job.toml

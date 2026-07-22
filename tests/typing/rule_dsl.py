@@ -1,6 +1,7 @@
 """Static-analysis fixture for rule output and dynamic pipeline shapes."""
 
 from necroflow import (
+    CommandArgs,
     Constraints,
     Inputs,
     Node,
@@ -46,10 +47,22 @@ factory_rule = command(
     doc="Factory rule.",
 )
 
+
+def callback_command(args: CommandArgs) -> str:
+    return f"cp {args.inputs.source} {args.outputs.callback_left}"
+
+
+@command(callback_command)
+def callback_rule(source: Source):
+    callback_left = output(Left)
+    return callback_left
+
+
 source_node: Node = make_source(text="value")
 left_node: Node
 right_node: Node
 left_node, right_node = split_source(source_node)
+callback_node: Node = callback_rule(source_node)
 
 pipeline = Pipeline()
 pipeline.source = source_node

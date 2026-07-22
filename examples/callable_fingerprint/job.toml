@@ -1,0 +1,6 @@
+".pipeline" = "pipeline.py:sorting_pipeline"
+".fingerprint" = "fingerprint.py:project_fingerprint"
+
+input = "input.txt"
+reverse = true
+unique = true

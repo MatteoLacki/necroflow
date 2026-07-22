@@ -17,6 +17,49 @@ run_sage = command(
 
 The decorator form below remains supported as syntactic sugar.
 
+## Python command callbacks
+
+When a command must be assembled from resolved values, pass a module-level
+Python function instead of a static template:
+
+```python
+import shlex
+from necroflow import CommandArgs
+
+def merge_command(args: CommandArgs) -> str:
+    parts = [
+        "samtools",
+        "merge",
+        "--threads",
+        str(args.constraints.threads),
+        str(args.outputs.merged),
+        *(str(path) for path in args.inputs.values()),
+    ]
+    return shlex.join(parts)
+
+merge = command(
+    merge_command,
+    Inputs(first=Bam, second=Bam),
+    Outputs(merged=MergedBam),
+    Constraints(threads=8),
+    name="merge",
+)
+```
+
+`CommandArgs` contains read-only named `inputs`, `config`, `outputs`, and
+`constraints` collections plus `workdir`. Names support both attribute and
+mapping access, such as `args.outputs.merged` and `args.outputs["merged"]`.
+
+Callbacks return a complete shell string. Necroflow executes it unchanged and
+does not attempt to infer or repair quoting; use `shlex.quote` or `shlex.join`
+when interpolated values require shell escaping. Argv-list commands are not
+supported in fingerprint v2.
+
+Command callbacks must be module-level, closure-free functions or unambiguous
+source-file lambdas accepting exactly one argument. Their canonical AST and
+the running Python implementation/version participate in the default
+fingerprint.
+
 ## Declaring rule outputs
 
 Import `output` with the decorator and bind every output to a real local name:

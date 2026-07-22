@@ -47,7 +47,10 @@ The equivalent CLI flag is:
 necroflow --shellpath /bin/bash job.toml
 ```
 
-An explicit `shellpath` is included in fingerprints for string commands and recorded in provenance. List-form commands and built-in materializers do not use a shell and are not affected.
+An explicit `shellpath` is included in fingerprints for static and Python
+callback commands and recorded in provenance. Built-in materializers do not
+use a shell and are not affected. All supported commands resolve to shell
+strings; argv-list commands were removed in fingerprint v2.
 
 By default the scheduler prioritises nodes from the **smallest connected component** of remaining work — this tends to finish whole samples before starting new ones, keeping memory pressure low.
 The CLI accepts `--scheduler connected-components` (default), `--scheduler fifo`, or a local Python callable such as `--scheduler schedulers.py:my_scheduler`.

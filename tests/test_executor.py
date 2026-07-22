@@ -39,10 +39,6 @@ class ShellOut(NodeType):
     filename = "shell.txt"
 
 
-class ListOut(NodeType):
-    filename = "list.txt"
-
-
 R_make_a = Rule("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
 R_make_a_workdir = Rule(
     "make_a_workdir",
@@ -82,11 +78,6 @@ R_env_shell = Rule(
     Outputs(out=ShellOut),
     "printf '%s\n' $NF_TEST_SHELL > {out}",
 )
-R_list_shell = Rule(
-    "list_shell", Inputs(x=str), Outputs(out=ListOut), ["touch", "{out}"]
-)
-
-
 # ── basic execution ───────────────────────────────────────────────────────────
 
 
@@ -152,18 +143,6 @@ def test_explicit_shellpath_changes_string_command_fingerprint(tmp_path):
     assert P.out.execution_context["shellpath"] == str(Path(shell).resolve())
 
     execute(P, tmp_path / "default")
-
-    assert P.out.key == default_key
-    assert "shellpath" not in P.out.execution_context
-
-
-def test_explicit_shellpath_does_not_change_list_command_fingerprint(tmp_path):
-    shell = shutil.which("sh") or "/bin/sh"
-    P = Pipeline()
-    P.out = R_list_shell(x="x")
-    default_key = P.out.key
-
-    execute(P, tmp_path, shellpath=shell)
 
     assert P.out.key == default_key
     assert "shellpath" not in P.out.execution_context

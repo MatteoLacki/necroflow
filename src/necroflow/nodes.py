@@ -7,7 +7,9 @@ from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, get_args, get_origin
+from typing import Any, Callable, get_args, get_origin
+
+from necroflow.rule_call import RuleCall
 
 _COMPROMISED_STATES = {"running", "failed", "interrupted"}
 
@@ -60,13 +62,14 @@ class Node:
     parents: list[Node] = field(default_factory=list)
     config: dict[str, Any] = field(default_factory=dict)
     rule: Any | None = None
-    command: str | list[str] | None = None
+    command: str | Callable | None = None
     path: Path | None = None
     output_nodes: dict[str, Node] = field(default_factory=dict)
     state: NodeState | None = None
     info: str | None = None
     pipeline_label: str | None = None
     execution_context: dict[str, Any] = field(default_factory=dict)
+    rule_call: RuleCall | None = None
 
     def __post_init__(self):
         if self.info is None and self.node_type is not None:
@@ -75,40 +78,20 @@ class Node:
                 self.info = doc.strip()
 
     @property
+    def full_fingerprint(self) -> str:
+        """Full version-2 digest shared by co-outputs of one rule call."""
+
+        if self.rule_call is not None:
+            return self.rule_call.full_fingerprint
+        return hashlib.sha256(
+            f"necroflow.unbound/v2:{self.output_name}:{self.node_type!r}".encode()
+        ).hexdigest()
+
+    @property
     def fingerprint(self) -> str:
-        """16-char hex fingerprint of the rule call that produced this node.
+        """The 16-character path form of the full fingerprint."""
 
-        Shared by all co-outputs of the same call — output_name is excluded from
-        this hash but included in parent references so downstream nodes that
-        consume different co-outputs still get distinct hashes.
-
-        Constraints intentionally excluded: they describe execution resources
-        (threads, memory), not the computation itself. If the output already
-        exists on disk, the constraints used to produce it are irrelevant.
-        """
-        h = hashlib.sha256()
-        h.update((self.rule.__name__ if self.rule else "").encode())
-        recipe = getattr(self.rule, "recipe_identity", None) if self.rule else None
-        if recipe is not None:
-            h.update(f"recipe:{recipe}".encode())
-        else:
-            cmd = self.command
-            h.update(
-                (cmd if isinstance(cmd, str) else repr(cmd) if cmd else "").encode()
-            )
-        for k, v in sorted(self.config.items()):
-            h.update(f"{k}={v!r}".encode())
-        for k, v in sorted(self.execution_context.items()):
-            h.update(f"x:{k}={v!r}".encode())
-        for p in self.parents:
-            h.update(p.fingerprint.encode())
-            h.update((p.output_name or "").encode())
-        if self.rule:
-            for k, v in sorted(self.rule.inputs.specs.items()):
-                h.update(f"i:{k}={NodeType._type_name(v)}".encode())
-            for k, v in sorted(self.rule.outputs.specs.items()):
-                h.update(f"o:{k}={NodeType._type_name(v)}".encode())
-        return h.hexdigest()[:16]
+        return self.full_fingerprint[:16]
 
     @property
     def key(self) -> str:
@@ -144,6 +127,7 @@ class Node:
     def make_outputs(
         cls, rule, parents: list[Node], config: dict, command, outputs_specs: dict
     ) -> list[Node]:
+        call = RuleCall(rule=rule, parents=parents, config=config, command=command)
         nodes = [
             cls(
                 output_name=oname,
@@ -152,12 +136,15 @@ class Node:
                 config=config,
                 rule=rule,
                 command=command,
+                execution_context=call.execution_context,
+                rule_call=call,
             )
             for oname, otype in outputs_specs.items()
         ]
         all_outputs = {n.output_name: n for n in nodes}
         for n in nodes:
             n.output_nodes = all_outputs
+        call.output_nodes = all_outputs
         return nodes
 
 

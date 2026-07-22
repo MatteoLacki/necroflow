@@ -256,10 +256,15 @@ def _apply_shell_execution_context(pipeline, shellpath: str | None) -> dict[str,
     required_nodes = list(getattr(pipeline, "required_nodes", [])) or None
     old_keys = {id(node): node.key for node in nodes}
     for node in nodes:
-        if isinstance(node.command, str) and shellpath is not None:
+        previous = node.execution_context.get("shellpath")
+        if node.command is not None and shellpath is not None:
             node.execution_context["shellpath"] = shellpath
         else:
             node.execution_context.pop("shellpath", None)
+        current = node.execution_context.get("shellpath")
+        if previous != current and node.rule_call is not None:
+            node.rule_call._full_fingerprint = None
+            node.rule_call.clear_realized_command()
     rebuild = getattr(pipeline, "rebuild_index", None)
     if rebuild is not None:
         rebuild(required_nodes=required_nodes)
@@ -734,9 +739,7 @@ def _run_node(node, log_path, *, shellpath: str | None = None) -> None:
             materializer(node, log)
             return
         cmd = resolve_command(node)
-        if isinstance(cmd, list):
-            subprocess.run(cmd, check=True, stdout=log, stderr=log)
-        elif shellpath is not None:
+        if shellpath is not None:
             subprocess.run(
                 cmd,
                 shell=True,

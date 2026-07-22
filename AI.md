@@ -12,6 +12,25 @@ Built-in placeholders:
 
 `{workdir}` is created before the command subprocess starts. Its contents are kept by default. With `autoclean=True`, intermediate rule-call directories are removed as whole directories once all active children are up to date, so `{workdir}` side files are cleaned together with declared outputs.
 
+## Callable commands and fingerprint v2
+
+`command()` accepts a static shell string or a module-level, closure-free,
+source-inspectable Python function/lambda with one `CommandArgs` argument.
+Callbacks receive resolved named input/output paths, config, constraints, and
+`workdir`; they return one complete valid shell string. The string is executed
+unchanged, so callback authors own shell quoting. List commands are rejected.
+
+Every rule invocation owns one shared `RuleCall`; co-outputs share its full
+64-hex digest and once-per-output-root realized command. `Node.fingerprint` is
+the first 16 hex characters used in paths; `Node.full_fingerprint` retains the
+complete parent identity.
+
+`default_fingerprint(FingerprintArgs)` uses framed canonical serialization.
+Callable command identity uses canonical AST plus Python implementation/version.
+Job metadata `".fingerprint" = "path.py:function"` or
+`Pipeline.set_fingerprint_function()` replaces the complete policy for every
+rule call; a project function may call the public default to compose with it.
+
 ## NodeType invalidators
 
 `NodeType.invalidator` is optional and defaults to `None`. When set, it is a callable receiving the concrete `Node` and returning a stable `str` token. Necroflow stores the token at `.rip/{filename}.invalidation` after a successful run. During classification, an existing output with a missing or changed token is marked `STALE`; callback exceptions fail fast. The token does not participate in the node fingerprint.
@@ -66,4 +85,10 @@ Rule constraints can be interpolated into command templates. `{threads}` always 
 
 ## Shellpath execution context
 
-`execute(..., shellpath=PATH)` and CLI `--shellpath PATH` choose the executable shell for string commands via `subprocess.run(..., shell=True, executable=PATH)`. The default remains Python's normal `shell=True` behavior and is not fingerprint-salted. Explicit shellpaths are normalized to absolute executable files, stored in `node.execution_context["shellpath"]`, included in fingerprints for string-command nodes, and written to dependencies provenance under `[execution]`. List commands and built-in materializers never receive shellpath context. DAGs must rebuild their deduplication index after shell context changes because node keys depend on fingerprints.
+`execute(..., shellpath=PATH)` and CLI `--shellpath PATH` choose the executable
+shell via `subprocess.run(..., shell=True, executable=PATH)`. The default
+remains Python's normal `shell=True` behavior and is not fingerprint-salted.
+Explicit shellpaths are normalized, stored in execution context, included in
+all command-rule fingerprints, and written to provenance. Built-in
+materializers remain unaffected. DAG indexes rebuild after shell context
+changes because node keys depend on fingerprints.

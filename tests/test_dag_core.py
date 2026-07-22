@@ -218,24 +218,14 @@ def test_resolve_command_scalar_config_stays_bare_when_shell_safe(tmp_path):
     assert resolve_command(txt) == f"tool -n 5 > {txt.path}"
 
 
-def test_resolve_command_list_commands_are_not_shell_quoted(tmp_path):
-    r_list_filter = Rule(
-        "list_filter",
-        Inputs(filter=str),
-        Outputs(txt=Txt),
-        ["tool", "--filter", "{filter}", "--out", "{txt}"],
-    )
-    txt = r_list_filter(filter="a > b")
-
-    resolve_paths([txt], tmp_path)
-
-    assert resolve_command(txt) == [
-        "tool",
-        "--filter",
-        "a > b",
-        "--out",
-        str(txt.path),
-    ]
+def test_list_commands_are_rejected():
+    with pytest.raises(TypeError, match="argv list commands were removed"):
+        Rule(
+            "list_filter",
+            Inputs(filter=str),
+            Outputs(txt=Txt),
+            ["tool", "--filter", "{filter}", "--out", "{txt}"],
+        )
 
 
 def test_resolve_command_output_substitution(tmp_path):
@@ -565,14 +555,14 @@ def test_command_missing_output_is_allowed():
     assert r_ok.outputs.specs == {"txt": Txt, "log": Log}
 
 
-def test_command_list_missing_output_is_allowed():
-    r_ok = Rule(
-        "bad",
-        Inputs(word=str),
-        Outputs(txt=Txt, log=Log),
-        ["echo {word} > {txt}", "echo done"],
-    )
-    assert r_ok.outputs.specs == {"txt": Txt, "log": Log}
+def test_command_factory_rejects_list_commands():
+    with pytest.raises(TypeError, match="argv list commands were removed"):
+        command(
+            ["echo {word} > {txt}", "echo done"],
+            Inputs(word=str),
+            Outputs(txt=Txt, log=Log),
+            name="bad",
+        )
 
 
 def test_command_unreferenced_input_is_allowed():

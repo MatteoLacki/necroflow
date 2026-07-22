@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from necroflow.nodes import Node
 from necroflow.dag import resolve_paths as _resolve_paths
+from necroflow.fingerprints import validate_fingerprint_function
 
 # Maps frozenset of active directions {U,D,L,R} to box-drawing char
 _BOX = {
@@ -265,6 +268,30 @@ class Pipeline(_GraphBase):
     @property
     def nodes(self) -> list[Node]:
         return self._nodes_list
+
+    def set_fingerprint_function(
+        self, function: Callable, *, provider: str | None = None
+    ) -> None:
+        """Select the complete fingerprint policy for this pipeline's rule calls."""
+
+        provider = provider or (
+            f"{getattr(function, '__module__', type(function).__module__)}:"
+            f"{getattr(function, '__qualname__', type(function).__qualname__)}"
+        )
+        validate_fingerprint_function(function, provider=provider)
+        seen_nodes: set[int] = set()
+        seen_calls: set[int] = set()
+        frontier = list(self.nodes)
+        while frontier:
+            node = frontier.pop()
+            if id(node) in seen_nodes:
+                continue
+            seen_nodes.add(id(node))
+            frontier.extend(node.parents)
+            call = node.rule_call
+            if call is not None and id(call) not in seen_calls:
+                seen_calls.add(id(call))
+                call.set_fingerprint_function(function, provider=provider)
 
     def __getattr__(self, name: str) -> Node:
         try:
