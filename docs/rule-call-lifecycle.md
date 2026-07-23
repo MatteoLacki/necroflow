@@ -84,6 +84,17 @@ The rule validates positional Node inputs against declared NodeTypes and
 keyword values against their declared Python types. It rejects missing, extra,
 misordered, or cross-DAG inputs before creating outputs.
 
+`Rule.__call__` coordinates the phases through focused methods:
+
+```python
+self._validate_pipeline(pipeline)
+self._validate_input_presence(args, kwargs)
+self._validate_parent_nodes(pipeline, args)
+self._validate_config_values(kwargs)
+nodes = self._compile_outputs(pipeline, args, kwargs)
+return self._shape_outputs(nodes)
+```
+
 The logical parents are the validated Node arguments:
 
 ```python
@@ -101,7 +112,7 @@ call = RuleCall(
     parents=[P.source],
     config={"reverse": False},
     command=sort_text.command,
-    execution_context=P.execution_context,
+    shellpath=P.shellpath,
     fingerprint_provider=P.fingerprint_provider,
 )
 ```
@@ -117,7 +128,7 @@ FingerprintArgs(
     input_types={"source": SourceText},
     output_types={"sorted": SortedText},
     constraints={"threads": 1},
-    execution_context=P.execution_context,
+    shellpath=P.shellpath,
     repeat=sort_text.repeat,
     recipe_identity=sort_text.recipe_identity,
 )
@@ -277,7 +288,7 @@ Static command templates use the same resolved values.
 
 The executor creates the workdir, runs a built-in materializer or resolved
 shell command, and verifies every declared co-output exists. The immutable
-execution context supplies the selected shell executable. Success writes
+`RuleCall.shellpath` supplies the selected shell executable. Success writes
 state, dependency hashes, invalidator tokens, provenance, and run statistics
 under the rule-call's `.rip/` directory.
 

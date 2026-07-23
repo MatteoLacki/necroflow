@@ -1,11 +1,10 @@
-"""Tests for Pipeline, DAG, and _sinks."""
+"""Tests for Pipeline and DAG."""
 
 from necroflow.rules import Constraints, Inputs, Outputs, Rule
 
 import pytest
 from pathlib import Path
 from necroflow import NodeType, Pipeline, DAG, command, output
-from necroflow.pipeline import _sinks
 
 
 class A(NodeType):
@@ -48,26 +47,26 @@ def diamond(owner=TEST_NODES_DIR):
     return P
 
 
-# ── _sinks ────────────────────────────────────────────────────────────────────
+# ── Pipeline.sinks ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 def test_sinks_source_node():
     # single node with no parents and no children — must be a sink
     P = Pipeline(DAG(TEST_NODES_DIR))
     P.a = R_make_a(P, x="x")
-    assert _sinks(P) == [P.a]
+    assert P.sinks() == [P.a]
 
 
 def test_sinks_linear():
     P = Pipeline(DAG(TEST_NODES_DIR))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
-    assert _sinks(P) == [P.b]
+    assert P.sinks() == [P.b]
 
 
 def test_sinks_diamond():
     P = diamond()
-    assert _sinks(P) == [P.d]
+    assert P.sinks() == [P.d]
 
 
 def test_sinks_multiple():
@@ -76,12 +75,12 @@ def test_sinks_multiple():
     P.b = R_make_b(P, P.a)
     P.c = R_make_c(P, P.a)
     # b and c are both sinks (nothing depends on them)
-    assert set(id(n) for n in _sinks(P)) == {id(P.b), id(P.c)}
+    assert set(id(n) for n in P.sinks()) == {id(P.b), id(P.c)}
 
 
 def test_sinks_excludes_intermediate():
     P = diamond()
-    sinks = _sinks(P)
+    sinks = P.sinks()
     assert P.a not in sinks
     assert P.b not in sinks
     assert P.c not in sinks

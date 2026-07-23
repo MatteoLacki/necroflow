@@ -41,7 +41,7 @@ for a runnable example.
 Each hashed node output lives at `nodes/{rule}/{fingerprint}/{filename}` by default.
 Fingerprint v2 calculates a full 64-character SHA-256 digest from a
 type-tagged, length-framed representation of the rule name, command, config,
-full parent digests, execution context, and declared `Inputs`/`Outputs` types.
+full parent digests, the explicit shell path, and declared `Inputs`/`Outputs` types.
 `node.fingerprint` exposes that complete digest and paths use it without
 truncation. `node.relative_path` is the canonical Path relative to the node
 store. Constraints and `repeat` are excluded.

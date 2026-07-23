@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import inspect
-from types import UnionType
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, get_args, get_origin
+from typing import Any, Callable
 
 from necroflow.fingerprints import validate_fingerprint_result
 from necroflow.rule_call import RuleCall
@@ -55,15 +54,6 @@ class NodeType(metaclass=NodeTypeMeta):
     filename: str | None = None
     invalidator = None
 
-    @staticmethod
-    def _type_name(ann) -> str:
-        origin = get_origin(ann)
-        if origin is UnionType:
-            return "|".join(
-                sorted(NodeType._type_name(member) for member in get_args(ann))
-            )
-        return ann.__name__ if hasattr(ann, "__name__") else repr(ann)
-
 
 @dataclass
 class Node:
@@ -79,7 +69,6 @@ class Node:
     output_nodes: dict[str, Node] = field(default_factory=dict)
     state: NodeState | None = None
     info: str | None = None
-    execution_context: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.info is None:
@@ -123,14 +112,14 @@ class Node:
     ) -> list[Node]:
         from necroflow.dag import _check_path_limits
 
-        execution_context = pipeline.execution_context if command is not None else {}
+        shellpath = pipeline.shellpath if command is not None else None
         call = RuleCall(
             dag=pipeline.dag,
             rule=rule,
             parents=parents,
             config=config,
             command=command,
-            execution_context=execution_context,
+            shellpath=shellpath,
             fingerprint_provider=pipeline.fingerprint_provider,
         )
         value = pipeline.fingerprint_function(call.fingerprint_args())
@@ -163,7 +152,6 @@ class Node:
                     command=command,
                     relative_path=relative_path,
                     path=workdir / filename,
-                    execution_context=call.execution_context,
                     rule_call=call,
                 )
             )

@@ -144,8 +144,8 @@ def test_explicit_shellpath_changes_string_command_fingerprint(tmp_path):
     with_shell.out = R_env_shell(with_shell, x="x")
 
     assert with_shell.out.relative_path != default.out.relative_path
-    assert with_shell.out.execution_context["shellpath"] == str(Path(shell).resolve())
-    assert "shellpath" not in default.out.execution_context
+    assert with_shell.out.rule_call.shellpath == str(Path(shell).resolve())
+    assert default.out.rule_call.shellpath is None
 
 
 def test_invalid_shellpath_fails_before_outputs(tmp_path):

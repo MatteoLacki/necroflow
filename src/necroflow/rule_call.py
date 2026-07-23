@@ -21,7 +21,7 @@ class RuleCall:
     parents: list[Node]
     config: dict[str, Any]
     command: str | Callable | None
-    execution_context: dict[str, Any] = field(default_factory=dict)
+    shellpath: str | None = None
     output_nodes: dict[str, Node] = field(default_factory=dict)
     fingerprint_provider: str = DEFAULT_FINGERPRINT_PROVIDER
     _fingerprint: str | None = None
@@ -51,7 +51,7 @@ class RuleCall:
             input_types=NamedValues(self.rule.inputs.specs),
             output_types=NamedValues(self.rule.outputs.specs),
             constraints=NamedValues(self._constraints()),
-            execution_context=NamedValues(self.execution_context),
+            shellpath=self.shellpath,
             repeat=self.rule.repeat,
             recipe_identity=self.rule.recipe_identity,
         )

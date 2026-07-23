@@ -88,7 +88,7 @@ The implementation feeds these values directly into SHA-256, in order:
    - otherwise `repr(command)` for argv;
    - otherwise an empty string.
 3. Config sorted by name, as `f"{name}={value!r}"`.
-4. Execution context sorted by name, as `f"x:{name}={value!r}"`.
+4. The explicit shell path, when one is selected.
 5. Parents in call order: each parent fingerprint, then the selected parent
    output name.
 6. Declared inputs sorted by name, as `f"i:{name}={type_name}"`.
@@ -116,13 +116,13 @@ These do not currently affect computation fingerprints:
 - current output bytes and timestamps;
 - the nodes directory and resolved paths;
 - Python, Necroflow, OS, executable, and environment versions unless a pipeline
-  represents them through config, execution context, recipe identity, or an
+  represents them through config, shell path, recipe identity, or an
   invalidator.
 
 An explicit `shellpath` is a special case. The executor normalizes it and puts
-it into `execution_context` for static string commands, so it changes their
-fingerprints. It is excluded for list commands and built-in materializers. The
-DAG index is rebuilt after shell context changes.
+it directly on each command `RuleCall`, so it changes the command's
+fingerprint. It is excluded for built-in materializers. Rule-call identity is
+compiled immediately; there is no late DAG index rebuild.
 
 Constraints deserve an explicit warning. They are visible to a command
 template, including `{threads}`, but are treated as execution resources rather
@@ -158,10 +158,8 @@ Job-specific recipe identity must therefore exist before aggregate DAG
 insertion. Adding it later can deduplicate or resolve requests against the
 wrong key.
 
-`Node.fingerprint` is currently recomputed on access. Mutating command, config,
-parents, contracts, recipe identity, or execution context can change a key.
-The shellpath flow relies on this and rebuilds the DAG index. Callable rule-call
-identity should become immutable once indexed.
+Node fingerprints and explicit shell paths are compiled before DAG insertion.
+Rule-call identity is immutable once indexed.
 
 ## Output content hashes and stale detection
 
@@ -208,8 +206,8 @@ Use an invalidator for freshness at one stable address.
 ## Current provenance
 
 `.rip/dependencies.toml` currently records the rule, node fingerprint,
-accumulated ancestor config, and optional execution context such as explicit
-shellpath. It does not record the static command, `recipe_identity`, Python
+accumulated ancestor config, and the optional explicit shellpath. It does not
+record the static command, `recipe_identity`, Python
 source, or a hash-provider policy. Output hashes and invalidator tokens live in
 their separate `.rip` files.
 

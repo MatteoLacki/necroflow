@@ -90,12 +90,13 @@ Package version is exposed as `necroflow.__version__`; `pyproject.toml` reads it
 
 Rule constraints can be interpolated into command templates. `{threads}` always resolves: it uses the declared `threads` constraint or defaults to `1`. Other direct placeholders, such as `{ram}` or `{gpu}`, are allowed only when that constraint is declared. `{constraint:name}` forces a constraint lookup and is useful when a normal config input has the same name, e.g. `{threads}` can remain the config value while `{constraint:threads}` is the scheduler thread requirement. Command-facing values are raw declared constraint values (`"32Gi"` stays `"32Gi"`); executor resource accounting still uses parsed integer values via `Rule.resources`.
 
-## Shellpath execution context
+## Shellpath
 
 `Pipeline(..., shellpath=PATH)` and CLI `--shellpath PATH` choose the executable
 shell via `subprocess.run(..., shell=True, executable=PATH)`. The default
 remains Python's normal `shell=True` behavior and is not fingerprint-salted.
-Explicit shellpaths are normalized, stored in execution context, included in
-all command-rule fingerprints, and written to provenance. Built-in
-materializers remain unaffected. Shell context is immutable for the lifetime of
-a compiled pipeline; there is no late key rebuild.
+Explicit shellpaths are normalized, stored directly on each command
+`RuleCall`, included in all command-rule fingerprints, and written to
+provenance. Built-in materializers remain unaffected. The shell selection is
+immutable for the lifetime of a compiled pipeline; there is no late key
+rebuild.

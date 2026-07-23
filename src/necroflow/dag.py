@@ -122,8 +122,8 @@ def write_dependencies(node: Node) -> None:
             "provider": node.rule_call.fingerprint_provider,
             "digest": node.fingerprint,
         }
-    if node.execution_context:
-        data["execution"] = dict(node.execution_context)
+    if node.rule_call.shellpath is not None:
+        data["execution"] = {"shellpath": node.rule_call.shellpath}
     if node.command is not None:
         command_data = {
             "kind": "python" if callable(node.command) else "shell",

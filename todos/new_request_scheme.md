@@ -71,7 +71,7 @@ Node identity continues to depend only on:
 -   rule
 -   parameters
 -   dependencies
--   execution context
+-   explicit shell path
 
 ## Uniqueness
 

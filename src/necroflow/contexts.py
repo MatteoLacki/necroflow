@@ -65,6 +65,6 @@ class FingerprintArgs:
     input_types: NamedValues[Any]
     output_types: NamedValues[Any]
     constraints: NamedValues[Any]
-    execution_context: NamedValues[Any]
+    shellpath: str | None
     repeat: int
     recipe_identity: str | None

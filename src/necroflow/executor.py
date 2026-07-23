@@ -688,7 +688,7 @@ def _run_node(node, log_path) -> None:
             raise RuntimeError(
                 f"rule {node.rule.__name__!r} has neither a command nor a materializer"
             )
-        shellpath = node.rule_call.execution_context.get("shellpath")
+        shellpath = node.rule_call.shellpath
         if shellpath is not None:
             subprocess.run(
                 cmd,

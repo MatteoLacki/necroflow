@@ -446,9 +446,9 @@ def test_explicit_shellpath_changes_callable_fingerprint(tmp_path):
     default_digest = default_result.fingerprint
 
     assert explicit_result.fingerprint != default_digest
-    assert explicit_result.rule_call.execution_context["shellpath"] == str(
-        Path("/bin/bash").resolve()
-    )
+    expected_shell = str(Path("/bin/bash").resolve())
+    assert explicit_result.rule_call.shellpath == expected_shell
+    assert explicit_result.rule_call.fingerprint_args().shellpath == expected_shell
 
 
 def test_explicit_shellpath_does_not_change_builtin_materializer_fingerprint(tmp_path):

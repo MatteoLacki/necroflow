@@ -197,19 +197,6 @@ def sanitize_for_filename(s):
     return s
 
 
-def _strip_common_affixes(labels):
-    prefix = os.path.commonprefix(labels)
-    suffix = os.path.commonprefix([s[::-1] for s in labels])[::-1]
-    p, s = len(prefix), len(suffix)
-    if p + s == 0:
-        return labels
-    if any(p + s >= len(lab) for lab in labels):
-        s = 0
-        if any(p >= len(lab) for lab in labels):
-            return labels
-    return [lab[p : len(lab) - s if s else None].strip("_") or lab for lab in labels]
-
-
 def _find_auto_label(vals):
     common_keys = set(vals[0].keys())
     for v in vals[1:]:

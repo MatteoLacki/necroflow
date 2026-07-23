@@ -220,7 +220,7 @@ class Rule(Generic[_ReturnT]):
         result.setdefault("threads", 1)
         return result
 
-    def __call__(self, pipeline, /, *args: Any, **kwargs: Any) -> _ReturnT:
+    def _validate_pipeline(self, pipeline) -> None:
         from necroflow.pipeline import Pipeline
 
         if not isinstance(pipeline, Pipeline):
@@ -228,52 +228,78 @@ class Rule(Generic[_ReturnT]):
                 f"{self.__name__}: first argument must be the owning Pipeline, "
                 f"got {type(pipeline).__name__}"
             )
+
+    def _validate_input_presence(
+        self, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> None:
         name = self.__name__
         if len(args) < len(self._pos_inputs):
             missing = [pname for pname, _ in self._pos_inputs[len(args) :]]
             raise TypeError(f"{name}: missing required inputs: {missing!r}")
         if len(args) > len(self._pos_inputs):
             raise TypeError(
-                f"{name}: too many positional inputs: expected {len(self._pos_inputs)}, got {len(args)}"
+                f"{name}: too many positional inputs: "
+                f"expected {len(self._pos_inputs)}, got {len(args)}"
             )
         missing_kw = [kname for kname in self._kw_inputs if kname not in kwargs]
         if missing_kw:
             raise TypeError(f"{name}: missing required inputs: {missing_kw!r}")
-        for (pname, ptype), val in zip(self._pos_inputs, args):
-            if not isinstance(val, Node):
+
+    def _validate_parent_nodes(self, pipeline, args: tuple[Any, ...]) -> None:
+        name = self.__name__
+        for (pname, ptype), value in zip(self._pos_inputs, args):
+            if not isinstance(value, Node):
                 raise TypeError(
-                    f"{name}: {pname!r} expected Node, got {type(val).__name__!r}"
+                    f"{name}: {pname!r} expected Node, got {type(value).__name__!r}"
                 )
-            if not _matches_node_type(val.node_type, ptype):
-                got = val.node_type.__name__ if val.node_type else "None"
+            if not _matches_node_type(value.node_type, ptype):
+                got = value.node_type.__name__ if value.node_type else "None"
                 raise TypeError(
-                    f"{name}: {pname!r} expected {_type_contract_name(ptype)}, got {got}"
+                    f"{name}: {pname!r} expected "
+                    f"{_type_contract_name(ptype)}, got {got}"
                 )
-            if val.rule_call.dag is not pipeline.dag:
+            if value.rule_call.dag is not pipeline.dag:
                 raise ValueError(f"{name}: {pname!r} belongs to a different DAG")
-        for kname, val in kwargs.items():
-            if kname not in self._kw_inputs:
+
+    def _validate_config_values(self, kwargs: dict[str, Any]) -> None:
+        name = self.__name__
+        for key, value in kwargs.items():
+            if key not in self._kw_inputs:
                 continue
-            ktype = self._kw_inputs[kname]
+            expected = self._kw_inputs[key]
             try:
-                ok = isinstance(val, ktype)
+                valid = isinstance(value, expected)
             except TypeError:
-                ok = True
-            if not ok:
+                valid = True
+            if not valid:
                 raise TypeError(
-                    f"{name}: {kname!r} expected {ktype}, got {type(val).__name__!r}"
+                    f"{name}: {key!r} expected {expected}, "
+                    f"got {type(value).__name__!r}"
                 )
 
-        parents = [a for a in args if isinstance(a, Node)]
-        nodes = Node.make_outputs(
+    def _compile_outputs(
+        self, pipeline, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> list[Node]:
+        parents = [value for value in args if isinstance(value, Node)]
+        return Node.make_outputs(
             pipeline, self, parents, kwargs, self.command, self.outputs.specs
         )
+
+    def _shape_outputs(self, nodes: list[Node]) -> _ReturnT:
         if self._multi:
             assert self._return_type is not None
             value = self._return_type(*nodes)
         else:
             value = nodes[0]
         return cast(_ReturnT, value)
+
+    def __call__(self, pipeline, /, *args: Any, **kwargs: Any) -> _ReturnT:
+        self._validate_pipeline(pipeline)
+        self._validate_input_presence(args, kwargs)
+        self._validate_parent_nodes(pipeline, args)
+        self._validate_config_values(kwargs)
+        nodes = self._compile_outputs(pipeline, args, kwargs)
+        return self._shape_outputs(nodes)
 
 
 def _parse_rule_fn(fn) -> tuple:
@@ -398,59 +424,6 @@ def _parse_rule_fn(fn) -> tuple:
     return rule_name, inputs_specs, outputs_specs, info
 
 
-def _make_rule(
-    *,
-    name: str,
-    inputs: dict,
-    outputs: dict,
-    command: str | Callable | None,
-    constraints: dict | None = None,
-    info: str | None = None,
-    repeat: int = 1,
-    recipe_identity: str | None = None,
-    materializer: Callable | None = None,
-) -> Rule[Any]:
-    """Build a Rule from the internal dictionary representation."""
-    return Rule(
-        name=name,
-        inputs=Inputs(**inputs),
-        outputs=Outputs(**outputs),
-        command=command,
-        constraints=Constraints(**constraints) if constraints else None,
-        info=info,
-        repeat=repeat,
-        recipe_identity=recipe_identity,
-        materializer=materializer,
-    )
-
-
-def _decorator_command(
-    cmd: str | Callable, /, *, repeat: int = 1, **constraints
-) -> Callable[[Callable[..., _ReturnT]], Rule[_ReturnT]]:
-    """Declare a shell-command rule from a typed function signature.
-
-    The function body is declaration-only: assign each output with
-    ``name = output(NodeType)``, then return those names in output order.
-    """
-
-    def decorator(fn: Callable[..., _ReturnT]) -> Rule[_ReturnT]:
-        rule_name, inputs, outputs, info = _parse_rule_fn(fn)
-        return cast(
-            Rule[_ReturnT],
-            _make_rule(
-                name=rule_name,
-                inputs=inputs,
-                outputs=outputs,
-                command=cmd,
-                constraints=constraints,
-                info=info,
-                repeat=repeat,
-            ),
-        )
-
-    return decorator
-
-
 def command(
     cmd: str | Callable,
     *declarations,
@@ -488,18 +461,34 @@ def command(
             factory_constraints, Constraints
         ):
             raise TypeError("factory command constraints must be a Constraints object")
-        return _make_rule(
+        return Rule[Any](
             name=name,
-            inputs=inputs.specs,
-            outputs=outputs.specs,
+            inputs=inputs,
+            outputs=outputs,
             command=cmd,
-            constraints=factory_constraints.specs if factory_constraints else None,
+            constraints=factory_constraints,
             info=doc,
             repeat=repeat,
         )
     if name is not None or doc is not None:
         raise TypeError("name= and doc= are only valid for factory commands")
-    return _decorator_command(cmd, repeat=repeat, **constraints)
+
+    def decorator(fn: Callable[..., _ReturnT]) -> Rule[_ReturnT]:
+        rule_name, inputs, outputs, info = _parse_rule_fn(fn)
+        return cast(
+            Rule[_ReturnT],
+            Rule[Any](
+                name=rule_name,
+                inputs=Inputs(**inputs),
+                outputs=Outputs(**outputs),
+                command=cmd,
+                constraints=Constraints(**constraints) if constraints else None,
+                info=info,
+                repeat=repeat,
+            ),
+        )
+
+    return decorator
 
 
 def _validate_builtin_declaration(fn: Callable, kind: str) -> tuple:
@@ -553,10 +542,10 @@ def _make_text_file_rule(
     def materializer(node, log) -> None:
         node.path.write_text(node.config[input_name], encoding=encoding)
 
-    return _make_rule(
+    return Rule(
         name=name,
-        inputs={input_name: str},
-        outputs={oname: output},
+        inputs=Inputs(**{input_name: str}),
+        outputs=Outputs(**{oname: output}),
         command=None,
         info=info or f"Write {input_name!r} to {output.__name__}.",
         recipe_identity=recipe,
@@ -627,10 +616,10 @@ def _make_symlink_file_rule(
     if not _is_nodetype(output):
         raise TypeError(f"symlink_file output must be a NodeType, got {output!r}")
     oname = output_name or _pascal_to_snake(output.__name__)
-    return _make_rule(
+    return Rule(
         name=name,
-        inputs={path_arg: str},
-        outputs={oname: output},
+        inputs=Inputs(**{path_arg: str}),
+        outputs=Outputs(**{oname: output}),
         command=f"ln -s $(realpath {{{path_arg}}}) {{{oname}}}",
         info=info or f"Symlink an external file into {output.__name__}.",
     )

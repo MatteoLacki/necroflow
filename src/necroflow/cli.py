@@ -3,7 +3,7 @@
 Terms used in this file
 -----------------------
 pipeline_spec — the raw '.pipeline' string from the job TOML,
-                e.g. 'pipelines/rna.py:build'.  Parsed by _load_factory into
+                e.g. 'pipelines/rna.py:build'.  Resolved by load_callable from
                 a file path and a function name.
 
 factory       — a user-supplied Python function loaded from a pipeline_spec.
@@ -60,21 +60,6 @@ class _RequestedOutput:
 
 
 _Combo: TypeAlias = tuple[str, Pipeline, list[_RequestedOutput]]
-
-
-def _load_factory(spec: str) -> Callable:
-    """Load a pipeline factory from 'path/to/file.py:function_name' (resolved from cwd)."""
-    try:
-        return load_callable(spec, kind="pipeline")
-    except Exception as exc:
-        raise SystemExit(f"error: {exc}") from exc
-
-
-def _load_fingerprint(spec: str) -> Callable:
-    try:
-        return load_callable(spec, kind="fingerprint")
-    except Exception as exc:
-        raise SystemExit(f"error: {exc}") from exc
 
 
 def _load_validators(specs: list[str]) -> list[Callable]:
@@ -210,13 +195,13 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
                     )
                 if validators:
                     _validate_job_config(job_config, validators, job_path)
-                factory = _load_factory(job_config.pipeline_spec)
+                factory = load_callable(job_config.pipeline_spec, kind="pipeline")
                 if job_config.fingerprint_spec:
                     pipeline = Pipeline(
                         dag,
                         shellpath=shellpath,
-                        fingerprint_function=_load_fingerprint(
-                            job_config.fingerprint_spec
+                        fingerprint_function=load_callable(
+                            job_config.fingerprint_spec, kind="fingerprint"
                         ),
                         fingerprint_provider=job_config.fingerprint_spec,
                     )
@@ -580,10 +565,6 @@ def _doctor_payload(args) -> dict:
     return {"ok": not any(i["severity"] == "error" for i in issues), "issues": issues}
 
 
-def _finalize_link_outputs(combos, *, nodes_dir: Path, results_dir: Path) -> None:
-    _create_link_outputs(results_dir, combos, nodes_dir=nodes_dir)
-
-
 def _run(args) -> None:
     nodes_dir, results_dir = _resolve_roots(args)
     dag, combos, forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
@@ -599,11 +580,11 @@ def _run(args) -> None:
     except ExceptionGroup as exc:
         report = getattr(exc, "execution_report", None)
         if args.keep_going and not args.dry_run:
-            _finalize_link_outputs(combos, nodes_dir=nodes_dir, results_dir=results_dir)
+            _create_link_outputs(results_dir, combos, nodes_dir=nodes_dir)
             _write_execution_summaries(results_dir, combos, report)
         raise
     if not args.dry_run:
-        _finalize_link_outputs(combos, nodes_dir=nodes_dir, results_dir=results_dir)
+        _create_link_outputs(results_dir, combos, nodes_dir=nodes_dir)
         _write_execution_summaries(results_dir, combos, report)
 
 

@@ -246,7 +246,10 @@ def default_fingerprint(args: FingerprintArgs) -> str:
         "rule": args.rule_name,
         "command": _command_identity(args.command, args.recipe_identity),
         "config": dict(args.config.items()),
-        "execution_context": dict(args.execution_context.items()),
+        # Preserve the v2 wire shape while exposing shellpath directly in the API.
+        "execution_context": (
+            {"shellpath": args.shellpath} if args.shellpath is not None else {}
+        ),
         "parents": parents,
         "input_types": {
             name: _type_name(annotation)

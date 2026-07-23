@@ -57,29 +57,6 @@ def _render_connector(edges: list[tuple[int, int]]) -> list[str]:
     return ["".join(row1), "".join(row2), "".join(row3)]
 
 
-def _label(node: Node) -> str:
-    parts = [node.rule.__name__]
-    suffix = ""
-    suffix = node.node_type.__name__
-    if node.output_name and node.output_name != suffix:
-        suffix += f":{node.output_name}" if suffix else node.output_name
-    if suffix:
-        parts[0] += f"[{suffix}]"
-    # needs human review: config omitted from label — a single long config value
-    # (e.g. write_*_config rules embedding a full TOML file as `text=`) used to
-    # blow up box width to ~1400 chars and make the ASCII DAG unreadable.
-    if node.rule.constraints:
-        res = ", ".join(f"{k}={v}" for k, v in node.rule.constraints.items())
-        parts.append(f"[{res}]")
-    return " ".join(parts)
-
-
-def _sinks(pipeline: Pipeline) -> list:
-    """Nodes with no dependents (children) in the pipeline — includes source nodes."""
-    is_parent = {p.relative_path for n in pipeline.nodes for p in n.parents}
-    return [n for n in pipeline.nodes if n.relative_path not in is_parent]
-
-
 class _GraphBase:
     """Shared rendering logic for Pipeline and DAG."""
 
@@ -87,18 +64,24 @@ class _GraphBase:
     def nodes(self) -> list:
         raise NotImplementedError
 
-    @property
-    def nodes_dir(self) -> Path:
-        raise NotImplementedError
-
     def _header(self) -> str:
         raise NotImplementedError
 
     def _node_label(self, node: Node) -> str:
-        return _label(node)
-
-    def _node_color(self, node: Node) -> str:
-        return "steelblue"
+        parts = [node.rule.__name__]
+        suffix = node.node_type.__name__
+        if node.output_name and node.output_name != suffix:
+            suffix += f":{node.output_name}" if suffix else node.output_name
+        if suffix:
+            parts[0] += f"[{suffix}]"
+        # needs human review: config omitted from label because long embedded
+        # config values can otherwise make the ASCII DAG unreadable.
+        if node.rule.constraints:
+            resources = ", ".join(
+                f"{key}={value}" for key, value in node.rule.constraints.items()
+            )
+            parts.append(f"[{resources}]")
+        return " ".join(parts)
 
     def __repr__(self) -> str:
         return str(self)
@@ -289,10 +272,6 @@ class Pipeline(_GraphBase):
     def shellpath(self) -> str | None:
         return self._shellpath
 
-    @property
-    def execution_context(self) -> dict[str, str]:
-        return {"shellpath": self._shellpath} if self._shellpath is not None else {}
-
     def section(self, name: str) -> None:
         """Start a named presentation section for subsequently assigned nodes."""
         if not isinstance(name, str):
@@ -316,7 +295,14 @@ class Pipeline(_GraphBase):
         return next(iter(sections)) if len(sections) == 1 else None
 
     def labels_for(self, node: Node) -> tuple[str, ...]:
-        """Return this Pipeline's labels for a canonical Node."""
+        """Return labels assigned to a canonical Node in this Pipeline.
+
+        These are Pipeline-local presentation names, returned in assignment
+        order. A Node may have several labels in one Pipeline, and the same
+        canonical Node may have different labels in other Pipelines sharing
+        the DAG. This is the authoritative lookup when producing output for a
+        particular Pipeline or job.
+        """
         return tuple(
             name for name, candidate in self._node_names.items() if candidate is node
         )
@@ -328,7 +314,10 @@ class Pipeline(_GraphBase):
 
     def sinks(self) -> list[Node]:
         """Return labeled Nodes with no labeled dependents in this Pipeline."""
-        return _sinks(self)
+        parent_paths = {
+            parent.relative_path for node in self.nodes for parent in node.parents
+        }
+        return [node for node in self.nodes if node.relative_path not in parent_paths]
 
     @property
     def nodes(self) -> list[Node]:
@@ -455,9 +444,23 @@ class DAG(_GraphBase):
         self._sections_by_path.setdefault(node.relative_path, set()).add(section)
 
     def labels_for(self, node: Node) -> tuple[str, ...]:
+        """Return distinct labels recorded across all Pipelines for a Node.
+
+        These labels are DAG-wide diagnostic metadata, not authoritative
+        names for any particular Pipeline. They are sorted for deterministic
+        display and may contain several aliases when Pipelines bind the same
+        canonical Node under different names.
+        """
         return tuple(sorted(self._labels_by_path.get(node.relative_path, set())))
 
     def label_for(self, node: Node) -> str | None:
+        """Return the Node's sole DAG-wide label, or ``None`` if ambiguous.
+
+        This is a best-effort display helper for execution events and
+        diagnostics that lack Pipeline context. It deliberately refuses to
+        choose arbitrarily when :meth:`labels_for` finds zero or several
+        distinct labels.
+        """
         labels = self.labels_for(node)
         return labels[0] if len(labels) == 1 else None
 
@@ -481,11 +484,9 @@ class DAG(_GraphBase):
 
     def _node_label(self, node: Node) -> str:
         required_paths = {n.relative_path for n in self.required_nodes}
-        return _label(node) + (" ★" if node.relative_path in required_paths else "")
-
-    def _node_color(self, node: Node) -> str:
-        required_paths = {n.relative_path for n in self.required_nodes}
-        return "orange" if node.relative_path in required_paths else "steelblue"
+        return super()._node_label(node) + (
+            " ★" if node.relative_path in required_paths else ""
+        )
 
     def execute(self, **kwargs):
         from necroflow.executor import execute
