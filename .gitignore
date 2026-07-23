@@ -10,4 +10,5 @@ build/
 .pytest_cache/
 dist/
 examples/output/
+*.mzBIN
 .reviewerloop/
