@@ -1,5 +1,7 @@
 # What Happens When a Rule Is Called in a Pipeline Factory
 
+[Previous: Rules and Typed Outputs](rules.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)
+
 A factory compiles one configured view of a shared DAG. Rule calls calculate
 identity, paths, and canonicalize equivalent computations immediately. Command
 realization and filesystem materialization remain deferred until execution.
@@ -313,3 +315,5 @@ execute each canonical RuleCall once and verify every output
 
 Identity, paths, and deduplication are eager. Command realization and
 materialization are lazy.
+
+[Previous: Rules and Typed Outputs](rules.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)
