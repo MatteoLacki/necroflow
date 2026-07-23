@@ -42,7 +42,8 @@ necroflow supports POSIX systems (Linux and macOS). We do not offer native Windo
 Use `P.section(name)` in a long factory to label the stage for subsequent node assignments. Sections are presentation metadata: they appear in graph JSON and group `necroflow graph --png` output when unambiguous, but do not affect execution, cache identity, or provenance.
 
 ```python
-P = Pipeline("nodes")
+dag = DAG("nodes")
+P = Pipeline(dag)
 P.section("Read alignment")
 P.bam = align(P, P.fastq, ref=config.ref)
 P.section("Quantification")
@@ -55,7 +56,7 @@ A command-line run points at a Python pipeline factory. Rules describe typed out
 
 ```python
 # pipeline.py
-from necroflow import NodeType, Pipeline, command, symlink_file, output
+from necroflow import DAG, NodeType, Pipeline, command, symlink_file, output
 
 class Fastq(NodeType):
     filename = "reads.fastq.gz"
@@ -85,11 +86,12 @@ def rna_pipeline(P: Pipeline, config: dict) -> None:
 
 ## Compose pipeline fragments
 
-A command-line pipeline factory receives the owning `Pipeline` and mutates it:
-`factory(P, config) -> None`. The CLI creates `P` with the node-store path,
-fingerprint policy, and shell context before calling the factory. Consequently,
+A command-line pipeline factory receives a `Pipeline` view of the shared DAG and mutates it:
+`factory(P, config) -> None`. The CLI creates one DAG with the node-store path,
+then creates `P` with that DAG, the fingerprint policy, and shell context before
+calling the factory. Consequently,
 every rule call receives `P` first and returns Nodes whose absolute paths and
-fingerprints are already final.
+fingerprints are already final and already interned in the DAG.
 
 For reusable internal fragments, pass an existing pipeline to a helper that
 adds its named nodes. This lets several fragments contribute to one public
@@ -107,9 +109,10 @@ def rna_pipeline(P, config):
 
 An assembler mutates the supplied pipeline, so its labels must not conflict
 with labels added by another fragment. Use this form for components that belong
-to one pipeline. The caller creates a fresh `Pipeline` for each independent
-config; when those pipelines are added to one `DAG`, Necroflow canonicalizes
-identical upstream rule calls and executes their shared work once.
+to one pipeline. The caller creates a fresh `Pipeline(dag)` for each independent
+config. Equivalent upstream calls are canonicalized immediately in the shared
+DAG; after each factory, the caller marks its sinks or explicit outputs with
+`dag.require(...)`.
 
 Attribute and item labels share one namespace. Use `P.counts` for ordinary
 Python identifiers and `P["sample-1 counts"]` for generated or non-identifier
@@ -240,6 +243,7 @@ text = '{\n  "mode": "uppercase"\n}\n'
 - [Job TOML and parameter grids](docs/job-toml.md)
 - [Config validation](docs/config-validation.md)
 - [Rules and typed outputs](docs/rules.md)
+- [Rule-call lifecycle and pipeline internals](docs/rule-call-lifecycle.md)
 - [Generated config files](docs/generated-config-files.md)
 - [Execution, scheduling, and cleanup](docs/execution.md)
 - [Manuscript argument conspect](docs/paper-arguments.md)

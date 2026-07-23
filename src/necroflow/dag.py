@@ -120,7 +120,7 @@ def write_dependencies(node: Node) -> None:
         data["fingerprint"] = {
             "format": "v2",
             "provider": node.rule_call.fingerprint_provider,
-            "digest": node.full_fingerprint,
+            "digest": node.fingerprint,
         }
     if node.execution_context:
         data["execution"] = dict(node.execution_context)
@@ -163,19 +163,19 @@ def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
     Nodes outside the subgraph with no output get state=None (excluded from execution).
     """
     # BFS to collect all nodes in the required subgraph
-    required: dict[str, Node] = {}
+    required: dict[Path, Node] = {}
     frontier = list(required_nodes)
     while frontier:
         n = frontier.pop()
-        if n.key in required:
+        if n.relative_path in required:
             continue
-        required[n.key] = n
-        frontier.extend(p for p in n.parents if p.key not in required)
+        required[n.relative_path] = n
+        frontier.extend(p for p in n.parents if p.relative_path not in required)
 
     # ORPHAN pass: output exists from a prior run but isn't needed now; skipped
     # by the executor unless autoclean=True, in which case it gets deleted
     for node in nodes:
-        if node.key not in required:
+        if node.relative_path not in required:
             node.state = (
                 NodeState.ORPHAN
                 if (node.path is not None and node.path.exists())

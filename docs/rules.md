@@ -111,10 +111,13 @@ for i, step in enumerate(steps):
     P[f"result_{i}"] = process(P, step_node, mode=step)
 ```
 
-The idiomatic pattern for multi-sample or multi-condition work is separate
-`Pipeline` objects, constructed with the same node-store directory and added to
-a shared `DAG` — one pipeline per config, one `dag.add(P)` call per pipeline.
+The idiomatic pattern for multi-sample or multi-condition work is one shared
+`DAG` and a separate `Pipeline(dag)` per config. Equivalent rule calls are
+interned immediately; after each factory, call `dag.require(P.sinks())` or
+require explicitly selected labels.
 Attribute and item labels (`P.result` and `P["result"]`) share one namespace.
+Item labels may use non-identifier characters such as spaces or hyphens, but
+remain one relative path component because the CLI uses them for result links.
 
 ## Pipeline sections
 
@@ -142,9 +145,10 @@ necroflow graph --output graph.txt job.toml
 The same rendering is available from Python:
 
 ```python
-from necroflow import resolve_command
+from necroflow import DAG, Pipeline, resolve_command
 
-P = Pipeline("results")
+dag = DAG("results")
+P = Pipeline(dag)
 rna_pipeline(P, config)
 print(P)                    # layered ASCII DAG to stdout
 P.save("pipeline.txt")      # same render to a file
@@ -269,9 +273,11 @@ def align(fastq: Fastq, ref: str):
     bam = output(Bam)
     log = output(Log)
     return bam, log
-P = Pipeline("nodes")
+dag = DAG("nodes")
+P = Pipeline(dag)
 P.fastq = raw_fastq(P, path=config.path)
 P.bam, P.log = align(P, P.fastq, ref="hg38")
+dag.require(P.sinks())
 ```
 
 [Previous: Config Validation](config-validation.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)

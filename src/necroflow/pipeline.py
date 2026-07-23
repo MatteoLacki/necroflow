@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from necroflow.nodes import Node
+from necroflow.rule_call import RuleCall
 from necroflow.fingerprints import (
     DEFAULT_FINGERPRINT_PROVIDER,
     default_fingerprint,
@@ -75,8 +76,8 @@ def _label(node: Node) -> str:
 
 def _sinks(pipeline: Pipeline) -> list:
     """Nodes with no dependents (children) in the pipeline — includes source nodes."""
-    is_parent = {p.key for n in pipeline.nodes for p in n.parents}
-    return [n for n in pipeline.nodes if n.key not in is_parent]
+    is_parent = {p.relative_path for n in pipeline.nodes for p in n.parents}
+    return [n for n in pipeline.nodes if n.relative_path not in is_parent]
 
 
 class _GraphBase:
@@ -231,9 +232,9 @@ def write_ancestor_graph(node) -> None:
     frontier = [node]
     while frontier:
         n = frontier.pop()
-        if n.key in seen:
+        if n.relative_path in seen:
             continue
-        seen[n.key] = n
+        seen[n.relative_path] = n
         frontier.extend(n.parents)
     view = _AncestorView(list(seen.values()))
     rip = node.path.parent / ".rip"
@@ -244,18 +245,23 @@ def write_ancestor_graph(node) -> None:
 class Pipeline(_GraphBase):
     def __init__(
         self,
-        nodes_dir: str | Path,
+        dag: DAG,
         *,
         fingerprint_function: Callable = default_fingerprint,
         fingerprint_provider: str = DEFAULT_FINGERPRINT_PROVIDER,
         shellpath: str | Path | None = None,
     ):
-        self._nodes_list = []
-        self._node_names = {}
+        if not isinstance(dag, DAG):
+            raise TypeError(
+                f"Pipeline requires an owning DAG, got {type(dag).__name__}"
+            )
+        self._dag = dag
+        self._nodes_list: list[Node] = []
+        self._node_paths: set[Path] = set()
+        self._node_names: dict[str, Node] = {}
         self._sections = []
         self._active_section = None
-        self._section_by_node_id = {}
-        self._nodes_dir = Path(nodes_dir).expanduser().resolve()
+        self._sections_by_path: dict[Path, set[str | None]] = {}
         self._fingerprint_function = fingerprint_function
         self._fingerprint_provider = fingerprint_provider
         self._shellpath = _normalize_shellpath(shellpath)
@@ -265,7 +271,11 @@ class Pipeline(_GraphBase):
 
     @property
     def nodes_dir(self) -> Path:
-        return self._nodes_dir
+        return self._dag.nodes_dir
+
+    @property
+    def dag(self) -> DAG:
+        return self._dag
 
     @property
     def fingerprint_function(self) -> Callable:
@@ -301,8 +311,24 @@ class Pipeline(_GraphBase):
         return tuple(self._sections)
 
     def section_for(self, node: Node) -> str | None:
-        """Return this pipeline section for node, if assigned."""
-        return self._section_by_node_id.get(id(node))
+        """Return the section when all labels for this Node agree."""
+        sections = self._sections_by_path.get(node.relative_path, set())
+        return next(iter(sections)) if len(sections) == 1 else None
+
+    def labels_for(self, node: Node) -> tuple[str, ...]:
+        """Return this Pipeline's labels for a canonical Node."""
+        return tuple(
+            name for name, candidate in self._node_names.items() if candidate is node
+        )
+
+    @property
+    def labels(self) -> tuple[str, ...]:
+        """Return this Pipeline's labels in assignment order."""
+        return tuple(self._node_names)
+
+    def sinks(self) -> list[Node]:
+        """Return labeled Nodes with no labeled dependents in this Pipeline."""
+        return _sinks(self)
 
     @property
     def nodes(self) -> list[Node]:
@@ -326,16 +352,23 @@ class Pipeline(_GraphBase):
             raise ValueError("Pipeline label must not be empty")
         if name.startswith("."):
             raise ValueError(f"Pipeline label {name!r} must not start with '.'")
+        path = Path(name)
+        if path.is_absolute() or len(path.parts) != 1:
+            raise ValueError(
+                f"Pipeline label {name!r} must be one relative path component"
+            )
         if name in self._node_names:
             raise ValueError(f"Pipeline label {name!r} already assigned")
-        if value.rule_call.pipeline is not self:
-            raise ValueError(
-                f"Node assigned as {name!r} was compiled for a different Pipeline"
-            )
-        self._nodes_list.append(value)
+        if value.rule_call.dag is not self._dag:
+            raise ValueError(f"Node assigned as {name!r} belongs to a different DAG")
+        if value.relative_path not in self._node_paths:
+            self._nodes_list.append(value)
+            self._node_paths.add(value.relative_path)
         self._node_names[name] = value
-        self._section_by_node_id[id(value)] = self._active_section
-        value.pipeline_label = name
+        self._sections_by_path.setdefault(value.relative_path, set()).add(
+            self._active_section
+        )
+        self._dag._record_binding(value, name, self._active_section)
 
     def __setitem__(self, name: str, value: Node) -> None:
         if not isinstance(value, Node):
@@ -362,15 +395,14 @@ class Pipeline(_GraphBase):
 
 
 class DAG(_GraphBase):
-    """Aggregator for multiple pipelines. Stores nodes by content-addressed hash;
-    deduplicates shared upstream computations automatically."""
+    """Shared registry and executor for canonical content-addressed rule calls."""
 
     def __init__(self, outdir):
-        self._nodes: dict[str, object] = {}  # key -> canonical Node
-        self._all_nodes: list = []  # all nodes including duplicates
-        self._required: set[str] = set()
-        self._sections_by_key: dict[str, set[str | None]] = {}
-        self._section_by_node_id: dict[int, str | None] = {}
+        self._calls: dict[Path, RuleCall] = {}
+        self._nodes: dict[Path, Node] = {}
+        self._required: set[Path] = set()
+        self._sections_by_path: dict[Path, set[str | None]] = {}
+        self._labels_by_path: dict[Path, set[str]] = {}
         self.outdir = Path(outdir).expanduser().resolve()
         self.last_execution_report = None
 
@@ -378,23 +410,56 @@ class DAG(_GraphBase):
     def nodes_dir(self) -> Path:
         return self.outdir
 
-    def add(self, pipeline: Pipeline, request=None) -> None:
-        """Add a pipeline's nodes. request defaults to pipeline sinks."""
-        if pipeline.nodes_dir != self.outdir:
-            raise ValueError(
-                f"Pipeline node store {pipeline.nodes_dir} does not match "
-                f"DAG node store {self.outdir}"
-            )
-        if request is None:
-            request = _sinks(pipeline)
-        for node in pipeline.nodes:
-            self._nodes.setdefault(node.key, node)
-            self._all_nodes.append(node)
-            section = pipeline.section_for(node)
-            self._section_by_node_id[id(node)] = section
-            self._sections_by_key.setdefault(node.key, set()).add(section)
-        for node in request:
-            self._required.add(node.key)
+    @property
+    def calls(self) -> dict[Path, RuleCall]:
+        return self._calls
+
+    def intern(self, call: RuleCall) -> RuleCall:
+        """Return the canonical RuleCall for this relative call path."""
+        existing = self._calls.get(call.relative_path)
+        if existing is not None:
+            expected = {
+                name: (node.node_type, node.relative_path)
+                for name, node in existing.output_nodes.items()
+            }
+            candidate = {
+                name: (node.node_type, node.relative_path)
+                for name, node in call.output_nodes.items()
+            }
+            if candidate != expected:
+                raise ValueError(
+                    f"fingerprint collision for {call.relative_path}: "
+                    "declared outputs do not match the canonical RuleCall"
+                )
+            return existing
+        self._calls[call.relative_path] = call
+        for node in call.output_nodes.values():
+            if node.relative_path in self._nodes:
+                raise ValueError(f"duplicate output path: {node.relative_path}")
+            self._nodes[node.relative_path] = node
+        return call
+
+    def require(self, nodes) -> None:
+        """Add canonical Nodes to the set requested for execution."""
+        for node in nodes:
+            if not isinstance(node, Node):
+                raise TypeError(
+                    f"DAG requirements must be Nodes, got {type(node).__name__}"
+                )
+            if node.rule_call.dag is not self:
+                raise ValueError("required Node belongs to a different DAG")
+            self._required.add(node.relative_path)
+
+    def _record_binding(self, node: Node, label: str, section: str | None) -> None:
+        self._labels_by_path.setdefault(node.relative_path, set()).add(label)
+        self._sections_by_path.setdefault(node.relative_path, set()).add(section)
+
+    def labels_for(self, node: Node) -> tuple[str, ...]:
+        return tuple(sorted(self._labels_by_path.get(node.relative_path, set())))
+
+    def label_for(self, node: Node) -> str | None:
+        labels = self.labels_for(node)
+        return labels[0] if len(labels) == 1 else None
 
     @property
     def nodes(self) -> list:
@@ -402,11 +467,11 @@ class DAG(_GraphBase):
 
     @property
     def required_nodes(self) -> list:
-        return [n for h, n in self._nodes.items() if h in self._required]
+        return [n for path, n in self._nodes.items() if path in self._required]
 
     def section_for(self, node: Node) -> str | None:
         """Return the node section when all contributing pipelines agree."""
-        sections = self._sections_by_key.get(node.key, set())
+        sections = self._sections_by_path.get(node.relative_path, set())
         if len(sections) == 1:
             return next(iter(sections))
         return None
@@ -415,12 +480,12 @@ class DAG(_GraphBase):
         return f"DAG  {len(self._nodes)} nodes  ({len(self._required)} required)"
 
     def _node_label(self, node: Node) -> str:
-        required_keys = {n.key for n in self.required_nodes}
-        return _label(node) + (" ★" if node.key in required_keys else "")
+        required_paths = {n.relative_path for n in self.required_nodes}
+        return _label(node) + (" ★" if node.relative_path in required_paths else "")
 
     def _node_color(self, node: Node) -> str:
-        required_keys = {n.key for n in self.required_nodes}
-        return "orange" if node.key in required_keys else "steelblue"
+        required_paths = {n.relative_path for n in self.required_nodes}
+        return "orange" if node.relative_path in required_paths else "steelblue"
 
     def execute(self, **kwargs):
         from necroflow.executor import execute

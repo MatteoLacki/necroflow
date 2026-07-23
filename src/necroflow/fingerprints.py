@@ -237,7 +237,7 @@ def default_fingerprint(args: FingerprintArgs) -> str:
         parents.append(
             {
                 "name": name,
-                "fingerprint": parent.full_fingerprint,
+                "fingerprint": parent.fingerprint,
                 "output": parent.output_name or "",
             }
         )

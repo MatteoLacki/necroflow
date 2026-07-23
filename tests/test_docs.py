@@ -81,3 +81,10 @@ def test_cli_subcommands_are_documented():
         name for name in subcommands if name not in cli_md or name not in CLAUDE_MD
     ]
     assert not undocumented, f"CLI subcommands absent from docs: {undocumented}"
+
+
+def test_claude_requires_rule_call_lifecycle_updates():
+    """Pipeline-internal changes must route maintainers to the lifecycle doc."""
+    assert "docs/rule-call-lifecycle.md" in CLAUDE_MD
+    assert "Keep the lifecycle document synchronized" in CLAUDE_MD
+    assert "must\nupdate `docs/rule-call-lifecycle.md`" in CLAUDE_MD

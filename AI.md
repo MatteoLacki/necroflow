@@ -8,7 +8,7 @@ Rule commands are validated when a `Rule` is registered. Placeholders are limite
 
 Built-in placeholders:
 
-- `{workdir}` resolves to the rule-call output directory inside the node store, `nodes/{rule}/{hash16}` by default. Use it for tools that need to write side directories or scratch files that should be retained with the cached result. The name `workdir` is reserved and cannot be used as an input or output name.
+- `{workdir}` resolves to the rule-call output directory inside the node store, `nodes/{rule}/{fingerprint}` by default, using the full 64-hex fingerprint. Use it for tools that need to write side directories or scratch files that should be retained with the cached result. The name `workdir` is reserved and cannot be used as an input or output name.
 
 `{workdir}` is created before the command subprocess starts. Its contents are kept by default. With `autoclean=True`, intermediate rule-call directories are removed as whole directories once all active children are up to date, so `{workdir}` side files are cleaned together with declared outputs.
 
@@ -20,10 +20,10 @@ Callbacks receive resolved named input/output paths, config, constraints, and
 `workdir`; they return one complete valid shell string. The string is executed
 unchanged, so callback authors own shell quoting. List commands are rejected.
 
-Every rule invocation owns one shared `RuleCall`; co-outputs share its full
-64-hex digest and once-per-output-root realized command. `Node.fingerprint` is
-the first 16 hex characters used in paths; `Node.full_fingerprint` retains the
-complete parent identity.
+Every canonical rule invocation owns one shared `RuleCall`; co-outputs share
+its 64-hex digest and once-per-output-root realized command. `Node.fingerprint`
+and output paths use the complete digest. Equivalent calls made through
+Pipelines sharing a DAG return the same RuleCall and Node objects immediately.
 
 `default_fingerprint(FingerprintArgs)` uses framed canonical serialization.
 Callable command identity uses canonical AST plus Python implementation/version.
@@ -38,7 +38,8 @@ project function may call the public default to compose with it.
 
 ## Path limit checks
 
-`Pipeline(nodes_dir, ...)` owns the absolute node-store root. Every rule call
+`DAG(nodes_dir)` owns the absolute node-store root and every `Pipeline(dag, ...)`
+references that registry. Every rule call
 computes and validates its full fingerprint and assigns each output's final
 absolute path immediately. Path checks cover component byte lengths against
 `PC_NAME_MAX` and the full path byte length against `PC_PATH_MAX`, using
@@ -51,7 +52,7 @@ call, before assignment or execution.
 
 ## CLI forced invalidation
 
-The CLI accepts repeated `--invalidate LABEL` and `--reap NAME` options. `--reap` expands labels from a top-level `reap.toml` table shaped like `name = ["label", ...]`; `--reap-file PATH` overrides the default file. Labels resolve to pipeline labels for each expanded pipeline, then to node keys passed into `execute(..., forced_stale_keys=...)`. The executor only marks active requested nodes stale, and then propagates STALE to active descendants. Invalidation does not request extra outputs.
+The CLI accepts repeated `--invalidate LABEL` and `--reap NAME` options. `--reap` expands labels from a top-level `reap.toml` table shaped like `name = ["label", ...]`; `--reap-file PATH` overrides the default file. Labels resolve through each expanded Pipeline, then to Node relative paths passed into `execute(..., forced_stale_keys=...)`. The executor only marks active requested nodes stale, and then propagates STALE to active descendants. Invalidation does not request extra outputs.
 
 ## Job config validation
 

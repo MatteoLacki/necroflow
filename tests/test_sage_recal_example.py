@@ -8,7 +8,7 @@ examples/sage_recal/README.md for the Docker-based end-to-end run against real S
 import importlib.util
 from pathlib import Path
 
-from necroflow import Pipeline
+from necroflow import DAG, Pipeline
 
 EXAMPLE = (
     Path(__file__).resolve().parents[1] / "examples" / "sage_recal" / "pipeline.py"
@@ -33,7 +33,11 @@ def test_no_tof_specific_types_remain():
 def test_run_sage_calls_get_distinct_lineage_and_caching():
     example = _load_example()
     config = example.example_config()
-    pipeline = Pipeline("/results")
+    config["calibration_tol"] = {
+        "precursor_tol": {"ppm": [-75, 75]},
+        "fragment_tol": {"ppm": [-25, 25]},
+    }
+    pipeline = Pipeline(DAG("/results"))
     example.recalibrated_sage_search(pipeline, config)
 
     # Both run_sage calls produce the same four output types...
@@ -70,7 +74,7 @@ def test_run_sage_calls_get_distinct_lineage_and_caching():
 
 def test_second_pass_depends_transitively_on_first_pass():
     example = _load_example()
-    pipeline = Pipeline("/results")
+    pipeline = Pipeline(DAG("/results"))
     example.recalibrated_sage_search(pipeline, example.example_config())
 
     # recalibrated_config is built from the plain sage_config plus the tolerance fitted
@@ -107,7 +111,7 @@ def test_spectra_dispatch_picks_the_matching_node_type_by_extension():
     # zero spectra ("0 spectra/s", 0 PSMs, exit 0).
     example = _load_example()
 
-    pipeline = Pipeline("/results")
+    pipeline = Pipeline(DAG("/results"))
     mzml_node = example.raw_spectra(pipeline, "/data/run.mzML")
     assert mzml_node.node_type is example.MzMlSpectra
     assert issubclass(example.MzMlSpectra, example.SpectraFile)

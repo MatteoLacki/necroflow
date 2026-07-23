@@ -21,6 +21,7 @@ disagrees with the code, the code wins (and this file should be fixed).
 | Job TOML format and `__grid` parameter grids | `docs/job-toml.md` |
 | Config validation callbacks | `docs/config-validation.md` |
 | Generated config files (`text_file` rules) | `docs/generated-config-files.md` |
+| Rule-call compilation, interning, paths, labels, requests, execution handoff | `docs/rule-call-lifecycle.md` |
 | Dev workflow, release | `docs/development.md`, `docs/release.md` |
 | Coding style and anti-patterns | `.claude/skills/necroflow-style/SKILL.md` |
 | Adding/editing a rule (placeholders, typed outputs, mistakes) | `.claude/skills/add-a-rule/SKILL.md` |
@@ -31,6 +32,11 @@ Skills under `.claude/skills/` are auto-loaded by Claude Code; other agents shou
 as plain markdown via this table.
 
 `AGENTS.md` is a symlink to this file for non-Claude agents.
+
+**Keep the lifecycle document synchronized with pipeline internals.** Any change to
+Pipeline or DAG construction, rule-call compilation, fingerprint/path derivation,
+canonical interning, label assignment, request selection, or the execution handoff must
+update `docs/rule-call-lifecycle.md` in the same change.
 
 ## Verify against the live code, not prose
 
@@ -72,12 +78,12 @@ These have been true since the June refactors and are load-bearing design decisi
 - **Content-addressed, not time-addressed.** Staleness uses an mtime fast path, then falls back
   to the stored SHA-256 content hash (`.rip/{filename}.hash`). A parent that re-ran but produced
   identical output must NOT invalidate children.
-- **Fingerprints name directories.** Fingerprint v2 uses framed canonical values and a full
-  64-hex digest; `node.fingerprint` exposes its first 16 characters for paths and
-  `node.full_fingerprint` retains the complete lineage identity. Co-outputs share one
-  `RuleCall`, digest, and realized command. Constraints and `repeat` remain excluded.
-- **Identity via `node.key`, never `id()`.** DAG deduplication aliases node objects; `id()`-keyed
-  dicts and sets break. Use `.key` for adjacency, visited-sets, done-tracking.
+- **Fingerprints name directories.** Fingerprint v2 uses framed canonical values and one
+  64-hex `node.fingerprint`; paths use the complete digest. Co-outputs share one canonical
+  `RuleCall`, digest, workdir, and realized command. Constraints and `repeat` remain excluded.
+- **Identity via `node.relative_path`, never `id()`.** It is a `Path` relative to
+  `dag.nodes_dir` and is stable across node-store roots. Use it for adjacency, visited sets,
+  requested outputs, and executor bookkeeping; serialize it with `.as_posix()` in JSON.
 - **Co-outputs run once.** All outputs of one rule call are produced by a single submission; the
   siblings are marked done together.
 - **Exit 0 with a missing declared output is a failure.** The executor checks `path.exists()`
@@ -85,12 +91,15 @@ These have been true since the June refactors and are load-bearing design decisi
 - **`.rip/` per-output metadata**: `dependencies.toml` (accumulated ancestor config),
   `{filename}.hash`, `job.log`, `state`, `run.toml` (timings/size), `graph.txt` (ancestor
   render), `{filename}.invalidation` (NodeType invalidator token, when set).
-- **Explicit over implicit.** Nodes are registered by attribute assignment (`P.bam = align(...)`);
-  item assignment (`P["bam"] = ...`) shares the same namespace. Every rule receives the owning
-  Pipeline first. There is no context-manager or `ContextVar` auto-registration.
-- **Addresses are eager.** `Pipeline(nodes_dir, fingerprint_function=..., shellpath=...)` owns all
-  compile-time context. A rule call returns Nodes with final full fingerprints and absolute paths;
-  there is no late path resolution, fingerprint-policy mutation, or DAG reindexing.
+- **Canonicalization is eager; labels are explicit.** Every `Pipeline(dag, ...)` references a
+  shared DAG. A rule call fingerprints and interns its `RuleCall` immediately; equivalent calls
+  return identical Node objects. Attribute/item assignment records Pipeline-local labels and
+  sections. Several labels may alias one Node; Nodes do not carry a singular pipeline label.
+- **Addresses are eager.** The Pipeline owns fingerprint/shell policy while its DAG owns the
+  node-store root. A rule call returns Nodes with final fingerprints, relative paths, and absolute
+  paths; there is no late resolution, DAG reindexing, or delayed deduplication.
+- **Execution is DAG-only.** After a factory returns, call `dag.require(P.sinks())` (or explicit
+  label-selected Nodes), then `dag.execute()`. `DAG.add` and `execute(Pipeline)` do not exist.
 
 ## Scheduler protocol (current — 3 arguments)
 
@@ -111,7 +120,7 @@ def my_scheduler(ready: list[Node], remaining: list[Node],
 
 ## `execute()` — check the docstring for details
 
-`necroflow.executor.execute(pipeline, resource_caps=None, scheduler=..., keep_going=False,
+`necroflow.executor.execute(dag, resource_caps=None, scheduler=..., keep_going=False,
 autoclean=False, dry_run=False, node_runner=None, forced_stale_keys=None)
 -> ExecutionReport`
 

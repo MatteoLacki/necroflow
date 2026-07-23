@@ -37,9 +37,10 @@ R_make_e_from_ac = Rule("make_e_from_ac", Inputs(a=A, c=C), Outputs(e=E), "touch
 TEST_NODES_DIR = "/tmp/necroflow-test-pipeline"
 
 
-def diamond(nodes_dir=TEST_NODES_DIR):
+def diamond(owner=TEST_NODES_DIR):
     """A → B, A → C, (B,C) → D"""
-    P = Pipeline(nodes_dir)
+    dag = owner if isinstance(owner, DAG) else DAG(owner)
+    P = Pipeline(dag)
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
     P.c = R_make_c(P, P.a)
@@ -52,13 +53,13 @@ def diamond(nodes_dir=TEST_NODES_DIR):
 
 def test_sinks_source_node():
     # single node with no parents and no children — must be a sink
-    P = Pipeline(TEST_NODES_DIR)
+    P = Pipeline(DAG(TEST_NODES_DIR))
     P.a = R_make_a(P, x="x")
     assert _sinks(P) == [P.a]
 
 
 def test_sinks_linear():
-    P = Pipeline(TEST_NODES_DIR)
+    P = Pipeline(DAG(TEST_NODES_DIR))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
     assert _sinks(P) == [P.b]
@@ -70,7 +71,7 @@ def test_sinks_diamond():
 
 
 def test_sinks_multiple():
-    P = Pipeline(TEST_NODES_DIR)
+    P = Pipeline(DAG(TEST_NODES_DIR))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
     P.c = R_make_c(P, P.a)
@@ -90,7 +91,7 @@ def test_sinks_excludes_intermediate():
 
 
 def test_pipeline_nodes_accumulate():
-    P = Pipeline(TEST_NODES_DIR)
+    P = Pipeline(DAG(TEST_NODES_DIR))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
     assert len(P.nodes) == 2
@@ -98,52 +99,71 @@ def test_pipeline_nodes_accumulate():
 
 def test_pipeline_dot_prefix_raises():
     """Label starting with '.' must raise — reserved for .rip internal folder."""
-    P = Pipeline(TEST_NODES_DIR)
+    P = Pipeline(DAG(TEST_NODES_DIR))
     with pytest.raises(ValueError, match=r"must not start with '\.'"):
         setattr(P, ".hidden", R_make_a(P, x="x"))
 
 
 def test_pipeline_duplicate_raises():
-    P = Pipeline(TEST_NODES_DIR)
+    P = Pipeline(DAG(TEST_NODES_DIR))
     P.a = R_make_a(P, x="x")
     with pytest.raises(ValueError):
         P.a = R_make_a(P, x="y")
 
 
-def test_pipeline_label_single():
-    P = Pipeline(TEST_NODES_DIR)
+def test_pipeline_single_label():
+    P = Pipeline(DAG(TEST_NODES_DIR))
     P.a = R_make_a(P, x="x")
-    assert P.a.pipeline_label == "a"
+    assert P.labels_for(P.a) == ("a",)
 
 
 def test_pipeline_item_and_attribute_labels_share_the_same_namespace():
-    P = Pipeline(TEST_NODES_DIR)
+    P = Pipeline(DAG(TEST_NODES_DIR))
     P["source"] = R_make_a(P, x="x")
     P.result = R_make_b(P, P["source"])
 
     assert P.source is P["source"]
     assert P["result"] is P.result
-    assert P.source.pipeline_label == "source"
-    assert P.result.pipeline_label == "result"
+    assert P.labels_for(P.source) == ("source",)
+    assert P.labels_for(P.result) == ("result",)
+
+
+def test_equivalent_calls_can_have_multiple_pipeline_aliases():
+    dag = DAG(TEST_NODES_DIR)
+    P = Pipeline(dag)
+    P.first = R_make_a(P, x="same")
+    P.alias = R_make_a(P, x="same")
+
+    assert P.first is P.alias
+    assert P.labels_for(P.first) == ("first", "alias")
+    assert P.nodes == [P.first]
+    assert len(dag.calls) == 1
 
 
 def test_pipeline_item_labels_support_non_identifiers():
-    P = Pipeline(TEST_NODES_DIR)
+    P = Pipeline(DAG(TEST_NODES_DIR))
     P["sample-1 raw"] = R_make_a(P, x="x")
 
-    assert P["sample-1 raw"].pipeline_label == "sample-1 raw"
+    assert P.labels_for(P["sample-1 raw"]) == ("sample-1 raw",)
+
+
+def test_pipeline_item_labels_cannot_escape_the_result_directory():
+    P = Pipeline(DAG(TEST_NODES_DIR))
+
+    with pytest.raises(ValueError, match="one relative path component"):
+        P["outside/result"] = R_make_a(P, x="x")
 
 
 def test_pipeline_item_labels_can_use_reserved_attribute_names():
-    P = Pipeline(TEST_NODES_DIR)
+    P = Pipeline(DAG(TEST_NODES_DIR))
     P["nodes"] = R_make_a(P, x="x")
 
-    assert P["nodes"].pipeline_label == "nodes"
+    assert P.labels_for(P["nodes"]) == ("nodes",)
     assert isinstance(P.nodes, list)
 
 
 def test_pipeline_attribute_labels_reject_reserved_names_without_partial_assignment():
-    P = Pipeline(TEST_NODES_DIR)
+    P = Pipeline(DAG(TEST_NODES_DIR))
 
     with pytest.raises(ValueError, match="reserved"):
         P.nodes = R_make_a(P, x="x")
@@ -151,22 +171,34 @@ def test_pipeline_attribute_labels_reject_reserved_names_without_partial_assignm
 
 
 def test_rule_call_compiles_path_and_fingerprint_immediately(tmp_path):
-    P = Pipeline(tmp_path)
+    dag = DAG(tmp_path)
+    P = Pipeline(dag)
     node = R_make_a(P, x="x")
 
     assert node.path.is_absolute()
     assert node.path.parent.parent == tmp_path.resolve() / "make_a"
-    assert len(node.full_fingerprint) == 64
+    assert len(node.fingerprint) == 64
     assert node.path.parent.name == node.fingerprint
 
 
-def test_pipeline_rejects_nodes_compiled_for_another_pipeline(tmp_path):
-    owner = Pipeline(tmp_path)
-    other = Pipeline(tmp_path)
+def test_pipeline_rejects_nodes_from_another_dag(tmp_path):
+    owner = Pipeline(DAG(tmp_path))
+    other = Pipeline(DAG(tmp_path))
     node = R_make_a(owner, x="x")
 
-    with pytest.raises(ValueError, match="different Pipeline"):
+    with pytest.raises(ValueError, match="different DAG"):
         other.a = node
+
+
+def test_pipeline_can_alias_canonical_node_from_shared_dag(tmp_path):
+    dag = DAG(tmp_path)
+    first = Pipeline(dag)
+    second = Pipeline(dag)
+    first.a = R_make_a(first, x="x")
+    second.source = first.a
+
+    assert second.source is first.a
+    assert second.labels_for(first.a) == ("source",)
 
 
 def test_direct_node_construction_is_rejected():
@@ -176,9 +208,19 @@ def test_direct_node_construction_is_rejected():
         Node()
 
 
+def test_execute_rejects_pipeline_view(tmp_path):
+    from necroflow import execute
+
+    P = Pipeline(DAG(tmp_path))
+    P.a = R_make_a(P, x="x")
+
+    with pytest.raises(TypeError, match="requires a DAG"):
+        execute(P)
+
+
 def test_pipeline_missing_attribute_still_raises():
     """Typing dynamic pipeline reads as Node must not invent missing values."""
-    P = Pipeline(TEST_NODES_DIR)
+    P = Pipeline(DAG(TEST_NODES_DIR))
     with pytest.raises(AttributeError, match="missing"):
         _ = P.missing
 
@@ -208,7 +250,7 @@ def test_workdir_is_reserved_input_output_name():
 
 
 def test_pipeline_sections_tag_subsequent_nodes_only():
-    P = Pipeline(TEST_NODES_DIR)
+    P = Pipeline(DAG(TEST_NODES_DIR))
     P.a = R_make_a(P, x="x")
     P.section("Preparation")
     P.b = R_make_b(P, P.a)
@@ -222,7 +264,7 @@ def test_pipeline_sections_tag_subsequent_nodes_only():
 
 
 def test_pipeline_section_rejects_invalid_or_duplicate_names():
-    P = Pipeline(TEST_NODES_DIR)
+    P = Pipeline(DAG(TEST_NODES_DIR))
     with pytest.raises(TypeError, match="must be a string"):
         P.section(1)
     with pytest.raises(ValueError, match="must not be empty"):
@@ -259,13 +301,13 @@ def test_png_renderer_clusters_unambiguous_pipeline_sections(tmp_path, monkeypat
         def topological_generations(graph):
             yield graph.nodes
 
-    P = Pipeline(tmp_path)
+    dag = DAG(tmp_path)
+    P = Pipeline(dag)
     P.section("Preparation")
     P.a = R_make_a(P, x="x")
     P.section("Analysis")
     P.b = R_make_b(P, P.a)
-    dag = DAG(tmp_path)
-    dag.add(P)
+    dag.require(P.sinks())
 
     captured = {}
     monkeypatch.setitem(sys.modules, "networkx", FakeNetworkX)
@@ -287,64 +329,82 @@ def test_png_renderer_clusters_unambiguous_pipeline_sections(tmp_path, monkeypat
 
 
 def test_dag_deduplicates_shared_nodes():
-    P1 = Pipeline(TEST_NODES_DIR)
+    dag = DAG(TEST_NODES_DIR)
+    P1 = Pipeline(dag)
     P1.a = R_make_a(P1, x="shared")
     P1.b = R_make_b(P1, P1.a)
 
-    P2 = Pipeline(TEST_NODES_DIR)
+    P2 = Pipeline(dag)
     P2.a = R_make_a(P2, x="shared")
     P2.b = R_make_b(P2, P2.a)
 
-    dag = DAG(TEST_NODES_DIR)
-    dag.add(P1)
-    dag.add(P2)
+    dag.require(P1.sinks())
+    dag.require(P2.sinks())
     # same config → same hash → 2 unique nodes, not 4
     assert len(dag.nodes) == 2
+    assert P1.a is P2.a
+    assert P1.b is P2.b
+
+
+def test_dag_interns_multioutput_rule_calls_atomically():
+    rule = Rule(
+        "make_ab",
+        Inputs(x=str),
+        Outputs(a=A, b=B),
+        "touch {a} {b}",
+    )
+    dag = DAG(TEST_NODES_DIR)
+    first = Pipeline(dag)
+    second = Pipeline(dag)
+    first.a, first.b = rule(first, x="same")
+    second.a, second.b = rule(second, x="same")
+
+    assert first.a is second.a
+    assert first.b is second.b
+    assert first.a.rule_call is first.b.rule_call
+    assert len(dag.calls) == 1
 
 
 def test_dag_section_is_none_when_shared_nodes_have_conflicting_sections():
-    P1 = Pipeline(TEST_NODES_DIR)
+    dag = DAG(TEST_NODES_DIR)
+    P1 = Pipeline(dag)
     P1.section("Preparation")
     P1.a = R_make_a(P1, x="shared")
 
-    P2 = Pipeline(TEST_NODES_DIR)
+    P2 = Pipeline(dag)
     P2.section("Alternative preparation")
     P2.a = R_make_a(P2, x="shared")
-
-    dag = DAG(TEST_NODES_DIR)
-    dag.add(P1)
-    dag.add(P2)
 
     assert dag.section_for(dag.nodes[0]) is None
 
 
 def test_dag_keeps_distinct_nodes():
-    P1 = Pipeline(TEST_NODES_DIR)
+    dag = DAG(TEST_NODES_DIR)
+    P1 = Pipeline(dag)
     P1.a = R_make_a(P1, x="x1")
     P1.b = R_make_b(P1, P1.a)
 
-    P2 = Pipeline(TEST_NODES_DIR)
+    P2 = Pipeline(dag)
     P2.a = R_make_a(P2, x="x2")
     P2.b = R_make_b(P2, P2.a)
 
-    dag = DAG(TEST_NODES_DIR)
-    dag.add(P1)
-    dag.add(P2)
+    dag.require(P1.sinks())
+    dag.require(P2.sinks())
     assert len(dag.nodes) == 4
 
 
 def test_dag_required_defaults_to_sinks():
-    P = diamond()
     dag = DAG(TEST_NODES_DIR)
-    dag.add(P)
+    P = diamond(dag)
+    dag.require(P.sinks())
     assert len(dag.required_nodes) == 1
     assert dag.required_nodes[0].rule.__name__ == "make_d"
 
 
 def test_dag_explicit_request():
-    P = diamond()
     dag = DAG(TEST_NODES_DIR)
-    dag.add(P, request=[P.b, P.c])
+    P = diamond(dag)
+    dag.require([P.b, P.c])
     req_rules = {n.rule.__name__ for n in dag.required_nodes}
     assert req_rules == {"make_b", "make_c"}
 
@@ -355,7 +415,7 @@ def test_str_long_range_edge():
     Chain: a(0)→b(1)→c(2), plus direct a→e(3). The a→e edge skips two layers; dummy
     pass-through nodes are inserted so the connector is drawn through all intermediate layers.
     """
-    P = Pipeline(TEST_NODES_DIR)
+    P = Pipeline(DAG(TEST_NODES_DIR))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
     P.c = R_make_c_from_b(P, P.b)
@@ -375,9 +435,9 @@ def test_str_long_range_edge():
 
 
 def test_dag_save(tmp_path):
-    P = diamond(tmp_path)
     dag = DAG(tmp_path)
-    dag.add(P)
+    P = diamond(dag)
+    dag.require(P.sinks())
     out = tmp_path / "dag.txt"
     dag.save(out)
     assert out.exists()

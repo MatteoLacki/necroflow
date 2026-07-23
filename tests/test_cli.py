@@ -11,8 +11,12 @@ import pytest
 from necroflow._compat import ExceptionGroup
 from pathlib import Path
 from necroflow import NodeType, Pipeline, DAG, output
-from necroflow.cli import _create_link_outputs, _graph_payload, main
-from necroflow.pipeline import _sinks
+from necroflow.cli import (
+    _create_link_outputs,
+    _graph_payload,
+    _resolve_request,
+    main,
+)
 
 
 class Out(NodeType):
@@ -29,7 +33,7 @@ R_step2 = Rule("step2", Inputs(out=Out), Outputs(log=Log), "cat {out} > {log}")
 
 def _make_pipeline_with_outputs(tmp_path) -> tuple[Pipeline, Path]:
     """Build a pipeline and create real output files."""
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     P.out = R_step1(P, v="hello")
     P.log = R_step2(P, P.out)
     for node in P.nodes:
@@ -43,14 +47,14 @@ def _make_pipeline_with_outputs(tmp_path) -> tuple[Pipeline, Path]:
 
 def test_combo_dir_created(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
-    combos = [("run1", P, _sinks(P))]
+    combos = [("run1", P, _resolve_request(P, None))]
     _create_link_outputs(outdir, combos)
     assert (outdir / "run1").is_dir()
 
 
 def test_symlinks_created_for_existing_outputs(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
-    combos = [("run1", P, _sinks(P))]
+    combos = [("run1", P, _resolve_request(P, None))]
     _create_link_outputs(outdir, combos)
     combo_dir = outdir / "run1"
     symlinks = list(combo_dir.rglob("*.txt")) + list(combo_dir.rglob("*.log"))
@@ -58,9 +62,9 @@ def test_symlinks_created_for_existing_outputs(tmp_path):
     assert all(f.is_symlink() for f in symlinks)
 
 
-def test_symlink_path_uses_pipeline_label_and_filename(tmp_path):
+def test_symlink_path_uses_requested_label_and_filename(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
-    combos = [("run1", P, _sinks(P))]
+    combos = [("run1", P, _resolve_request(P, None))]
 
     _create_link_outputs(outdir, combos)
 
@@ -71,7 +75,7 @@ def test_symlink_path_uses_pipeline_label_and_filename(tmp_path):
 
 def test_symlinks_point_to_real_files(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
-    combos = [("run1", P, _sinks(P))]
+    combos = [("run1", P, _resolve_request(P, None))]
     _create_link_outputs(outdir, combos)
     combo_dir = outdir / "run1"
     for link in combo_dir.rglob("*"):
@@ -80,10 +84,10 @@ def test_symlinks_point_to_real_files(tmp_path):
 
 
 def test_skips_missing_outputs(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     P.out = R_step1(P, v="hello")
     # do NOT create the output file
-    combos = [("run1", P, _sinks(P))]
+    combos = [("run1", P, _resolve_request(P, None))]
     _create_link_outputs(results_dir=tmp_path, combos=combos)
     combo_dir = tmp_path / "run1"
     assert combo_dir.is_dir()  # dir still created
@@ -95,7 +99,9 @@ def test_link_outputs_can_use_separate_nodes_and_results_dirs(tmp_path):
     results_dir = tmp_path / "results"
     P, _ = _make_pipeline_with_outputs(nodes_dir)
 
-    _create_link_outputs(results_dir, [("run1", P, _sinks(P))], nodes_dir=nodes_dir)
+    _create_link_outputs(
+        results_dir, [("run1", P, _resolve_request(P, None))], nodes_dir=nodes_dir
+    )
 
     links = [p for p in (results_dir / "run1").rglob("*") if p.is_symlink()]
     assert links
@@ -116,7 +122,7 @@ def test_link_outputs_removes_stale_generated_symlinks(tmp_path):
         '[outputs]\nlog = "step2/abc123/run.log"\n'
     )
 
-    _create_link_outputs(outdir, [("run1", P, _sinks(P))])
+    _create_link_outputs(outdir, [("run1", P, _resolve_request(P, None))])
 
     assert not stale.exists()
     assert not stale.parent.exists()
@@ -128,26 +134,55 @@ def test_link_outputs_removes_stale_generated_symlinks(tmp_path):
 
 def test_manifest_created(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
-    combos = [("run1", P, _sinks(P))]
+    combos = [("run1", P, _resolve_request(P, None))]
     _create_link_outputs(outdir, combos)
     assert (outdir / "run1" / "manifest.toml").exists()
 
 
-def test_manifest_keys_are_pipeline_labels(tmp_path):
+def test_manifest_keys_are_requested_labels(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
-    sinks = _sinks(P)
+    sinks = _resolve_request(P, None)
     combos = [("run1", P, sinks)]
     _create_link_outputs(outdir, combos)
     content = (outdir / "run1" / "manifest.toml").read_text()
     doc = tomlkit.parse(content)
     keys = set(doc["outputs"].keys())
-    # sink has pipeline_label "log" (the last node P.log = R_step2(P, ...))
+    # The sink has the local label "log" (the last assignment in this Pipeline).
     assert "log" in keys
+
+
+def test_aliases_of_one_sink_create_distinct_requested_results(tmp_path):
+    P = Pipeline(DAG(tmp_path))
+    P.primary = R_step1(P, v="hello")
+    P.alias = P.primary
+    P.primary.path.parent.mkdir(parents=True, exist_ok=True)
+    P.primary.path.touch()
+
+    request = _resolve_request(P, None)
+    _create_link_outputs(tmp_path, [("run1", P, request)])
+
+    assert P.primary is P.alias
+    assert (tmp_path / "run1" / "primary" / "out.txt").is_symlink()
+    assert (tmp_path / "run1" / "alias" / "out.txt").is_symlink()
+    manifest = tomlkit.parse((tmp_path / "run1" / "manifest.toml").read_text())
+    assert set(manifest["outputs"]) == {"primary", "alias"}
+
+
+def test_non_identifier_label_is_quoted_in_manifest(tmp_path):
+    P = Pipeline(DAG(tmp_path))
+    P["primary result"] = R_step1(P, v="hello")
+    P["primary result"].path.parent.mkdir(parents=True, exist_ok=True)
+    P["primary result"].path.touch()
+
+    _create_link_outputs(tmp_path, [("run1", P, _resolve_request(P, None))])
+
+    manifest = tomlkit.parse((tmp_path / "run1" / "manifest.toml").read_text())
+    assert manifest["outputs"]["primary result"] == "primary result/out.txt"
 
 
 def test_manifest_only_sinks(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
-    sinks = _sinks(P)
+    sinks = _resolve_request(P, None)
     combos = [("run1", P, sinks)]
     _create_link_outputs(outdir, combos)
     content = (outdir / "run1" / "manifest.toml").read_text()
@@ -160,7 +195,7 @@ def test_manifest_only_sinks(tmp_path):
 
 def test_manifest_values_are_visible_result_paths(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
-    combos = [("run1", P, _sinks(P))]
+    combos = [("run1", P, _resolve_request(P, None))]
 
     _create_link_outputs(outdir, combos)
 
@@ -659,7 +694,7 @@ def test_main_missing_pipeline_key_errors(tmp_path):
 
 
 def test_main_bad_request_label_errors(tmp_path, factory_file):
-    """A .requests label that doesn't match any pipeline_label must raise SystemExit."""
+    """A .requests entry that does not match a Pipeline label must fail."""
     job = tmp_path / "job.toml"
     job.write_text(
         f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n".requests" = ["nonexistent"]\n'
@@ -698,19 +733,22 @@ def test_narrow_request_combo_excludes_prior_outputs(tmp_path, factory_file):
 
 
 def test_multiple_combos(tmp_path):
-    P1 = Pipeline(tmp_path)
+    P1 = Pipeline(DAG(tmp_path))
     P1.out = R_step1(P1, v="alpha")
     for n in P1.nodes:
         n.path.parent.mkdir(parents=True, exist_ok=True)
         n.path.touch()
 
-    P2 = Pipeline(tmp_path)
+    P2 = Pipeline(DAG(tmp_path))
     P2.out = R_step1(P2, v="beta")
     for n in P2.nodes:
         n.path.parent.mkdir(parents=True, exist_ok=True)
         n.path.touch()
 
-    combos = [("combo_alpha", P1, _sinks(P1)), ("combo_beta", P2, _sinks(P2))]
+    combos = [
+        ("combo_alpha", P1, _resolve_request(P1, None)),
+        ("combo_beta", P2, _resolve_request(P2, None)),
+    ]
     _create_link_outputs(tmp_path, combos)
     assert (tmp_path / "combo_alpha").is_dir()
     assert (tmp_path / "combo_beta").is_dir()
@@ -844,7 +882,7 @@ def test_job_fingerprint_function_is_installed_before_output_addressing(
     main(["outputs", "--nodes-dir", str(tmp_path / "nodes"), str(job)])
 
     captured = capsys.readouterr().out
-    assert "/bbbbbbbbbbbbbbbb/" in captured
+    assert f"/{'b' * 64}/" in captured
 
 
 def test_outputs_shellpath_matches_run_shellpath_paths(tmp_path, factory_file, capsys):
@@ -1056,15 +1094,17 @@ def test_graph_json_lists_nodes_and_edges(tmp_path, factory_file, capsys):
 
 
 def test_graph_json_includes_pipeline_sections(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     P.section("Preparation")
     P.out = R_step1(P, v="hello")
     P.section("Analysis")
     P.log = R_step2(P, P.out)
-    dag = DAG(tmp_path)
-    dag.add(P)
+    dag = P.dag
+    dag.require(P.sinks())
 
-    payload = _graph_payload(dag, [("job", P, [P.log])], nodes_dir=tmp_path)
+    payload = _graph_payload(
+        dag, [("job", P, _resolve_request(P, ["log"]))], nodes_dir=tmp_path
+    )
 
     assert {node["label"]: node["section"] for node in payload["nodes"]} == {
         "out": "Preparation",

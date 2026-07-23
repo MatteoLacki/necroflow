@@ -1,5 +1,4 @@
-"""Tests for dag.py core: path generation, command resolution, hashing,
-provenance, Inputs/Outputs validation, NodeType subtyping, pipeline_label."""
+"""Tests for DAG internals: paths, commands, hashing, types, and labels."""
 
 from necroflow.rules import Constraints, Inputs, Outputs, Rule
 from necroflow import command, output
@@ -7,7 +6,7 @@ from necroflow import command, output
 import pytest
 from pathlib import Path
 import necroflow.dag as dag_core
-from necroflow import NodeType, Pipeline
+from necroflow import DAG, NodeType, Pipeline
 from necroflow.dag import (
     _accumulated_config,
     resolve_command,
@@ -52,30 +51,30 @@ R_sort_txt = Rule(
     Outputs(sorted_txt=SortedTxt),
     "sort {txt} > {sorted_txt}",
 )
-P = Pipeline("/tmp/necroflow-test-dag-core")
+P = Pipeline(DAG("/tmp/necroflow-test-dag-core"))
 
 
 # ── path generation ───────────────────────────────────────────────────────────
 
 
 def test_compiled_paths_structure(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hi")
     assert txt.path == tmp_path.resolve() / "make_txt" / txt.fingerprint / "out.txt"
 
 
 def test_compiled_paths_cooutputs_share_dir(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hi")
     upper, log = R_to_upper(P, txt, n=3)
     assert upper.path.parent == log.path.parent
     assert upper.path != log.path
 
 
-def test_compiled_paths_hash_is_16_chars(tmp_path):
-    P = Pipeline(tmp_path)
+def test_compiled_paths_use_full_64_character_fingerprint(tmp_path):
+    P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hi")
-    assert len(txt.path.parent.name) == 16
+    assert len(txt.path.parent.name) == 64
 
 
 def test_rule_call_rejects_component_over_name_max(tmp_path, monkeypatch):
@@ -88,14 +87,14 @@ def test_rule_call_rejects_component_over_name_max(tmp_path, monkeypatch):
     monkeypatch.setattr(dag_core, "_filesystem_limits", lambda path: (10, 4096))
 
     with pytest.raises(ValueError, match="NAME_MAX"):
-        r_make_long_name(Pipeline(tmp_path), word="hi")
+        r_make_long_name(Pipeline(DAG(tmp_path)), word="hi")
 
 
 def test_rule_call_rejects_total_path_over_path_max(tmp_path, monkeypatch):
     monkeypatch.setattr(dag_core, "_filesystem_limits", lambda path: (255, 20))
 
     with pytest.raises(ValueError, match="PATH_MAX"):
-        R_make_txt(Pipeline(tmp_path), word="hi")
+        R_make_txt(Pipeline(DAG(tmp_path)), word="hi")
 
 
 # ── fingerprinting ────────────────────────────────────────────────────────────
@@ -164,20 +163,37 @@ def test_fingerprint_changes_on_outputs_type_change():
 def test_node_key_unique_for_cooutputs():
     txt = R_make_txt(P, word="hi")
     upper, log = R_to_upper(P, txt, n=1)
-    assert upper.key != log.key
+    assert upper.relative_path != log.relative_path
 
 
-def test_node_key_contains_rule_and_filename():
+def test_node_relative_path_contains_rule_and_filename():
     txt = R_make_txt(P, word="hi")
-    assert txt.key.startswith("make_txt/")
-    assert txt.key.endswith("/out.txt")
+    assert txt.relative_path.parts[0] == "make_txt"
+    assert txt.relative_path.name == "out.txt"
+
+
+def test_output_filename_must_be_one_safe_relative_component(tmp_path):
+    class Escaping(NodeType):
+        filename = "../escape.txt"
+
+    rule = Rule("escape", Inputs(x=str), Outputs(out=Escaping), "touch {out}")
+
+    with pytest.raises(ValueError, match="one relative path component"):
+        rule(Pipeline(DAG(tmp_path)), x="x")
+
+
+def test_rule_name_must_be_one_safe_relative_component(tmp_path):
+    rule = Rule("../escape", Inputs(x=str), Outputs(out=Txt), "touch {out}")
+
+    with pytest.raises(ValueError, match="rule name"):
+        rule(Pipeline(DAG(tmp_path)), x="x")
 
 
 # ── command resolution ────────────────────────────────────────────────────────
 
 
 def test_resolve_command_input_substitution(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hi")
     upper, _ = R_to_upper(P, txt, n=2)
     cmd = resolve_command(upper)
@@ -185,14 +201,14 @@ def test_resolve_command_input_substitution(tmp_path):
 
 
 def test_resolve_command_config_substitution(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hello")
     cmd = resolve_command(txt)
     assert "hello" in cmd
 
 
 def test_resolve_command_quotes_string_config_for_shell_commands(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     r_filter_txt = Rule(
         "filter_txt",
         Inputs(filter=str),
@@ -205,7 +221,7 @@ def test_resolve_command_quotes_string_config_for_shell_commands(tmp_path):
 
 
 def test_resolve_command_scalar_config_stays_bare_when_shell_safe(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     r_number_txt = Rule(
         "number_txt", Inputs(n=int), Outputs(txt=Txt), "tool -n {n} > {txt}"
     )
@@ -225,7 +241,7 @@ def test_list_commands_are_rejected():
 
 
 def test_resolve_command_output_substitution(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hi")
     upper, log = R_to_upper(P, txt, n=1)
     cmd = resolve_command(upper)
@@ -234,7 +250,7 @@ def test_resolve_command_output_substitution(tmp_path):
 
 
 def test_resolve_command_none_for_no_command(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     # node with no command returns None
     txt = R_make_txt(P, word="hi")
     txt.command = None
@@ -242,7 +258,7 @@ def test_resolve_command_none_for_no_command(tmp_path):
 
 
 def test_resolve_command_direct_constraint_placeholders(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     r_constrained = Rule(
         "constrained",
         Inputs(word=str),
@@ -259,7 +275,7 @@ def test_resolve_command_direct_constraint_placeholders(tmp_path):
 
 
 def test_resolve_command_threads_defaults_to_one(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     r_default_threads = Rule(
         "default_threads",
         Inputs(word=str),
@@ -272,7 +288,7 @@ def test_resolve_command_threads_defaults_to_one(tmp_path):
 
 
 def test_resolve_command_preserves_escaped_shell_braces(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     r_brace = Rule(
         "brace",
         Inputs(word=str),
@@ -285,7 +301,7 @@ def test_resolve_command_preserves_escaped_shell_braces(tmp_path):
 
 
 def test_resolve_command_substitutes_union_typed_input(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
 
     # Regression test: resolve_command used to build its {name} substitution dict by
     # filtering node.rule.inputs.specs with _is_nodetype(), which is a strict
@@ -308,7 +324,7 @@ def test_resolve_command_substitutes_union_typed_input(tmp_path):
 
 
 def test_constraint_placeholder_forces_constraint_when_config_name_collides(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     r_colliding_threads = Rule(
         "colliding_threads",
         Inputs(threads=int),
@@ -358,7 +374,7 @@ def test_accumulated_config_multi_hop():
 
 
 def test_write_dependencies_creates_file(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hi")
     txt.path.parent.mkdir(parents=True, exist_ok=True)
     txt.path.touch()
@@ -367,7 +383,7 @@ def test_write_dependencies_creates_file(tmp_path):
 
 
 def test_write_dependencies_content(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hi")
     txt.path.parent.mkdir(parents=True, exist_ok=True)
     txt.path.touch()
@@ -508,25 +524,25 @@ def test_nodetype_union_fingerprint_order_is_stable():
     assert r_ab_consume(P, txt).fingerprint == r_ba_consume(P, txt).fingerprint
 
 
-# ── pipeline_label ────────────────────────────────────────────────────────────
+# ── Pipeline labels ──────────────────────────────────────────────────────────
 
 
-def test_pipeline_label_stamped(tmp_path):
-    P = Pipeline(tmp_path)
+def test_pipeline_stores_label_binding(tmp_path):
+    P = Pipeline(DAG(tmp_path))
     P.txt = R_make_txt(P, word="hi")
-    assert P.txt.pipeline_label == "txt"
+    assert P.labels_for(P.txt) == ("txt",)
 
 
-def test_pipeline_label_cooutputs(tmp_path):
-    P = Pipeline(tmp_path)
+def test_pipeline_stores_cooutput_label_bindings(tmp_path):
+    P = Pipeline(DAG(tmp_path))
     P.txt = R_make_txt(P, word="hi")
     P.upper, P.log = R_to_upper(P, P.txt, n=1)
-    assert P.upper.pipeline_label == "upper"
-    assert P.log.pipeline_label == "log"
+    assert P.labels_for(P.upper) == ("upper",)
+    assert P.labels_for(P.log) == ("log",)
 
 
 def test_pipeline_duplicate_raises(tmp_path):
-    P = Pipeline(tmp_path)
+    P = Pipeline(DAG(tmp_path))
     P.txt = R_make_txt(P, word="hi")
     with pytest.raises(ValueError):
         P.txt = R_make_txt(P, word="world")

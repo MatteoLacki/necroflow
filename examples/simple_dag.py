@@ -123,20 +123,20 @@ def example_config(**overrides):
 
 def inspect_example():
     config = example_config()
-    pipeline = Pipeline("results")
+    pipeline = Pipeline(DAG("results"))
     extended_pipeline(pipeline, config)
     return pipeline, [resolve_command(node) for node in pipeline.nodes]
 
 
 def shared_dag(outdir="results"):
     config = example_config()
-    quant = Pipeline(outdir)
-    quantification_pipeline(quant, config)
-    variants = Pipeline(outdir)
-    variant_pipeline(variants, config)
     dag = DAG(outdir)
-    dag.add(quant)
-    dag.add(variants)
+    quant = Pipeline(dag)
+    quantification_pipeline(quant, config)
+    variants = Pipeline(dag)
+    variant_pipeline(variants, config)
+    dag.require(quant.sinks())
+    dag.require(variants.sinks())
     return dag, quant, variants
 
 

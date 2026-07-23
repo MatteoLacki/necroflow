@@ -48,12 +48,12 @@ def render_png(
             "(e.g. apt install graphviz)"
         )
 
-    requested_keys = {node.key for node in dag.required_nodes}
+    requested_keys = {node.relative_path for node in dag.required_nodes}
 
     groups: dict[str, dict] = {}
     order: list[str] = []
     for node in dag.nodes:
-        gid = _group_key(node.key)
+        gid = _group_key(node.relative_path.as_posix())
         if gid not in groups:
             groups[gid] = {
                 "rule": node.rule.__name__ if node.rule else "unknown",
@@ -64,7 +64,7 @@ def render_png(
             }
             order.append(gid)
         g = groups[gid]
-        g["requested"] = g["requested"] or node.key in requested_keys
+        g["requested"] = g["requested"] or node.relative_path in requested_keys
         threads = dict(getattr(node.rule, "constraints", {}) or {}).get("threads", 1)
         g["threads"] = max(g["threads"], threads)
         g["outputs"].append(node.output_name or "")
@@ -72,9 +72,9 @@ def render_png(
 
     edges: set[tuple[str, str]] = set()
     for node in dag.nodes:
-        t = _group_key(node.key)
+        t = _group_key(node.relative_path.as_posix())
         for parent in node.parents:
-            s = _group_key(parent.key)
+            s = _group_key(parent.relative_path.as_posix())
             if s != t:
                 edges.add((s, t))
 

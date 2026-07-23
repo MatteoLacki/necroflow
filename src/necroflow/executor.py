@@ -23,7 +23,7 @@ from necroflow.dag import (
     resolve_command,
     write_dependencies,
 )
-from necroflow.pipeline import write_ancestor_graph
+from necroflow.pipeline import DAG, write_ancestor_graph
 from necroflow.schedulers import (
     Scheduler,
     connected_component_scheduler,
@@ -33,7 +33,6 @@ from necroflow import logger as _logger
 
 if TYPE_CHECKING:
     from necroflow.dag import Node
-    from necroflow.pipeline import _GraphBase
 
 
 @dataclass
@@ -84,7 +83,11 @@ class ExecutionReport:
         self.events[event.node_key] = event
 
     def get(self, node_or_key) -> ExecutionEvent | None:
-        key = node_or_key if isinstance(node_or_key, str) else node_or_key.key
+        key = (
+            node_or_key
+            if isinstance(node_or_key, str)
+            else node_or_key.relative_path.as_posix()
+        )
         return self.events.get(key)
 
 
@@ -126,10 +129,10 @@ def _event_for_node(
     output_size_bytes: int | None = None,
 ) -> ExecutionEvent:
     return ExecutionEvent(
-        node_key=node.key,
+        node_key=node.relative_path.as_posix(),
         rule=node.rule.__name__ if node.rule else "unknown",
         output_name=node.output_name,
-        pipeline_label=node.pipeline_label,
+        pipeline_label=node.rule_call.dag.label_for(node),
         path=str(node.path) if node.path is not None else None,
         state=state,
         cached=cached,
@@ -191,7 +194,7 @@ def _record_success_events(
 ) -> None:
     size = _rule_output_size_bytes(node.path.parent)
     for conode in node.output_nodes.values():
-        if conode.key not in active_keys:
+        if conode.relative_path not in active_keys:
             continue
         if conode is not node and conode.state not in needs_run:
             continue
@@ -290,13 +293,16 @@ def _can_remove_parent_dir(
     parent, children: dict, final_keys: set, active_keys: set
 ) -> bool:
     """Return True when every active co-output in a rule-call is cleanable."""
-    siblings = [n for n in parent.output_nodes.values() if n.key in active_keys]
+    siblings = [
+        n for n in parent.output_nodes.values() if n.relative_path in active_keys
+    ]
     if not siblings:
         return False
-    if any(s.key in final_keys for s in siblings):
+    if any(s.relative_path in final_keys for s in siblings):
         return False
     return all(
-        all(c.state == NodeState.UP_TO_DATE for c in children[s.key]) for s in siblings
+        all(c.state == NodeState.UP_TO_DATE for c in children[s.relative_path])
+        for s in siblings
     )
 
 
@@ -306,8 +312,8 @@ def _cleanup_parents(node, children: dict, final_keys: set, active_keys: set) ->
     seen_dirs: set[Path] = set()
     for parent in node.parents:
         if (
-            parent.key not in active_keys
-            or parent.key in final_keys
+            parent.relative_path not in active_keys
+            or parent.relative_path in final_keys
             or parent.path is None
         ):
             continue
@@ -330,7 +336,7 @@ def _propagate_stale(active: list, active_keys: set) -> None:
             if node.state != NodeState.UP_TO_DATE:
                 continue
             if any(
-                p.key in active_keys and p.state == NodeState.STALE
+                p.relative_path in active_keys and p.state == NodeState.STALE
                 for p in node.parents
             ):
                 node.state = NodeState.STALE
@@ -338,37 +344,27 @@ def _propagate_stale(active: list, active_keys: set) -> None:
 
 
 def _prepare_active(
-    pipeline,
+    dag,
     autoclean: bool,
     dry_run: bool,
-    forced_stale_keys: set[str] | None = None,
+    forced_stale_keys: set[Path] | None = None,
 ):
-    """Resolve paths, classify nodes, clean orphans, reclassify compromised.
+    """Classify eagerly addressed nodes, clean orphans, reclassify compromised.
 
     Returns (active, active_keys, n_cleaned):
       active      — nodes in the required subgraph (state is not None and not ORPHAN)
-      active_keys — set of their keys
+      active_keys — set of their relative paths
       n_cleaned   — number of orphan outputs deleted (only non-zero when autoclean=True)
     """
-    nodes = list(pipeline.nodes)
-
-    # After DAG deduplication, unique nodes may hold parent references to
-    # superseded objects that are never classified.  Remap every parent pointer
-    # to the canonical node (same .key) so classify_nodes and the state
-    # machine operate on a consistent graph.
-    canonical = {n.key: n for n in nodes}
-    for n in nodes:
-        n.parents[:] = [canonical.get(p.key, p) for p in n.parents]
-
-    req = getattr(pipeline, "required_nodes", None)
-    classify_nodes(nodes, req if req is not None else nodes)
+    nodes = list(dag.nodes)
+    classify_nodes(nodes, dag.required_nodes)
 
     active = [n for n in nodes if n.state is not None and n.state != NodeState.ORPHAN]
-    active_keys = {n.key for n in active}
+    active_keys = {n.relative_path for n in active}
 
     if forced_stale_keys:
         for n in active:
-            if n.key in forced_stale_keys and n.state == NodeState.UP_TO_DATE:
+            if n.relative_path in forced_stale_keys and n.state == NodeState.UP_TO_DATE:
                 n.state = NodeState.STALE
         _propagate_stale(active, active_keys)
 
@@ -425,7 +421,7 @@ def _on_job_done(
 ) -> int:
     """Handle a successful job completion. Returns number of intermediate outputs cleaned."""
     for conode in node.output_nodes.values():
-        if conode.key in active_keys and not conode.path.exists():
+        if conode.relative_path in active_keys and not conode.path.exists():
             raise RuntimeError(f"command succeeded but output missing: {conode.path}")
     _record_success_events(
         report,
@@ -442,7 +438,7 @@ def _on_job_done(
     for conode in node.output_nodes.values():
         if (
             conode is not node
-            and conode.key in active_keys
+            and conode.relative_path in active_keys
             and conode.state in needs_run
         ):
             conode.mark_done("up_to_date")
@@ -479,16 +475,16 @@ def _validate_scheduler(scheduler: Scheduler) -> None:
 
 
 def execute(
-    pipeline: _GraphBase,
+    dag: DAG,
     resource_caps: dict[str, int] | None = None,
     scheduler: Scheduler = connected_component_scheduler,
     keep_going: bool = False,
     autoclean: bool = False,
     dry_run: bool = False,
     node_runner=None,
-    forced_stale_keys: set[str] | None = None,
+    forced_stale_keys: set[Path] | None = None,
 ) -> ExecutionReport:
-    """Run required nodes in the pipeline, respecting declared resource caps.
+    """Run the DAG's required nodes, respecting declared resource caps.
 
     Classifies each node as Missing/Stale/UpToDate/Orphan before execution.
     Skips UpToDate and Orphan nodes. Writes dependencies.toml after each
@@ -505,16 +501,18 @@ def execute(
     node_runner: optional callable(node, log_path) replacing _run_node. Use this to
     intercept subprocess execution (e.g. to feed output to a TUI).
     """
+    if not isinstance(dag, DAG):
+        raise TypeError(f"execute requires a DAG, got {type(dag).__name__}")
     _validate_scheduler(scheduler)
     _run = node_runner if node_runner is not None else _run_node
     _logger.setup()
     caps: dict[str, int] = {"threads": os.cpu_count() or 1}
     if resource_caps:
         caps.update(resource_caps)
-    outdir = pipeline.nodes_dir
+    outdir = dag.nodes_dir
     with _acquire_lock(outdir):
         active, active_keys, n_cleaned = _prepare_active(
-            pipeline, autoclean, dry_run, forced_stale_keys
+            dag, autoclean, dry_run, forced_stale_keys
         )
         report = ExecutionReport()
         _record_cached_events(report, active)
@@ -544,11 +542,11 @@ def execute(
         }
 
         if autoclean:
-            children: dict[str, list] = {n.key: [] for n in active}
+            children: dict[Path, list] = {n.relative_path: [] for n in active}
             for n in active:
                 for p in n.parents:
-                    if p.key in active_keys:
-                        children[p.key].append(n)
+                    if p.relative_path in active_keys:
+                        children[p.relative_path].append(n)
             final_keys = {k for k, kids in children.items() if not kids}
         else:
             children, final_keys = {}, set()
@@ -571,7 +569,7 @@ def execute(
                         coouts = [
                             c
                             for c in node.output_nodes.values()
-                            if c.key in active_keys and c is not node
+                            if c.relative_path in active_keys and c is not node
                         ]
                         if any(c.state == NodeState.RUNNING for c in coouts):
                             continue
@@ -690,7 +688,7 @@ def _run_node(node, log_path) -> None:
             raise RuntimeError(
                 f"rule {node.rule.__name__!r} has neither a command nor a materializer"
             )
-        shellpath = node.rule_call.pipeline.shellpath
+        shellpath = node.rule_call.execution_context.get("shellpath")
         if shellpath is not None:
             subprocess.run(
                 cmd,

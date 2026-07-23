@@ -65,17 +65,17 @@ OUTDIR = Path("/tmp/schedulers_example")
 # default scheduler
 dag1 = DAG(OUTDIR / "default")
 for word in ["hello", "world"]:
-    pipeline = Pipeline(dag1.nodes_dir)
+    pipeline = Pipeline(dag1)
     diamond(pipeline, word)
-    dag1.add(pipeline)
+    dag1.require(pipeline.sinks())
 print("--- connected_component_scheduler (default) ---")
 dag1.execute()
 
 # fifo scheduler
 dag2 = DAG(OUTDIR / "fifo")
 for word in ["hello", "world"]:
-    pipeline = Pipeline(dag2.nodes_dir)
+    pipeline = Pipeline(dag2)
     diamond(pipeline, word)
-    dag2.add(pipeline)
+    dag2.require(pipeline.sinks())
 print("--- fifo_scheduler ---")
 dag2.execute(scheduler=fifo_scheduler)

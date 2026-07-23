@@ -249,8 +249,8 @@ class Rule(Generic[_ReturnT]):
                 raise TypeError(
                     f"{name}: {pname!r} expected {_type_contract_name(ptype)}, got {got}"
                 )
-            if val.rule_call.pipeline is not pipeline:
-                raise ValueError(f"{name}: {pname!r} belongs to a different Pipeline")
+            if val.rule_call.dag is not pipeline.dag:
+                raise ValueError(f"{name}: {pname!r} belongs to a different DAG")
         for kname, val in kwargs.items():
             if kname not in self._kw_inputs:
                 continue

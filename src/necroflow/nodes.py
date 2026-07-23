@@ -14,6 +14,13 @@ from necroflow.rule_call import RuleCall
 _COMPROMISED_STATES = {"running", "failed", "interrupted"}
 
 
+def _safe_path_component(value: str, *, kind: str) -> str:
+    path = Path(value)
+    if not value or path.is_absolute() or len(path.parts) != 1 or value in {".", ".."}:
+        raise ValueError(f"{kind} must be one relative path component: {value!r}")
+    return value
+
+
 class NodeState(Enum):
     MISSING = "missing"
     STALE = "stale"
@@ -66,12 +73,12 @@ class Node:
     config: dict[str, Any]
     rule: Any
     command: str | Callable | None
+    relative_path: Path
     path: Path
     rule_call: RuleCall
     output_nodes: dict[str, Node] = field(default_factory=dict)
     state: NodeState | None = None
     info: str | None = None
-    pipeline_label: str | None = None
     execution_context: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -81,24 +88,10 @@ class Node:
                 self.info = doc.strip()
 
     @property
-    def full_fingerprint(self) -> str:
+    def fingerprint(self) -> str:
         """Full version-2 digest shared by co-outputs of one rule call."""
 
-        return self.rule_call.full_fingerprint
-
-    @property
-    def fingerprint(self) -> str:
-        """The 16-character path form of the full fingerprint."""
-
-        return self.full_fingerprint[:16]
-
-    @property
-    def key(self) -> str:
-        """Unique key for a node: rule_name/fingerprint/filename.
-        Distinct for co-outputs because filename differs."""
-        rule_name = self.rule.__name__
-        filename = self.node_type.filename or self.output_name
-        return f"{rule_name}/{self.fingerprint}/{filename}"
+        return self.rule_call.fingerprint
 
     @property
     def state_file(self) -> Path:
@@ -132,7 +125,7 @@ class Node:
 
         execution_context = pipeline.execution_context if command is not None else {}
         call = RuleCall(
-            pipeline=pipeline,
+            dag=pipeline.dag,
             rule=rule,
             parents=parents,
             config=config,
@@ -141,31 +134,47 @@ class Node:
             fingerprint_provider=pipeline.fingerprint_provider,
         )
         value = pipeline.fingerprint_function(call.fingerprint_args())
-        call._full_fingerprint = validate_fingerprint_result(
+        call._fingerprint = validate_fingerprint_result(
             value, provider=pipeline.fingerprint_provider
         )
-        workdir = pipeline.nodes_dir / rule.__name__ / call.full_fingerprint[:16]
-        nodes: list[Node] = [
-            Node(
-                output_name=oname,
-                node_type=otype,
-                parents=parents,
-                config=config,
-                rule=rule,
-                command=command,
-                path=workdir / (otype.filename or oname),
-                execution_context=call.execution_context,
-                rule_call=call,
+        rule_component = _safe_path_component(rule.__name__, kind="rule name")
+        call._relative_path = Path(rule_component) / call.fingerprint
+        workdir = call.workdir
+        nodes: list[Node] = []
+        output_paths: set[Path] = set()
+        for oname, otype in outputs_specs.items():
+            filename = _safe_path_component(
+                otype.filename or oname, kind=f"output {oname!r} filename"
             )
-            for oname, otype in outputs_specs.items()
-        ]
+            relative_path = call.relative_path / filename
+            if relative_path in output_paths:
+                raise ValueError(
+                    f"rule {rule.__name__!r} declares duplicate output path "
+                    f"{relative_path}"
+                )
+            output_paths.add(relative_path)
+            nodes.append(
+                Node(
+                    output_name=oname,
+                    node_type=otype,
+                    parents=parents,
+                    config=config,
+                    rule=rule,
+                    command=command,
+                    relative_path=relative_path,
+                    path=workdir / filename,
+                    execution_context=call.execution_context,
+                    rule_call=call,
+                )
+            )
         for node in nodes:
             _check_path_limits(node.path)
         all_outputs: dict[str, Node] = {n.output_name: n for n in nodes}
         for n in nodes:
             n.output_nodes = all_outputs
         call.output_nodes = all_outputs
-        return nodes
+        canonical = pipeline.dag.intern(call)
+        return [canonical.output_nodes[name] for name in outputs_specs]
 
 
 def _topo_sort(nodes: list[Node]) -> list[Node]:
@@ -173,22 +182,22 @@ def _topo_sort(nodes: list[Node]) -> list[Node]:
 
     Only edges between nodes in the provided list are considered.
     """
-    key_to_node = {n.key: n for n in nodes}
-    children: dict[str, list[Node]] = {n.key: [] for n in nodes}
-    in_degree: dict[str, int] = {n.key: 0 for n in nodes}
+    key_to_node = {n.relative_path: n for n in nodes}
+    children: dict[Path, list[Node]] = {n.relative_path: [] for n in nodes}
+    in_degree: dict[Path, int] = {n.relative_path: 0 for n in nodes}
     for n in nodes:
         for p in n.parents:
-            if p.key in key_to_node:
-                children[p.key].append(n)
-                in_degree[n.key] += 1
-    queue: deque[Node] = deque(n for n in nodes if in_degree[n.key] == 0)
+            if p.relative_path in key_to_node:
+                children[p.relative_path].append(n)
+                in_degree[n.relative_path] += 1
+    queue: deque[Node] = deque(n for n in nodes if in_degree[n.relative_path] == 0)
     result: list[Node] = []
     while queue:
         n = queue.popleft()
         result.append(n)
-        for child in children[n.key]:
-            in_degree[child.key] -= 1
-            if in_degree[child.key] == 0:
+        for child in children[n.relative_path]:
+            in_degree[child.relative_path] -= 1
+            if in_degree[child.relative_path] == 0:
                 queue.append(child)
     return result
 
@@ -199,26 +208,28 @@ def _is_nodetype(ann) -> bool:
 
 def iter_connected_components(nodes: list[Node]):
     """Yield each connected component of nodes as a list (undirected parent↔child edges)."""
-    node_keys = {n.key for n in nodes}
-    adj: dict[str, list[Node]] = {n.key: [] for n in nodes}
+    node_keys = {n.relative_path for n in nodes}
+    adj: dict[Path, list[Node]] = {n.relative_path: [] for n in nodes}
     for n in nodes:
         for p in n.parents:
-            if p.key in node_keys:
-                adj[n.key].append(p)
-                adj[p.key].append(n)
+            if p.relative_path in node_keys:
+                adj[n.relative_path].append(p)
+                adj[p.relative_path].append(n)
 
-    visited: set[str] = set()
-    key_to_node = {n.key: n for n in nodes}
+    visited: set[Path] = set()
+    key_to_node = {n.relative_path: n for n in nodes}
     for n in nodes:
-        if n.key in visited:
+        if n.relative_path in visited:
             continue
         frontier = [n]
         component: list[Node] = []
         while frontier:
             cur = frontier.pop()
-            if cur.key in visited:
+            if cur.relative_path in visited:
                 continue
-            visited.add(cur.key)
-            component.append(key_to_node[cur.key])
-            frontier.extend(nb for nb in adj[cur.key] if nb.key not in visited)
+            visited.add(cur.relative_path)
+            component.append(key_to_node[cur.relative_path])
+            frontier.extend(
+                nb for nb in adj[cur.relative_path] if nb.relative_path not in visited
+            )
         yield component

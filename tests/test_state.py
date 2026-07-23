@@ -36,11 +36,11 @@ def _node(tmp_path, key="rule/fp/out.txt"):
 
 
 def simple_dag(tmp_path):
-    P = Pipeline(tmp_path)
+    dag = DAG(outdir=tmp_path)
+    P = Pipeline(dag)
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
-    dag = DAG(outdir=tmp_path)
-    dag.add(P, request=[P.b])
+    dag.require([P.b])
     return dag, P
 
 
@@ -111,10 +111,10 @@ def test_simulated_crash_reruns_node(tmp_path):
 
 
 def test_failed_node_state(tmp_path):
-    P = Pipeline(tmp_path)
-    P.c = R_fail_c(P, x="x")
     dag = DAG(outdir=tmp_path)
-    dag.add(P, request=[P.c])
+    P = Pipeline(dag)
+    P.c = R_fail_c(P, x="x")
+    dag.require([P.c])
 
     with pytest.raises(Exception):
         dag.execute()
@@ -128,10 +128,10 @@ def test_failed_node_state(tmp_path):
 
 
 def test_interrupted_node_state(tmp_path):
-    P = Pipeline(tmp_path)
-    P.c = R_signal_c(P, x="x")
     dag = DAG(outdir=tmp_path)
-    dag.add(P, request=[P.c])
+    P = Pipeline(dag)
+    P.c = R_signal_c(P, x="x")
+    dag.require([P.c])
 
     with pytest.raises(Exception):
         dag.execute()
@@ -160,15 +160,15 @@ R2_make_y_signal = Rule(
 
 
 def _xy_dag(tmp_path, y_rule="make_y_fail"):
-    P = Pipeline(tmp_path)
+    dag = DAG(outdir=tmp_path)
+    P = Pipeline(dag)
     rules = {
         "make_y_fail": R2_make_y_fail,
         "make_y_signal": R2_make_y_signal,
     }
     P.x = R2_make_x(P, v="v")
     P.y = rules[y_rule](P, P.x)
-    dag = DAG(outdir=tmp_path)
-    dag.add(P)
+    dag.require(P.sinks())
     return dag, P
 
 
@@ -238,11 +238,11 @@ def test_nodetype_invalidator_external_file_change_reruns_node(tmp_path):
         Outputs(out=ExternalInvalidated),
         "echo {text} > {out}",
     )
-    P = Pipeline(tmp_path)
+    execute = DAG(outdir=tmp_path)
+    P = Pipeline(execute)
     P.out = r_make_external(P, text="payload", dependency=str(dependency))
 
-    execute = DAG(outdir=tmp_path)
-    execute.add(P)
+    execute.require(P.sinks())
     execute.execute()
     mtime_before = P.out.path.stat().st_mtime
 
@@ -267,10 +267,10 @@ def test_nodetype_invalidator_output_file_change_reruns_node(tmp_path):
         Outputs(out=OutputHashInvalidated),
         "echo {text} > {out}",
     )
-    P = Pipeline(tmp_path)
-    P.out = r_make_output_hash(P, text="payload")
     dag = DAG(outdir=tmp_path)
-    dag.add(P)
+    P = Pipeline(dag)
+    P.out = r_make_output_hash(P, text="payload")
+    dag.require(P.sinks())
     dag.execute()
 
     P.out.path.write_text("manual edit\n")
@@ -295,10 +295,10 @@ def test_nodetype_invalidator_missing_metadata_reruns_node(tmp_path):
         Outputs(out=OutputInvalidated),
         "echo {text} > {out}",
     )
-    P = Pipeline(tmp_path)
-    P.out = r_make_output(P, text="payload")
     dag = DAG(outdir=tmp_path)
-    dag.add(P)
+    P = Pipeline(dag)
+    P.out = r_make_output(P, text="payload")
+    dag.require(P.sinks())
     dag.execute()
     token_file = P.out.path.parent / ".rip" / (P.out.path.name + ".invalidation")
     assert token_file.exists()
@@ -329,10 +329,10 @@ def test_nodetype_invalidator_exception_fails_fast(tmp_path):
         Outputs(out=RaisingInvalidator),
         "echo {text} > {out}",
     )
-    P = Pipeline(tmp_path)
-    P.out = r_make_raising(P, text="payload")
     dag = DAG(outdir=tmp_path)
-    dag.add(P)
+    P = Pipeline(dag)
+    P.out = r_make_raising(P, text="payload")
+    dag.require(P.sinks())
     dag.execute()
 
     should_raise["value"] = True
@@ -362,10 +362,10 @@ def test_multi_output_invalidator_reruns_shared_command_once(tmp_path):
         Outputs(a=InvalidatedA, b=PlainB),
         "n=$(cat {count}); n=$((n + 1)); echo $n > {count}; echo a > {a}; echo b > {b}",
     )
-    P = Pipeline(tmp_path)
-    P.a, P.b = r_make_pair(P, dependency=str(dependency), count=str(count))
     dag = DAG(outdir=tmp_path)
-    dag.add(P)
+    P = Pipeline(dag)
+    P.a, P.b = r_make_pair(P, dependency=str(dependency), count=str(count))
+    dag.require(P.sinks())
 
     dag.execute()
     assert count.read_text().strip() == "1"

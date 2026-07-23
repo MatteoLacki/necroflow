@@ -39,16 +39,16 @@ def prepare_text(dependency: str):
     return prepared_text
 
 
-def build_pipeline() -> Pipeline:
-    P = Pipeline(OUTDIR)
+def build_pipeline(dag: DAG) -> Pipeline:
+    P = Pipeline(dag)
     P.prepared = prepare_text(P, dependency=str(DEPENDENCY))
     return P
 
 
 def run_once() -> Path:
-    P = build_pipeline()
     dag = DAG(OUTDIR)
-    dag.add(P)
+    P = build_pipeline(dag)
+    dag.require(P.sinks())
     dag.execute()
     return P.prepared.path
 

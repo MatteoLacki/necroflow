@@ -3,7 +3,7 @@
 import importlib.util
 from pathlib import Path
 
-from necroflow import Pipeline
+from necroflow import DAG, Pipeline
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "simple_dag.py"
 
@@ -20,7 +20,7 @@ def test_paper_example_factories_have_consistent_contracts():
     example = _load_example()
     config = example.example_config()
 
-    extended = Pipeline("/tmp/necroflow-paper-example")
+    extended = Pipeline(DAG("/tmp/necroflow-paper-example"))
     example.extended_pipeline(extended, config)
     assert extended.counts.node_type is example.Counts
     assert extended.vcf.node_type is example.Vcf
@@ -28,7 +28,7 @@ def test_paper_example_factories_have_consistent_contracts():
     assert extended.align_log.node_type is example.Log
 
     dag, quant, variants = example.shared_dag()
-    assert quant.sorted_bam.key == variants.sorted_bam.key
+    assert quant.sorted_bam.relative_path == variants.sorted_bam.relative_path
     assert quant.counts.node_type is example.Counts
     assert variants.vcf.node_type is example.Vcf
     assert len(dag.nodes) < len(quant.nodes) + len(variants.nodes)

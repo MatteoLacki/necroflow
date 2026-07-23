@@ -3,6 +3,7 @@
 from necroflow import (
     CommandArgs,
     Constraints,
+    DAG,
     Inputs,
     Node,
     NodeType,
@@ -58,7 +59,7 @@ def callback_rule(source: Source):
     return callback_left
 
 
-pipeline = Pipeline("/tmp/necroflow-typing")
+pipeline = Pipeline(DAG("/tmp/necroflow-typing"))
 source_node: Node = make_source(pipeline, text="value")
 left_node: Node
 right_node: Node

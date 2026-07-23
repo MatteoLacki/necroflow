@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable
 
 # Scheduler protocol:
@@ -27,11 +28,11 @@ class ConnectedComponentScheduler:
     """
 
     def __init__(self) -> None:
-        self._adj: dict[str, list[str]] = {}
-        self._component_of: dict[str, int] = {}
-        self._members: dict[int, set[str]] = {}
+        self._adj: dict[Path, list[Path]] = {}
+        self._component_of: dict[Path, int] = {}
+        self._members: dict[int, set[Path]] = {}
         self._sizes: dict[int, int] = {}
-        self._prev_keys: set[str] = set()
+        self._prev_keys: set[Path] = set()
         self._next_cid: int = 0
 
     def _new_cid(self) -> int:
@@ -40,22 +41,22 @@ class ConnectedComponentScheduler:
         return cid
 
     def _build(self, nodes: list) -> None:
-        keys = {n.key for n in nodes}
-        adj: dict[str, list[str]] = {n.key: [] for n in nodes}
+        keys = {n.relative_path for n in nodes}
+        adj: dict[Path, list[Path]] = {n.relative_path: [] for n in nodes}
         for n in nodes:
             for p in n.parents:
-                if p.key in keys:
-                    adj[n.key].append(p.key)
-                    adj[p.key].append(n.key)
+                if p.relative_path in keys:
+                    adj[n.relative_path].append(p.relative_path)
+                    adj[p.relative_path].append(n.relative_path)
         self._adj = adj
 
-        visited: set[str] = set()
+        visited: set[Path] = set()
         for n in nodes:
-            if n.key in visited:
+            if n.relative_path in visited:
                 continue
             cid = self._new_cid()
-            members: set[str] = set()
-            frontier = [n.key]
+            members: set[Path] = set()
+            frontier = [n.relative_path]
             while frontier:
                 k = frontier.pop()
                 if k in visited:
@@ -67,7 +68,7 @@ class ConnectedComponentScheduler:
             self._members[cid] = members
             self._sizes[cid] = len(members)
 
-    def _remove(self, key: str) -> None:
+    def _remove(self, key: Path) -> None:
         cid = self._component_of.pop(key, None)
         if cid is None:
             return
@@ -83,7 +84,7 @@ class ConnectedComponentScheduler:
         first = True
         while unvisited:
             start = next(iter(unvisited))
-            sub: set[str] = set()
+            sub: set[Path] = set()
             frontier = [start]
             while frontier:
                 k = frontier.pop()
@@ -113,15 +114,18 @@ class ConnectedComponentScheduler:
     ) -> list:
         if self._adj is None or (not self._component_of and remaining):
             self._build(remaining)
-            self._prev_keys = {n.key for n in remaining}
+            self._prev_keys = {n.relative_path for n in remaining}
         else:
-            current_keys = {n.key for n in remaining}
+            current_keys = {n.relative_path for n in remaining}
             for key in self._prev_keys - current_keys:
                 self._remove(key)
             self._prev_keys = current_keys
 
         return sorted(
-            ready, key=lambda n: self._sizes.get(self._component_of.get(n.key, -1), 0)
+            ready,
+            key=lambda n: self._sizes.get(
+                self._component_of.get(n.relative_path, -1), 0
+            ),
         )
 
 

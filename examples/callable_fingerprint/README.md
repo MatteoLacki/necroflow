@@ -48,7 +48,7 @@ the project to invalidate every address by changing `PROJECT_POLICY`.
 After execution, inspect:
 
 ```text
-nodes/sort_text/<hash16>/.rip/dependencies.toml
+nodes/sort_text/<64-hex-fingerprint>/.rip/dependencies.toml
 ```
 
 The provenance separates the project fingerprint provider from the realized

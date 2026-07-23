@@ -38,9 +38,11 @@ String commands use Python's default `shell=True` behavior unless a shell path i
 def make_out():
     out = output(Out)
     return out
-P = Pipeline("nodes", shellpath="/bin/bash")
+dag = DAG("nodes")
+P = Pipeline(dag, shellpath="/bin/bash")
 P.out = make_out(P)
-execute(P)
+dag.require(P.sinks())
+dag.execute()
 ```
 
 The equivalent CLI flag is:
@@ -49,7 +51,7 @@ The equivalent CLI flag is:
 necroflow --shellpath /bin/bash job.toml
 ```
 
-The shell path belongs to the `Pipeline`, so it is fixed before any rule call.
+The shell path belongs to the `Pipeline` compilation policy, so it is fixed before any rule call.
 An explicit `shellpath` is included in fingerprints for static and Python
 callback commands and recorded in provenance. Built-in materializers do not
 use a shell and are not affected. All supported commands resolve to shell

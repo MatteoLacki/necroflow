@@ -7,7 +7,7 @@ pipeline_spec — the raw '.pipeline' string from the job TOML,
                 a file path and a function name.
 
 factory       — a user-supplied Python function loaded from a pipeline_spec.
-                Signature: factory(config: dict) -> Pipeline.
+                Signature: factory(Pipeline, config: dict) -> None.
 
 job TOML      — a TOML file describing one run: which factory to call, which
                 outputs to request, and what config parameters to pass.
@@ -20,7 +20,7 @@ combo         — one expanded parameter combination produced by __grid
 request       — the subset of Pipeline nodes that the DAG must produce for a
                 given combo.  Defaults to the pipeline's sink nodes (leaves).
                 Overridden by '.requests' in the job TOML (list of
-                pipeline_label strings).
+                Pipeline label strings).
 """
 
 from __future__ import annotations
@@ -30,14 +30,15 @@ import fcntl
 import json
 import os
 import shutil
+from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TypeAlias
 
 import tomlkit
 
 from necroflow._compat import ExceptionGroup
-from necroflow import DAG, Pipeline, connected_component_scheduler, fifo_scheduler
+from necroflow import DAG, Node, Pipeline, connected_component_scheduler, fifo_scheduler
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import (
     NodeState,
@@ -47,9 +48,18 @@ from necroflow.dag import (
     parse_resource,
     resolve_command,
 )
-from necroflow.pipeline import _normalize_shellpath, _sinks
+from necroflow.pipeline import _normalize_shellpath
 from necroflow.graphviz_render import render_png
 from necroflow.executor import _prepare_active
+
+
+@dataclass(frozen=True)
+class _RequestedOutput:
+    label: str
+    node: Node
+
+
+_Combo: TypeAlias = tuple[str, Pipeline, list[_RequestedOutput]]
 
 
 def _load_factory(spec: str) -> Callable:
@@ -135,23 +145,28 @@ def _load_reap_labels(path: Path, names: list[str]) -> list[str]:
     return labels
 
 
-def _resolve_invalidation_keys(pipeline, labels: list[str]) -> set[str]:
+def _resolve_invalidation_keys(pipeline, labels: list[str]) -> set[Path]:
     if not labels:
         return set()
-    by_label = {n.pipeline_label: n for n in pipeline.nodes if n.pipeline_label}
-    missing = [label for label in labels if label not in by_label]
+    missing = [label for label in labels if label not in pipeline.labels]
     if missing:
         raise SystemExit(f"error: invalidation labels not found in pipeline: {missing}")
-    return {by_label[label].key for label in labels}
+    return {pipeline[label].relative_path for label in labels}
 
 
-def _resolve_request(pipeline, labels: list[str]) -> list:
-    """Map pipeline_label strings to Node objects."""
-    by_label = {n.pipeline_label: n for n in pipeline.nodes if n.pipeline_label}
-    missing = [l for l in labels if l not in by_label]
+def _resolve_request(pipeline, labels: list[str] | None) -> list[_RequestedOutput]:
+    """Resolve explicit labels, or all labels bound to pipeline sinks."""
+    if labels is None:
+        sinks = {node.relative_path for node in pipeline.sinks()}
+        return [
+            _RequestedOutput(label, pipeline[label])
+            for label in pipeline.labels
+            if pipeline[label].relative_path in sinks
+        ]
+    missing = [label for label in labels if label not in pipeline.labels]
     if missing:
         raise SystemExit(f"error: request labels not found in pipeline: {missing}")
-    return [by_label[l] for l in labels]
+    return [_RequestedOutput(label, pipeline[label]) for label in labels]
 
 
 def _resolve_roots(args) -> tuple[Path, Path]:
@@ -180,8 +195,8 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
     validators = _load_validators(validation_specs) if validation_specs else []
 
     dag = DAG(nodes_dir)
-    combos: list[tuple[str, object, list]] = []
-    forced_stale_keys: set[str] = set()
+    combos: list[_Combo] = []
+    forced_stale_keys: set[Path] = set()
     shellpath = _normalize_arg_shellpath(args)
 
     for job_path_str in args.jobs:
@@ -198,7 +213,7 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
                 factory = _load_factory(job_config.pipeline_spec)
                 if job_config.fingerprint_spec:
                     pipeline = Pipeline(
-                        nodes_dir,
+                        dag,
                         shellpath=shellpath,
                         fingerprint_function=_load_fingerprint(
                             job_config.fingerprint_spec
@@ -206,22 +221,18 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
                         fingerprint_provider=job_config.fingerprint_spec,
                     )
                 else:
-                    pipeline = Pipeline(nodes_dir, shellpath=shellpath)
+                    pipeline = Pipeline(dag, shellpath=shellpath)
                 result = factory(pipeline, job_config.config)
                 if result is not None:
                     raise TypeError(
                         f"pipeline factory {job_config.pipeline_spec!r} must mutate "
                         "the supplied Pipeline and return None"
                     )
-                request = (
-                    _resolve_request(pipeline, job_config.request_labels)
-                    if job_config.request_labels is not None
-                    else _sinks(pipeline)
-                )
+                request = _resolve_request(pipeline, job_config.request_labels)
                 forced_stale_keys.update(
                     _resolve_invalidation_keys(pipeline, invalidation_labels)
                 )
-                dag.add(pipeline, request=request)
+                dag.require(binding.node for binding in request)
                 combos.append((job_config.label, pipeline, request))
         except SystemExit:
             raise
@@ -270,24 +281,26 @@ def _emit_json(payload) -> None:
     print(json.dumps(_json_ready(payload), indent=2, sort_keys=True))
 
 
-def _node_display_label(node) -> str:
+def _node_display_label(node, label: str | None = None) -> str:
     return (
-        node.pipeline_label
+        label
+        or node.rule_call.dag.label_for(node)
         or node.output_name
         or (node.node_type.__name__ if node.node_type else "output")
     )
 
 
-def _result_relative_path(node) -> Path:
+def _result_relative_path(node, label: str | None = None) -> Path:
     if node.path is None:
         raise ValueError("node path has not been resolved")
-    return Path(_node_display_label(node)) / node.path.name
+    return Path(_node_display_label(node, label)) / node.path.name
 
 
 def _node_json(node, *, nodes_dir: Path | None = None) -> dict:
     data = {
-        "key": node.key,
-        "label": node.pipeline_label,
+        "key": node.relative_path.as_posix(),
+        "label": node.rule_call.dag.label_for(node),
+        "labels": list(node.rule_call.dag.labels_for(node)),
         "output_name": node.output_name,
         "rule": node.rule.__name__ if node.rule else "unknown",
         "node_type": node.node_type.__name__ if node.node_type else None,
@@ -306,12 +319,15 @@ def _node_json(node, *, nodes_dir: Path | None = None) -> dict:
 
 
 def _edge_json(nodes: list) -> list[dict]:
-    node_keys = {node.key for node in nodes}
+    node_keys = {node.relative_path for node in nodes}
     return [
-        {"from": parent.key, "to": node.key}
+        {
+            "from": parent.relative_path.as_posix(),
+            "to": node.relative_path.as_posix(),
+        }
         for node in nodes
         for parent in node.parents
-        if parent.key in node_keys
+        if parent.relative_path in node_keys
     ]
 
 
@@ -319,13 +335,14 @@ def _outputs_payload(combos, *, nodes_dir: Path, results_dir: Path) -> dict:
     jobs = []
     for label, pipeline, request in combos:
         requested = []
-        for node in request:
+        for binding in request:
+            node = binding.node
             node_rel = node.path.relative_to(nodes_dir)
-            result_rel = _result_relative_path(node)
+            result_rel = _result_relative_path(node, binding.label)
             requested.append(
                 {
-                    "label": _node_display_label(node),
-                    "node_key": node.key,
+                    "label": binding.label,
+                    "node_key": node.relative_path.as_posix(),
                     "rule": node.rule.__name__ if node.rule else "unknown",
                     "node_path": str(node.path),
                     "result_path": str(results_dir / label / result_rel),
@@ -338,13 +355,13 @@ def _outputs_payload(combos, *, nodes_dir: Path, results_dir: Path) -> dict:
 
 
 def _graph_payload(dag, combos, *, nodes_dir: Path) -> dict:
-    requested = {node.key for node in dag.required_nodes}
+    requested = {node.relative_path for node in dag.required_nodes}
     return {
         "nodes": [
             {
                 **_node_json(node, nodes_dir=nodes_dir),
                 "section": dag.section_for(node),
-                "requested": node.key in requested,
+                "requested": node.relative_path in requested,
             }
             for node in dag.nodes
         ],
@@ -352,7 +369,9 @@ def _graph_payload(dag, combos, *, nodes_dir: Path) -> dict:
         "jobs": [
             {
                 "label": label,
-                "requested": [node.key for node in request],
+                "requested": [
+                    binding.node.relative_path.as_posix() for binding in request
+                ],
             }
             for label, _pipeline, request in combos
         ],
@@ -373,7 +392,7 @@ def _provenance_payload(path: Path) -> dict:
     }
 
 
-def _classification_reasons(node, forced_stale_keys: set[str]) -> list[dict]:
+def _classification_reasons(node, forced_stale_keys: set[Path]) -> list[dict]:
     if node.state == NodeState.MISSING:
         return [{"kind": "output_missing", "path": str(node.path)}]
     if node.state == NodeState.UP_TO_DATE:
@@ -381,7 +400,7 @@ def _classification_reasons(node, forced_stale_keys: set[str]) -> list[dict]:
     if node.state == NodeState.FAILED:
         return [{"kind": "blocked_by_failed_parent"}]
     reasons: list[dict] = []
-    if node.key in forced_stale_keys:
+    if node.relative_path in forced_stale_keys:
         reasons.append({"kind": "forced_invalidation"})
     if node.is_compromised:
         reasons.append({"kind": "compromised_prior_state"})
@@ -395,8 +414,8 @@ def _classification_reasons(node, forced_stale_keys: set[str]) -> list[dict]:
             reasons.append(
                 {
                     "kind": "parent_not_up_to_date",
-                    "parent_key": parent.key,
-                    "parent_label": parent.pipeline_label,
+                    "parent_key": parent.relative_path.as_posix(),
+                    "parent_label": parent.rule_call.dag.label_for(parent),
                     "parent_state": parent.state.value if parent.state else None,
                 }
             )
@@ -414,15 +433,15 @@ def _classification_reasons(node, forced_stale_keys: set[str]) -> list[dict]:
                         reasons.append(
                             {
                                 "kind": "parent_content_changed",
-                                "parent_key": parent.key,
-                                "parent_label": parent.pipeline_label,
+                                "parent_key": parent.relative_path.as_posix(),
+                                "parent_label": parent.rule_call.dag.label_for(parent),
                             }
                         )
             except OSError as exc:
                 reasons.append(
                     {
                         "kind": "parent_check_error",
-                        "parent_key": parent.key,
+                        "parent_key": parent.relative_path.as_posix(),
                         "error": str(exc),
                     }
                 )
@@ -440,14 +459,19 @@ def _explain_payload(args) -> dict:
         dry_run=True,
         forced_stale_keys=forced_stale_keys,
     )
-    labels = {node.pipeline_label: node for node in active if node.pipeline_label}
+    labels = {
+        label: pipeline[label]
+        for _job_label, pipeline, _request in combos
+        for label in pipeline.labels
+        if pipeline[label] in active
+    }
     if args.node:
         if args.node not in labels:
             raise SystemExit(f"error: explain label not found: {args.node}")
-        wanted = {labels[args.node].key}
-        active = [node for node in active if node.key in wanted]
+        wanted = {labels[args.node].relative_path}
+        active = [node for node in active if node.relative_path in wanted]
     nodes = []
-    for node in sorted(active, key=lambda n: n.key):
+    for node in sorted(active, key=lambda n: n.relative_path):
         command = None
         try:
             command = resolve_command(node)
@@ -463,7 +487,12 @@ def _explain_payload(args) -> dict:
         )
     return {
         "jobs": [
-            {"label": label, "requested": [node.key for node in request]}
+            {
+                "label": label,
+                "requested": [
+                    binding.node.relative_path.as_posix() for binding in request
+                ],
+            }
             for label, _pipeline, request in combos
         ],
         "nodes": nodes,
@@ -605,9 +634,10 @@ def _outputs(args) -> None:
         return
     for label, pipeline, request in combos:
         print(f"[{label}]")
-        for node in request:
-            key = _node_display_label(node)
-            rel = _result_relative_path(node)
+        for binding in request:
+            node = binding.node
+            key = binding.label
+            rel = _result_relative_path(node, binding.label)
             print(f"{key}\tnode={node.path}\tresult={results_dir / label / rel}")
 
 
@@ -685,35 +715,38 @@ def _init(args) -> None:
     print(f"created {dest}")
 
 
-def _requested_with_ancestors(request: list) -> list:
-    seen: dict[str, object] = {}
-    stack = list(request)
+def _requested_with_ancestors(request: list[_RequestedOutput]) -> list:
+    seen: dict[Path, object] = {}
+    stack = [binding.node for binding in request]
     while stack:
         node = stack.pop()
-        if node.key in seen:
+        if node.relative_path in seen:
             continue
-        seen[node.key] = node
+        seen[node.relative_path] = node
         stack.extend(node.parents)
     return list(seen.values())
 
 
 def _write_execution_summaries(
     results_dir: Path,
-    combos: list[tuple[str, object, list]],
+    combos: list[_Combo],
     report,
 ) -> None:
     if report is None:
         return
-    for label, _pipeline, request in combos:
+    for label, pipeline, request in combos:
         data = tomlkit.document()
         nodes_array = tomlkit.aot()
-        for node in sorted(_requested_with_ancestors(request), key=lambda n: n.key):
+        for node in sorted(
+            _requested_with_ancestors(request), key=lambda n: n.relative_path
+        ):
             event = report.get(node)
             if event is None:
                 continue
             values = event.to_toml_dict()
-            if node.pipeline_label is not None:
-                values["label"] = node.pipeline_label
+            labels = pipeline.labels_for(node)
+            if len(labels) == 1:
+                values["label"] = labels[0]
             if node.output_name is not None:
                 values["output_name"] = node.output_name
             table = tomlkit.table()
@@ -753,7 +786,7 @@ def _clear_generated_result_links(combo_dir: Path) -> None:
 
 def _create_link_outputs(
     results_dir: Path,
-    combos: list[tuple[str, object, list]],
+    combos: list[_Combo],
     *,
     nodes_dir: Path | None = None,
 ) -> None:
@@ -761,15 +794,17 @@ def _create_link_outputs(
 
     Only requested (sink) outputs get a symlink — ancestors are excluded.
     """
-    for label, pipeline, sink_nodes in combos:
+    for label, _pipeline, requested_outputs in combos:
         combo_dir = results_dir / label
         _clear_generated_result_links(combo_dir)
 
-        manifest_lines = ["[outputs]\n"]
-        for node in sink_nodes:
+        manifest = tomlkit.document()
+        manifest_outputs = tomlkit.table()
+        for binding in requested_outputs:
+            node = binding.node
             if node.path is None or not node.path.exists():
                 continue
-            rel = _result_relative_path(node)
+            rel = _result_relative_path(node, binding.label)
             link = combo_dir / rel
             link.parent.mkdir(parents=True, exist_ok=True)
             if link.is_symlink():
@@ -779,11 +814,12 @@ def _create_link_outputs(
                     f"refusing to overwrite non-symlink result: {link}"
                 )
             link.symlink_to(Path(os.path.relpath(node.path, link.parent)))
-            manifest_lines.append(f'{_node_display_label(node)} = "{rel.as_posix()}"\n')
+            manifest_outputs[binding.label] = rel.as_posix()
 
         combo_dir.mkdir(parents=True, exist_ok=True)
+        manifest["outputs"] = manifest_outputs
         (combo_dir / "manifest.toml").write_text(
-            "".join(manifest_lines), encoding="utf-8"
+            tomlkit.dumps(manifest), encoding="utf-8"
         )
 
 

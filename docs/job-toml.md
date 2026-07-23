@@ -8,7 +8,7 @@
 # required — path resolved from the directory where necroflow is invoked
 ".pipeline" = "path/to/factory.py:function_name"
 
-# optional — pipeline_label names to request (defaults to all sinks)
+# optional — Pipeline labels to request (defaults to all sink labels)
 ".requests" = ["counts", "qc"]
 
 # optional — complete project fingerprint policy

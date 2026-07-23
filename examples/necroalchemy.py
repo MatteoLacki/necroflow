@@ -285,23 +285,23 @@ WORDS = ["necroflow", "snakemake", "python"]
 OUTDIR = Path("/tmp/necroalchemy_out")
 
 if __name__ == "__main__":
-    P = Pipeline(OUTDIR)
+    P = Pipeline(DAG(OUTDIR))
     alchemy_pipeline(P, "hello", n=2)
     P.save("/tmp/necroalchemy_hello.txt")
     print("Pipeline render → /tmp/necroalchemy_hello.txt")
 
     dag = DAG(OUTDIR)
     for word in WORDS:
-        P = Pipeline(OUTDIR)
+        P = Pipeline(dag)
         alchemy_pipeline(P, word, n=3)
-        dag.add(P)
+        dag.require(P.sinks())
 
     dag.save("/tmp/necroalchemy_dag.txt")
     print("DAG render      → /tmp/necroalchemy_dag.txt")
 
     dag.execute(keep_going=True)
 
-    # pipeline_label (the P.xxx attribute name) is the handle for each output
+    # Pipeline labels remain local handles for canonical outputs.
     for node in dag.nodes:
-        if node.pipeline_label == "summary" and node.path:
+        if "summary" in dag.labels_for(node) and node.path:
             print(f"summary → {node.path}")

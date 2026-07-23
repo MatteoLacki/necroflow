@@ -8,7 +8,7 @@
 
 ```
 nodes/
-  {rule}/{hash16}/{file}           ← real node outputs (content-addressed)
+  {rule}/{fingerprint}/{file}      ← real node outputs (64-hex content address)
 
 results/
   experiment__ref+hg38__aligner+bwa/
@@ -38,21 +38,23 @@ for a runnable example.
 
 ## Caching
 
-Each hashed node output lives at `nodes/{rule}/{hash16}/{filename}` by default.
+Each hashed node output lives at `nodes/{rule}/{fingerprint}/{filename}` by default.
 Fingerprint v2 calculates a full 64-character SHA-256 digest from a
 type-tagged, length-framed representation of the rule name, command, config,
 full parent digests, execution context, and declared `Inputs`/`Outputs` types.
-`node.full_fingerprint` exposes that digest; `node.fingerprint` and paths use
-its first 16 characters. Constraints and `repeat` are excluded.
+`node.fingerprint` exposes that complete digest and paths use it without
+truncation. `node.relative_path` is the canonical Path relative to the node
+store. Constraints and `repeat` are excluded.
 
-Fingerprint v2 intentionally changed every pre-v2 output address. Old cache
-directories are not migrated or reused automatically.
+Full-fingerprint paths intentionally replace the earlier 16-character path
+form. Old cache directories are not probed, migrated, reused, or deleted
+automatically.
 
 During path resolution, necroflow validates generated paths against the filesystem's `NAME_MAX` and `PATH_MAX` limits. If a rule name, filename, output directory, or complete generated path would exceed those limits, path resolution fails before execution starts.
 
 ### Rule work directories
 
-Commands may use the built-in `{workdir}` placeholder to refer to the rule-call output directory: `nodes/{rule}/{hash16}` by default. Use it for tools that need to write a directory of side files or temporary computation products that should live next to the declared outputs:
+Commands may use the built-in `{workdir}` placeholder to refer to the rule-call output directory: `nodes/{rule}/{fingerprint}` by default. Use it for tools that need to write a directory of side files or temporary computation products that should live next to the declared outputs:
 
 ```python
 @command("dosomething --tmp {workdir}/scratch -o {result}")
@@ -84,7 +86,7 @@ def project_fingerprint(args: FingerprintArgs) -> str:
 ```
 
 Select it when constructing a pipeline with
-`Pipeline(nodes_dir, fingerprint_function=project_fingerprint,
+`Pipeline(dag, fingerprint_function=project_fingerprint,
 fingerprint_provider="project.project_fingerprint/v1")`, or in job TOML with
 `".fingerprint" = "hashing.py:project_fingerprint"`. The function
 receives the original command and all logical rule-call fields, before output
@@ -139,7 +141,7 @@ built-in `@symlink_file` decorator instead of hand-writing the same
 def raw_spectra(path: str):
     spectra = output(Mzml)
     return spectra
-P.spectra = raw_spectra(path=config["spectra"])
+P.spectra = raw_spectra(P, path=config["spectra"])
 ```
 
 `$(realpath ...)` resolves to an absolute path so the symlink survives if the
@@ -154,7 +156,7 @@ downstream consumer is correctly marked `STALE` and reruns. No
 already covers it once the file is a real node in the DAG.
 
 This is still **in-place overwrite**, not content-addressed versioning: the
-ingestion node's `node.key` is fixed by the path string, not by file content,
+ingestion node's `node.relative_path` is fixed by the path string, not by file content,
 so a rerun always lands in the same directory, overwriting the previous
 result. There is no side-by-side history of dataset versions. If that is
 needed, the caller has to bake a distinguishing token (a version tag, a date,

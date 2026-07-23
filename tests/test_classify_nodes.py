@@ -29,9 +29,10 @@ R_sort_bam = Rule("sort_bam", Inputs(bam=Bam), Outputs(bam=Bam), "touch {bam}")
 
 
 def make_pipeline(
-    nodes_dir="/tmp/necroflow-test-classify", path="/data/s.fastq", ref="hg38"
+    owner="/tmp/necroflow-test-classify", path="/data/s.fastq", ref="hg38"
 ):
-    P = Pipeline(nodes_dir)
+    dag = owner if isinstance(owner, DAG) else DAG(owner)
+    P = Pipeline(dag)
     P.fastq = R_raw_fastq(P, path=path)
     P.bam, P.log = R_align(P, P.fastq, ref=ref)
     P.sorted = R_sort_bam(P, P.bam)
@@ -43,7 +44,7 @@ def make_pipeline(
 
 def test_cooutputs_distinct_node_keys():
     P = make_pipeline()
-    assert P.bam.key != P.log.key
+    assert P.bam.relative_path != P.log.relative_path
 
 
 def test_cooutputs_share_fingerprint():
@@ -64,7 +65,7 @@ def test_command_change_changes_fingerprint():
     R2_sort_bam = Rule("sort_bam", Inputs(bam=Bam), Outputs(bam=Bam), "touch {bam}")
 
     P1 = make_pipeline()  # uses original R with "touch {bam}"
-    P2 = Pipeline(P1.nodes_dir)
+    P2 = Pipeline(DAG(P1.nodes_dir))
     P2.fastq = R2_raw_fastq(P2, path="/data/s.fastq")
     P2.bam = R2_align(P2, P2.fastq, ref="hg38")
     P2.sorted = R2_sort_bam(P2, P2.bam)
@@ -73,9 +74,9 @@ def test_command_change_changes_fingerprint():
 
 
 def test_dag_contains_all_cooutputs(tmp_path):
-    P = make_pipeline(tmp_path)
     dag = DAG(outdir=tmp_path)
-    dag.add(P)
+    P = make_pipeline(dag)
+    dag.require(P.sinks())
     names = [(n.rule.__name__, n.output_name) for n in dag.nodes]
     assert ("align", "bam") in names
     assert ("align", "log") in names
@@ -85,9 +86,9 @@ def test_dag_contains_all_cooutputs(tmp_path):
 
 
 def test_missing(tmp_path):
-    P = make_pipeline(tmp_path)
     dag = DAG(outdir=tmp_path)
-    dag.add(P, request=[P.sorted])
+    P = make_pipeline(dag)
+    dag.require([P.sorted])
     classify_nodes(dag.nodes, dag.required_nodes)
     states = {n.output_name: n.state for n in dag.nodes}
     assert states["fastq"] == NodeState.MISSING
@@ -98,9 +99,9 @@ def test_missing(tmp_path):
 
 
 def test_up_to_date_after_run(tmp_path):
-    P = make_pipeline(tmp_path)
     dag = DAG(outdir=tmp_path)
-    dag.add(P, request=[P.sorted])
+    P = make_pipeline(dag)
+    dag.require([P.sorted])
     dag.execute()
     classify_nodes(dag.nodes, dag.required_nodes)
     for n in dag.required_nodes:
@@ -108,9 +109,9 @@ def test_up_to_date_after_run(tmp_path):
 
 
 def test_stale_direct(tmp_path):
-    P = make_pipeline(tmp_path)
     dag = DAG(outdir=tmp_path)
-    dag.add(P, request=[P.sorted])
+    P = make_pipeline(dag)
+    dag.require([P.sorted])
     dag.execute()
 
     raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
@@ -125,9 +126,9 @@ def test_stale_direct(tmp_path):
 
 
 def test_stale_transitive(tmp_path):
-    P = make_pipeline(tmp_path)
     dag = DAG(outdir=tmp_path)
-    dag.add(P, request=[P.sorted])
+    P = make_pipeline(dag)
+    dag.require([P.sorted])
     dag.execute()
 
     raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
@@ -140,15 +141,15 @@ def test_stale_transitive(tmp_path):
 
 
 def test_orphan(tmp_path):
-    P = make_pipeline(tmp_path)
     dag = DAG(outdir=tmp_path)
-    dag.add(P, request=[P.sorted])
+    P = make_pipeline(dag)
+    dag.require([P.sorted])
     dag.execute()
 
     # rebuild dag requesting only raw_fastq — align/sort outputs become orphans
-    P2 = make_pipeline(tmp_path)
     dag2 = DAG(outdir=tmp_path)
-    dag2.add(P2, request=[P2.fastq])
+    P2 = make_pipeline(dag2)
+    dag2.require([P2.fastq])
     classify_nodes(dag2.nodes, dag2.required_nodes)
 
     orphans = [n for n in dag2.nodes if n.state == NodeState.ORPHAN]
@@ -158,9 +159,9 @@ def test_orphan(tmp_path):
 
 
 def test_reruns_stale_nodes(tmp_path):
-    P = make_pipeline(tmp_path)
     dag = DAG(outdir=tmp_path)
-    dag.add(P, request=[P.sorted])
+    P = make_pipeline(dag)
+    dag.require([P.sorted])
     dag.execute()
 
     raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
@@ -175,9 +176,9 @@ def test_reruns_stale_nodes(tmp_path):
 
 
 def test_skips_up_to_date_on_rerun(tmp_path, capsys):
-    P = make_pipeline(tmp_path)
     dag = DAG(outdir=tmp_path)
-    dag.add(P, request=[P.sorted])
+    P = make_pipeline(dag)
+    dag.require([P.sorted])
     dag.execute()
 
     # second run: record mtimes, re-execute, confirm paths unchanged
@@ -190,9 +191,9 @@ def test_skips_up_to_date_on_rerun(tmp_path, capsys):
 
 def test_content_unchanged_parent_not_stale(tmp_path):
     """Touch parent (mtime changes, content same) — child must stay UP_TO_DATE."""
-    P = make_pipeline(tmp_path)
     dag = DAG(outdir=tmp_path)
-    dag.add(P, request=[P.sorted])
+    P = make_pipeline(dag)
+    dag.require([P.sorted])
     dag.execute()
 
     raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")

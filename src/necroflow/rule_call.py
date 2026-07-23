@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from necroflow.contexts import CommandArgs, FingerprintArgs, NamedValues
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
 class RuleCall:
     """One concrete invocation shared by all of its output Nodes."""
 
-    pipeline: Any
+    dag: Any
     rule: Any
     parents: list[Node]
     config: dict[str, Any]
@@ -23,7 +24,8 @@ class RuleCall:
     execution_context: dict[str, Any] = field(default_factory=dict)
     output_nodes: dict[str, Node] = field(default_factory=dict)
     fingerprint_provider: str = DEFAULT_FINGERPRINT_PROVIDER
-    _full_fingerprint: str | None = None
+    _fingerprint: str | None = None
+    _relative_path: Path | None = None
     _realized_command: str | None = None
     _command_realized: bool = False
 
@@ -55,10 +57,20 @@ class RuleCall:
         )
 
     @property
-    def full_fingerprint(self) -> str:
-        if self._full_fingerprint is None:
+    def fingerprint(self) -> str:
+        if self._fingerprint is None:
             raise RuntimeError("RuleCall fingerprint was not compiled")
-        return self._full_fingerprint
+        return self._fingerprint
+
+    @property
+    def relative_path(self) -> Path:
+        if self._relative_path is None:
+            raise RuntimeError("RuleCall path was not compiled")
+        return self._relative_path
+
+    @property
+    def workdir(self) -> Path:
+        return self.dag.nodes_dir / self.relative_path
 
     def command_args(self) -> CommandArgs:
         named_inputs = {
@@ -66,11 +78,10 @@ class RuleCall:
             for (name, _annotation), parent in zip(self.rule._pos_inputs, self.parents)
         }
         outputs = {name: node.path for name, node in self.output_nodes.items()}
-        first_output = next(iter(self.output_nodes.values()))
         return CommandArgs(
             inputs=NamedValues(named_inputs),
             config=NamedValues(self.config),
             outputs=NamedValues(outputs),
             constraints=NamedValues(self._constraints()),
-            workdir=first_output.path.parent,
+            workdir=self.workdir,
         )

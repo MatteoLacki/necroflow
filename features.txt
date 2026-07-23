@@ -19,15 +19,15 @@ necroflow
 │   │   ├── repeat=N compatibility metadata
 │   │   └── built-in text_file rules for generated config files
 │   ├── Pipeline
-│   │   ├── owns node-store, fingerprint, and shell compile context
+│   │   ├── references a shared DAG and owns fingerprint/shell compile policy
 │   │   ├── explicit first argument to every rule call
 │   │   ├── attribute/item node registration in one label namespace
-│   │   ├── pipeline labels for manifests and requests
+│   │   ├── local aliases for manifests and requests
 │   │   ├── author-declared presentation sections via P.section(...)
 │   │   └── conditional Python pipeline construction
 │   └── DAG
-│       ├── multi-pipeline aggregation
-│       ├── shared-node deduplication
+│       ├── owns the node store and canonical RuleCall registry
+│       ├── immediate shared-node interning across Pipelines
 │       ├── requested target nodes
 │       └── ASCII graph rendering / save
 │
@@ -47,7 +47,7 @@ necroflow
 ├── Caching and paths
 │   ├── content-addressed node paths
 │   ├── fingerprints and absolute paths compiled during rule calls
-│   ├── full framed fingerprint-v2 digests with 16-char path form
+│   ├── full framed fingerprint-v2 digests in 64-character path components
 │   ├── filesystem cache as source of truth
 │   ├── parent/content/config/type-aware fingerprints
 │   ├── optional project-wide .fingerprint function
