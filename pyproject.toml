@@ -20,6 +20,7 @@ dependencies = [
 [project.scripts]
 necroflow = "necroflow.cli:main"
 necroflow-config-set = "necroflow.tools.config_set:main"
+necroflow-count-loc = "necroflow.tools.count_loc:main"
 
 [project.optional-dependencies]
 validation = [
