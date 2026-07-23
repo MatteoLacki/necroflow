@@ -27,7 +27,13 @@ def run_tool(inp: Input):
     return out
 ```
 
-`@command(..., repeat=N)` accepts Snakemake-style repeat compatibility metadata. Necroflow stores it as `rule.repeat` and validates that it is a positive integer, but it is currently metadata only: it does not make the executor run the command multiple times and it is not part of scheduling resources or output fingerprints.
+`@command(..., repeat=N)` allows at most `N` command attempts. The first run
+counts as one attempt, so the default `repeat=1` does not retry. A non-zero exit
+or signal causes another attempt until one succeeds or all attempts are
+exhausted. Necroflow reports intermediate retries but records only the final
+job result. Errors that occur before a command process is run are not retried.
+`repeat` is execution policy: it is not a scheduling resource and remains
+excluded from output fingerprints.
 
 ## Shell selection and brace expansion
 

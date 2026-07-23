@@ -86,6 +86,10 @@ These have been true since the June refactors and are load-bearing design decisi
   requested outputs, and executor bookkeeping; serialize it with `.as_posix()` in JSON.
 - **Co-outputs run once.** All outputs of one rule call are produced by a single submission; the
   siblings are marked done together.
+- **`repeat` counts command attempts.** `repeat=N` makes one scheduler submission
+  and runs the selected command runner at most `N` times, stopping at the first
+  success. Only process failures are retried; the default `repeat=1` makes one
+  attempt. Retry policy remains outside fingerprints.
 - **Exit 0 with a missing declared output is a failure.** The executor checks `path.exists()`
   after every job.
 - **`.rip/` per-output metadata**: `dependencies.toml` (accumulated ancestor config),

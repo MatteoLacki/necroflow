@@ -32,6 +32,18 @@ def job_start(node) -> None:
     _log.info("start  %s → %s%s", desc, node.path, thread_str)
 
 
+def job_retry(node, failed_attempt: int, max_attempts: int, returncode: int) -> None:
+    label = "interrupted" if returncode < 0 else "failed"
+    _log.warning(
+        "retry  %s after %s attempt %d/%d (exit %d)",
+        node.rule.__name__ if node.rule else "?",
+        label,
+        failed_attempt,
+        max_attempts,
+        returncode,
+    )
+
+
 def job_done(node, elapsed: float) -> None:
     _log.info("done   %s in %.1fs", node.rule.__name__ if node.rule else "?", elapsed)
 

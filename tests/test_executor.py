@@ -10,11 +10,12 @@ from necroflow import (
 )
 
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 import tomlkit
-from necroflow import NodeType, Pipeline, DAG, execute, output
+from necroflow import NodeState, NodeType, Pipeline, DAG, execute, output
 from necroflow import fifo_scheduler, connected_component_scheduler, output
 from necroflow.schedulers import ConnectedComponentScheduler
 
@@ -94,6 +95,125 @@ def test_execute_creates_outputs(tmp_path):
     execute_pipeline(P)
     assert P.a.path.exists()
     assert P.b.path.exists()
+
+
+def test_repeat_retries_failed_command_until_success(tmp_path):
+    rule = Rule(
+        "flaky",
+        Inputs(value=str),
+        Outputs(out=A),
+        "touch {out}",
+        repeat=3,
+    )
+    P = Pipeline(DAG(tmp_path))
+    P.out = rule(P, value="x")
+    attempts = 0
+
+    def flaky_runner(node, log_path):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise subprocess.CalledProcessError(1, "flaky")
+        node.path.parent.mkdir(parents=True, exist_ok=True)
+        node.path.touch()
+
+    execute_pipeline(P, node_runner=flaky_runner)
+
+    assert attempts == 3
+    assert P.out.path.exists()
+
+
+def test_repeat_retries_real_shell_command(tmp_path):
+    counter = tmp_path / "attempts"
+    counter.write_text("0")
+    rule = Rule(
+        "flaky_shell",
+        Inputs(counter=str),
+        Outputs(out=A),
+        (
+            "n=$(cat {counter}); n=$((n + 1)); echo $n > {counter}; "
+            "if [ $n -lt 2 ]; then exit 9; fi; touch {out}"
+        ),
+        repeat=2,
+    )
+    P = Pipeline(DAG(tmp_path / "nodes"))
+    P.out = rule(P, counter=str(counter))
+
+    execute_pipeline(P)
+
+    assert counter.read_text().strip() == "2"
+    assert P.out.path.exists()
+
+
+def test_repeat_stops_after_first_success(tmp_path):
+    rule = Rule(
+        "immediate_success",
+        Inputs(value=str),
+        Outputs(out=A),
+        "touch {out}",
+        repeat=3,
+    )
+    P = Pipeline(DAG(tmp_path))
+    P.out = rule(P, value="x")
+    attempts = 0
+
+    def successful_runner(node, log_path):
+        nonlocal attempts
+        attempts += 1
+        node.path.parent.mkdir(parents=True, exist_ok=True)
+        node.path.touch()
+
+    execute_pipeline(P, node_runner=successful_runner)
+
+    assert attempts == 1
+
+
+def test_repeat_does_not_retry_non_process_errors(tmp_path):
+    rule = Rule(
+        "runner_bug",
+        Inputs(value=str),
+        Outputs(out=A),
+        "touch {out}",
+        repeat=3,
+    )
+    P = Pipeline(DAG(tmp_path))
+    P.out = rule(P, value="x")
+    attempts = 0
+
+    def broken_runner(node, log_path):
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("runner bug")
+
+    with pytest.raises(RuntimeError, match="runner bug"):
+        execute_pipeline(P, node_runner=broken_runner)
+
+    assert attempts == 1
+
+
+def test_repeat_raises_last_command_failure_after_limit(tmp_path):
+    rule = Rule(
+        "always_fails",
+        Inputs(value=str),
+        Outputs(out=A),
+        "touch {out}",
+        repeat=3,
+    )
+    P = Pipeline(DAG(tmp_path))
+    P.out = rule(P, value="x")
+    attempts = 0
+
+    def failing_runner(node, log_path):
+        nonlocal attempts
+        attempts += 1
+        raise subprocess.CalledProcessError(7, "always_fails")
+
+    with pytest.raises(subprocess.CalledProcessError) as caught:
+        execute_pipeline(P, node_runner=failing_runner)
+
+    assert caught.value.returncode == 7
+    assert attempts == 3
+    assert P.out.state == NodeState.FAILED
 
 
 def test_execute_handles_outdir_with_spaces(tmp_path):

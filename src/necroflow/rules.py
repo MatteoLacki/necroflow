@@ -432,7 +432,10 @@ def command(
     repeat: int = 1,
     **constraints,
 ):
-    """Create a factory rule or return the decorator-sugar adapter."""
+    """Create a factory rule or return the decorator-sugar adapter.
+
+    ``repeat`` is the maximum number of command attempts, including the first.
+    """
     if isinstance(cmd, list):
         raise TypeError(
             "argv list commands were removed in fingerprint v2; use a shell "

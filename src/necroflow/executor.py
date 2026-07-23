@@ -474,6 +474,19 @@ def _validate_scheduler(scheduler: Scheduler) -> None:
         ) from None
 
 
+def _run_with_retries(node, log_path, runner) -> None:
+    """Run a command at most ``rule.repeat`` times, stopping on success."""
+    max_attempts = node.rule.repeat
+    for attempt in range(1, max_attempts + 1):
+        try:
+            runner(node, log_path)
+            return
+        except subprocess.CalledProcessError as exc:
+            if attempt == max_attempts:
+                raise
+            _logger.job_retry(node, attempt, max_attempts, exc.returncode)
+
+
 def execute(
     dag: DAG,
     resource_caps: dict[str, int] | None = None,
@@ -587,7 +600,9 @@ def execute(
                             _logger.job_start(node)
                             start = time.monotonic()
                             start_wall = _utc_now()
-                            future = pool.submit(_run, node, log_path)
+                            future = pool.submit(
+                                _run_with_retries, node, log_path, _run
+                            )
                             running[future] = (node, start, start_wall, job_res)
                             for r, v in job_res.items():
                                 running_resources[r] = running_resources.get(r, 0) + v
