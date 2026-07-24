@@ -42,6 +42,7 @@ from necroflow import DAG, Node, Pipeline, connected_component_scheduler, fifo_s
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import (
     NodeState,
+    _check_path_limits,
     _content_hash,
     _has_changed_invalidation,
     _output_mtime,
@@ -152,6 +153,32 @@ def _resolve_request(pipeline, labels: list[str] | None) -> list[_RequestedOutpu
     if missing:
         raise SystemExit(f"error: request labels not found in pipeline: {missing}")
     return [_RequestedOutput(label, pipeline[label]) for label in labels]
+
+
+def _validate_result_paths(results_dir: Path, combos: list[_Combo]) -> None:
+    """Validate requested result paths against the destination filesystem."""
+    for job_label, _pipeline, request in combos:
+        for binding in request:
+            path = (
+                results_dir
+                / job_label
+                / _result_relative_path(binding.node, binding.label)
+            )
+            try:
+                _check_path_limits(path.absolute())
+            except ValueError as exc:
+                raise ValueError(
+                    f"result path for Pipeline label {binding.label!r} is invalid: "
+                    f"{exc}"
+                ) from exc
+
+
+def _preflight_result_paths(results_dir: Path, combos: list[_Combo]) -> None:
+    """Fail a CLI command cleanly when a requested result path is impossible."""
+    try:
+        _validate_result_paths(results_dir, combos)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from exc
 
 
 def _resolve_roots(args) -> tuple[Path, Path]:
@@ -532,6 +559,18 @@ def _doctor_payload(args) -> dict:
         issues.append(_issue("NF_CONFIG_PARSE_FAILED", "error", str(exc)))
         return {"ok": False, "issues": issues}
 
+    try:
+        _validate_result_paths(results_dir, combos)
+    except ValueError as exc:
+        issues.append(
+            _issue(
+                "NF_RESULT_PATH_INVALID",
+                "error",
+                str(exc),
+                suggestion="Shorten the job name, Pipeline label, or results root.",
+            )
+        )
+
     for directory, label in ((nodes_dir, "nodes_dir"), (results_dir, "results_dir")):
         try:
             directory.mkdir(parents=True, exist_ok=True)
@@ -568,6 +607,7 @@ def _doctor_payload(args) -> dict:
 def _run(args) -> None:
     nodes_dir, results_dir = _resolve_roots(args)
     dag, combos, forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    _preflight_result_paths(results_dir, combos)
     try:
         report = dag.execute(
             resource_caps=_parse_resource_caps(args),
@@ -608,6 +648,7 @@ def _graph(args) -> None:
 def _outputs(args) -> None:
     nodes_dir, results_dir = _resolve_roots(args)
     dag, combos, _forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    _preflight_result_paths(results_dir, combos)
     if args.json:
         _emit_json(
             _outputs_payload(combos, nodes_dir=nodes_dir, results_dir=results_dir)
@@ -775,6 +816,7 @@ def _create_link_outputs(
 
     Only requested (sink) outputs get a symlink — ancestors are excluded.
     """
+    _validate_result_paths(results_dir, combos)
     for label, _pipeline, requested_outputs in combos:
         combo_dir = results_dir / label
         _clear_generated_result_links(combo_dir)

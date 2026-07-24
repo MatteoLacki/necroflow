@@ -247,8 +247,20 @@ assert P.labels_for(P.primary) == ("primary", "alias")
 ```
 
 The Pipeline's `nodes` list contains that Node once. Labels cannot be
-overwritten, cannot start with `.`, must be one relative path component, and
-must refer to Nodes in the same DAG.
+overwritten and must refer to Nodes in the same DAG. Item labels may be
+canonical relative POSIX paths:
+
+```python
+P["dataset/config"] = make_result(P, value="same")
+assert P["dataset/config"] is node
+```
+
+Each component must be non-empty, non-dot-prefixed, and neither `.` nor `..`;
+absolute paths and repeated or trailing separators are rejected. Encoded
+components are limited to Linux `NAME_MAX` (255 bytes), and the relative label
+plus output filename to Linux `PATH_MAX` (4096 bytes). Assignment also rejects
+result paths where one output would have to be both a file and a directory.
+These checks happen at assignment; labels remain outside the Node fingerprint.
 
 ## 10. The factory selects required outputs
 

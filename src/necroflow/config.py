@@ -70,6 +70,14 @@ def iter_job_configs(
         if require_pipeline and not pipeline_spec:
             raise ValueError(f"job TOML {job_path} has no '.pipeline' key")
         request_labels = config_dict.get(".requests", None)
+        if request_labels is not None:
+            if not isinstance(request_labels, list) or not all(
+                isinstance(label, str) for label in request_labels
+            ):
+                raise ValueError(
+                    f"job TOML {job_path} '.requests' must be a list of strings"
+                )
+            request_labels = list(request_labels)
         factory_config = {
             k: v for k, v in config_dict.items() if not str(k).startswith(".")
         }

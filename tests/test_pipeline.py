@@ -146,11 +146,69 @@ def test_pipeline_item_labels_support_non_identifiers():
     assert P.labels_for(P["sample-1 raw"]) == ("sample-1 raw",)
 
 
-def test_pipeline_item_labels_cannot_escape_the_result_directory():
+def test_pipeline_item_labels_support_canonical_relative_paths():
+    P = Pipeline(DAG(TEST_NODES_DIR))
+    labels = [
+        f"{dataset}/{config}"
+        for dataset in ("sample-1", "sample-2")
+        for config in ("strict", "relaxed")
+    ]
+
+    for label in labels:
+        P[label] = R_make_a(P, x=label)
+
+    assert P.labels == tuple(labels)
+    assert all(P.labels_for(P[label]) == (label,) for label in labels)
+    assert [node.relative_path for node in P.sinks()] == [
+        P[label].relative_path for label in labels
+    ]
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "/absolute",
+        "../outside",
+        "dataset/../outside",
+        "dataset/./config",
+        "dataset//config",
+        "dataset/config/",
+        "dataset/.hidden",
+        "dataset/\0bad",
+    ],
+)
+def test_pipeline_item_labels_reject_unsafe_or_noncanonical_paths(label):
     P = Pipeline(DAG(TEST_NODES_DIR))
 
-    with pytest.raises(ValueError, match="one relative path component"):
-        P["outside/result"] = R_make_a(P, x="x")
+    with pytest.raises(ValueError):
+        P[label] = R_make_a(P, x="x")
+
+
+def test_pipeline_label_component_limits_use_encoded_bytes():
+    P = Pipeline(DAG(TEST_NODES_DIR))
+    P["€" * 85] = R_make_a(P, x="fits")
+
+    with pytest.raises(ValueError, match=r"258 > NAME_MAX 255 bytes"):
+        P["€" * 86] = R_make_a(P, x="too-long")
+
+
+def test_pipeline_label_rejects_portably_overlong_result_path():
+    P = Pipeline(DAG(TEST_NODES_DIR))
+    exact_limit = "/".join(["x" * 255] * 15 + ["x" * 250])
+    P[exact_limit] = R_make_a(P, x="fits-exactly")
+
+    label = "/".join(["x" * 255] * 16)
+
+    with pytest.raises(ValueError, match="PATH_MAX 4096"):
+        P[label] = R_make_a(P, x="too-long")
+
+
+def test_pipeline_labels_reject_result_file_directory_conflicts():
+    P = Pipeline(DAG(TEST_NODES_DIR))
+    P["dataset"] = R_make_a(P, x="first")
+
+    with pytest.raises(ValueError, match="conflicts"):
+        P["dataset/a.txt"] = R_make_a(P, x="second")
 
 
 def test_pipeline_item_labels_can_use_reserved_attribute_names():

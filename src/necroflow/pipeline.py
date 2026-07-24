@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from necroflow.nodes import Node
 from necroflow.rule_call import RuleCall
@@ -11,6 +11,54 @@ from necroflow.fingerprints import (
     default_fingerprint,
     validate_fingerprint_function,
 )
+
+_LINUX_NAME_MAX = 255
+_LINUX_PATH_MAX = 4096
+
+
+def _validate_pipeline_label(name: str, output_filename: str) -> PurePosixPath:
+    """Return a canonical, portable relative result path for a label."""
+    if not isinstance(name, str):
+        raise TypeError("Pipeline label must be a string")
+    if not name:
+        raise ValueError("Pipeline label must not be empty")
+    if name.startswith("."):
+        raise ValueError(f"Pipeline label {name!r} must not start with '.'")
+
+    label_path = PurePosixPath(name)
+    if label_path.is_absolute() or label_path.as_posix() != name:
+        raise ValueError(
+            f"Pipeline label {name!r} must be a canonical relative POSIX path"
+        )
+    for component in label_path.parts:
+        if "\0" in component:
+            raise ValueError(f"Pipeline label {name!r} contains a null byte")
+        if component in {".", ".."} or component.startswith("."):
+            raise ValueError(
+                f"Pipeline label {name!r} contains forbidden component "
+                f"{component!r}"
+            )
+        length = len(os.fsencode(component))
+        if length > _LINUX_NAME_MAX:
+            raise ValueError(
+                f"Pipeline label component too long "
+                f"({length} > NAME_MAX {_LINUX_NAME_MAX} bytes): {component!r}"
+            )
+
+    result_path = label_path / output_filename
+    length = len(os.fsencode(result_path.as_posix()))
+    if length > _LINUX_PATH_MAX:
+        raise ValueError(
+            f"Pipeline result path too long "
+            f"({length} > PATH_MAX {_LINUX_PATH_MAX} bytes): {result_path}"
+        )
+    return label_path
+
+
+def _result_paths_conflict(left: PurePosixPath, right: PurePosixPath) -> bool:
+    """Return whether either result path must be a directory for the other."""
+    return left == right or left in right.parents or right in left.parents
+
 
 # Maps frozenset of active directions {U,D,L,R} to box-drawing char
 _BOX = {
@@ -335,21 +383,20 @@ class Pipeline(_GraphBase):
         return self._node_names[name]
 
     def _assign_node(self, name: str, value: Node) -> None:
-        if not isinstance(name, str):
-            raise TypeError("Pipeline label must be a string")
-        if not name:
-            raise ValueError("Pipeline label must not be empty")
-        if name.startswith("."):
-            raise ValueError(f"Pipeline label {name!r} must not start with '.'")
-        path = Path(name)
-        if path.is_absolute() or len(path.parts) != 1:
-            raise ValueError(
-                f"Pipeline label {name!r} must be one relative path component"
-            )
+        label_path = _validate_pipeline_label(name, value.path.name)
         if name in self._node_names:
             raise ValueError(f"Pipeline label {name!r} already assigned")
         if value.rule_call.dag is not self._dag:
             raise ValueError(f"Node assigned as {name!r} belongs to a different DAG")
+        result_path = label_path / value.path.name
+        for existing_name, existing_node in self._node_names.items():
+            existing_path = PurePosixPath(existing_name) / existing_node.path.name
+            if _result_paths_conflict(result_path, existing_path):
+                raise ValueError(
+                    f"Pipeline result path {result_path!s} for label {name!r} "
+                    f"conflicts with {existing_path!s} for label "
+                    f"{existing_name!r}"
+                )
         if value.relative_path not in self._node_paths:
             self._nodes_list.append(value)
             self._node_paths.add(value.relative_path)

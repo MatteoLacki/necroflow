@@ -99,6 +99,11 @@ These have been true since the June refactors and are load-bearing design decisi
   shared DAG. A rule call fingerprints and interns its `RuleCall` immediately; equivalent calls
   return identical Node objects. Attribute/item assignment records Pipeline-local labels and
   sections. Several labels may alias one Node; Nodes do not carry a singular pipeline label.
+- **Pipeline labels are safe visible paths.** Item labels may be canonical relative POSIX
+  paths. Assignment rejects absolute, empty, dot-prefixed, `.`/`..`, repeated/trailing
+  separator, Linux byte-limit, and file/directory-conflicting result paths. Labels select
+  visible links and remain outside fingerprints. CLI result paths receive an exact
+  destination-filesystem preflight before execution and again before link creation.
 - **Variadic Node inputs retain groups.** `tuple[NodeType, ...]` accepts an ordered
   tuple, while `Annotated[tuple[NodeType, ...], Many(...)]` applies inclusive size
   bounds. RuleCall/fingerprint/command contexts retain named tuple groups;

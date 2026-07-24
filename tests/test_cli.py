@@ -8,6 +8,7 @@ import time
 import tomlkit
 import pytest
 
+import necroflow.cli as cli_core
 from necroflow._compat import ExceptionGroup
 from pathlib import Path
 from necroflow import NodeType, Pipeline, DAG, output
@@ -228,6 +229,18 @@ FACTORY_SRC = textwrap.dedent("""\
 def factory_file(tmp_path):
     f = tmp_path / "pipe.py"
     f.write_text(FACTORY_SRC)
+    return f
+
+
+@pytest.fixture
+def path_factory_file(tmp_path):
+    f = tmp_path / "path_pipe.py"
+    f.write_text(
+        FACTORY_SRC.replace(
+            "P.b = make_b(P, P.a)",
+            'P["dataset/config"] = make_b(P, P.a)',
+        )
+    )
     return f
 
 
@@ -661,6 +674,138 @@ def test_main_request_limits_execution(tmp_path, factory_file):
     main(["--outdir", str(outdir), str(job)])
     assert list(outdir.rglob("a.txt"))
     assert not list(outdir.rglob("b.txt"))
+
+
+def test_main_path_request_creates_nested_result_and_manifest(
+    tmp_path, path_factory_file, capsys
+):
+    job = tmp_path / "job.toml"
+    job.write_text(
+        f'".pipeline" = "{path_factory_file}:factory"\n'
+        '".requests" = ["dataset/config"]\n'
+        'v = "hello"\n'
+    )
+    nodes_dir = tmp_path / "nodes"
+    results_dir = tmp_path / "results"
+
+    main(
+        [
+            "outputs",
+            "--json",
+            "--nodes-dir",
+            str(nodes_dir),
+            "--results-dir",
+            str(results_dir),
+            str(job),
+        ]
+    )
+    requested = _json_stdout(capsys)["jobs"][0]["requested"]
+    assert requested[0]["label"] == "dataset/config"
+    assert requested[0]["result_path"].endswith("/dataset/config/b.txt")
+
+    main(
+        [
+            "--nodes-dir",
+            str(nodes_dir),
+            "--results-dir",
+            str(results_dir),
+            str(job),
+        ]
+    )
+
+    result = results_dir / "job" / "dataset" / "config" / "b.txt"
+    assert result.is_symlink()
+    assert result.resolve() == _real_output(nodes_dir, "b.txt")
+    manifest = tomlkit.parse((results_dir / "job" / "manifest.toml").read_text())
+    assert manifest["outputs"]["dataset/config"] == "dataset/config/b.txt"
+
+    output = _real_output(nodes_dir, "b.txt")
+    mtime = output.stat().st_mtime
+    time.sleep(0.05)
+    main(
+        [
+            "--nodes-dir",
+            str(nodes_dir),
+            "--results-dir",
+            str(results_dir),
+            "--invalidate",
+            "dataset/config",
+            str(job),
+        ]
+    )
+    assert output.stat().st_mtime > mtime
+
+    capsys.readouterr()
+    main(
+        [
+            "explain",
+            "--json",
+            "--node",
+            "dataset/config",
+            "--nodes-dir",
+            str(nodes_dir),
+            "--results-dir",
+            str(results_dir),
+            str(job),
+        ]
+    )
+    payload = _json_stdout(capsys)
+    assert [node["label"] for node in payload["nodes"]] == ["dataset/config"]
+
+
+@pytest.mark.parametrize(
+    "requests",
+    [
+        '"a"',
+        '[["a"]]',
+        '["a", 1]',
+    ],
+)
+def test_job_requests_must_be_a_list_of_strings(tmp_path, factory_file, requests):
+    from necroflow.config import iter_job_configs
+
+    job = tmp_path / "job.toml"
+    job.write_text(
+        f'".pipeline" = "{factory_file}:factory"\n'
+        f'".requests" = {requests}\n'
+        'v = "hello"\n'
+    )
+
+    with pytest.raises(ValueError, match="list of strings"):
+        list(iter_job_configs(job))
+
+
+def test_run_preflights_result_paths_before_execution(
+    tmp_path, factory_file, monkeypatch
+):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    def reject(_path):
+        raise ValueError("simulated NAME_MAX failure")
+
+    def unexpected_execute(*_args, **_kwargs):
+        pytest.fail("DAG.execute was called before result-path preflight")
+
+    monkeypatch.setattr(cli_core, "_check_path_limits", reject)
+    monkeypatch.setattr(DAG, "execute", unexpected_execute)
+
+    with pytest.raises(SystemExit, match="Pipeline label 'b' is invalid.*NAME_MAX"):
+        main(["--outdir", str(tmp_path / "out"), str(job)])
+
+
+def test_link_creation_defensively_validates_result_paths(tmp_path, monkeypatch):
+    P, _outdir = _make_pipeline_with_outputs(tmp_path / "nodes")
+    results_dir = tmp_path / "results"
+
+    def reject(_path):
+        raise ValueError("simulated PATH_MAX failure")
+
+    monkeypatch.setattr(cli_core, "_check_path_limits", reject)
+
+    with pytest.raises(ValueError, match="Pipeline label 'log' is invalid"):
+        _create_link_outputs(results_dir, [("run1", P, _resolve_request(P, None))])
+    assert not results_dir.exists()
 
 
 def test_main_dry_run_no_outputs(tmp_path, factory_file):
@@ -1185,6 +1330,26 @@ def test_doctor_json_ok_for_valid_job(tmp_path, factory_file, capsys):
 
     payload = _json_stdout(capsys)
     assert payload == {"issues": [], "ok": True}
+
+
+def test_doctor_json_reports_invalid_result_path(
+    tmp_path, factory_file, monkeypatch, capsys
+):
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    def reject(_path):
+        raise ValueError("simulated PATH_MAX failure")
+
+    monkeypatch.setattr(cli_core, "_check_path_limits", reject)
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["doctor", "--json", "--outdir", str(tmp_path / "out"), str(job)])
+
+    assert excinfo.value.code == 1
+    payload = _json_stdout(capsys)
+    assert payload["ok"] is False
+    assert any(issue["code"] == "NF_RESULT_PATH_INVALID" for issue in payload["issues"])
 
 
 def test_doctor_json_reports_missing_pipeline(tmp_path, capsys):

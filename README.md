@@ -115,9 +115,19 @@ DAG; after each factory, the caller marks its sinks or explicit outputs with
 `dag.require(...)`.
 
 Attribute and item labels share one namespace. Use `P.counts` for ordinary
-Python identifiers and `P["sample-1 counts"]` for generated or non-identifier
-labels; either form can read ordinary labels assigned by the other. Labels that
-collide with Pipeline API attributes such as `nodes` are item-only.
+Python identifiers and item syntax for generated paths:
+
+```python
+for dataset, config in combinations:
+    P[f"{dataset}/{config}"] = count(P, inputs[dataset], config=config)
+```
+
+Labels are canonical relative POSIX paths, so `P["dataset/config"]` creates a
+nested result at `results/<job>/dataset/config/<filename>` and is requested
+with the same string in `.requests`. Absolute paths, empty or dot-prefixed
+components, `.`, `..`, repeated/trailing separators, and paths exceeding Linux
+`NAME_MAX`/`PATH_MAX` byte limits are rejected at assignment. Labels that collide
+with Pipeline API attributes such as `nodes` are item-only.
 
 ## Run from the CLI
 

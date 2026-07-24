@@ -58,6 +58,16 @@ absolute path immediately. Path checks cover component byte lengths against
 `os.pathconf()` on the nearest existing parent. Violations raise during the rule
 call, before assignment or execution.
 
+Pipeline item labels may independently be canonical relative POSIX paths, for
+example `P["dataset/config"]`. Assignment validates every component against the
+portable Linux `NAME_MAX` of 255 encoded bytes, validates the label plus output
+filename against `PATH_MAX` 4096, and rejects absolute paths, dot components,
+dot-prefixed components, non-canonical separators, and file/directory result
+conflicts. These labels only select visible result links and do not affect
+fingerprints. CLI run and outputs commands validate the complete absolute result
+paths against the destination filesystem before execution; link creation repeats
+the check defensively. Doctor reports failures as `NF_RESULT_PATH_INVALID`.
+
 ## Rule repeat metadata
 
 `@command(..., repeat=N)` accepts repeat compatibility metadata. `repeat` is validated as a positive integer and stored as `rule.repeat`. It is compatibility metadata only: not a scheduler resource, not an execution multiplier, and not part of node fingerprints.

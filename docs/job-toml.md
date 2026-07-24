@@ -9,7 +9,7 @@
 ".pipeline" = "path/to/factory.py:function_name"
 
 # optional — Pipeline labels to request (defaults to all sink labels)
-".requests" = ["counts", "qc"]
+".requests" = ["counts", "dataset/qc"]
 
 # optional — complete project fingerprint policy
 ".fingerprint" = "path/to/hashing.py:project_fingerprint"
@@ -26,6 +26,10 @@ node config. User config can freely use names such as `pipeline` or `request`.
 The loaded callable must have the shape `factory(P: Pipeline, config: dict) ->
 None`. Necroflow constructs `P` with `--nodes-dir`, the selected fingerprint
 function, and `--shellpath` before invoking the factory.
+
+`.requests` must be an array of strings. Each string is an exact Pipeline label;
+labels may be canonical relative POSIX paths such as `dataset/qc`. The visible
+result is then nested at `results/<job>/dataset/qc/<filename>`.
 
 ## Parameter grids
 

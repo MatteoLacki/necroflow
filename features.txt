@@ -24,6 +24,8 @@ necroflow
 │   │   ├── references a shared DAG and owns fingerprint/shell compile policy
 │   │   ├── explicit first argument to every rule call
 │   │   ├── attribute/item node registration in one label namespace
+│   │   ├── canonical relative POSIX path labels for nested visible results
+│   │   ├── early label byte-limit and file/directory conflict rejection
 │   │   ├── local aliases for manifests and requests
 │   │   ├── author-declared presentation sections via P.section(...)
 │   │   └── conditional Python pipeline construction
@@ -56,6 +58,7 @@ necroflow
 │   ├── optional project-wide .fingerprint function
 │   ├── explicit shellpath included in command fingerprints
 │   ├── path length validation
+│   ├── destination-filesystem result-path preflight before execution and linking
 │   ├── output content hashes
 │   ├── invalidator tokens on NodeType
 │   └── .rip metadata directories

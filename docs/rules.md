@@ -161,8 +161,11 @@ The idiomatic pattern for multi-sample or multi-condition work is one shared
 interned immediately; after each factory, call `dag.require(P.sinks())` or
 require explicitly selected labels.
 Attribute and item labels (`P.result` and `P["result"]`) share one namespace.
-Item labels may use non-identifier characters such as spaces or hyphens, but
-remain one relative path component because the CLI uses them for result links.
+Item labels may be canonical relative POSIX paths, so generated targets can use
+`P[f"{dataset}/{config}"]`; request them with the identical string. Components
+must be non-empty, non-dot-prefixed, and neither `.` nor `..`; absolute paths and
+non-canonical separators are rejected. Components and complete visible result
+paths are checked by encoded byte length against Linux `NAME_MAX` and `PATH_MAX`.
 
 ## Pipeline sections
 
