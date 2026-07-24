@@ -17,6 +17,51 @@ run_sage = command(
 
 The decorator form below remains supported as syntactic sugar.
 
+## Variadic Node inputs
+
+Use `tuple[NodeType, ...]` when a rule consumes an ordered number of Nodes
+that is only known while the pipeline factory runs. The call receives one actual
+tuple for that named input:
+
+```python
+from typing import Annotated
+from necroflow import Many
+
+merge = command(
+    "samtools merge {merged} {bams}",
+    Inputs(bams=Annotated[tuple[Bam, ...], Many(min=1, max=10)]),
+    Outputs(merged=MergedBam),
+    name="merge",
+)
+
+P.merged = merge(P, tuple(sample_bams))
+```
+
+A plain `tuple[Bam, ...]` accepts zero or more Nodes. `Many()` changes the
+default minimum to one; `min` and `max` are inclusive, and `max=None` is
+unbounded. Values must be tuples rather than lists, generators, or expanded
+positional arguments. Tuple elements retain their order and must belong to the
+same DAG as the compiling Pipeline. NodeType unions also work, for example
+`tuple[Bam | Cram, ...]`.
+
+Several variadic groups may appear alongside fixed Node inputs. Each group is
+still one positional rule argument:
+
+```python
+P.comparison = compare(
+    P,
+    tuple(tumor_bams),
+    P.reference,
+    tuple(normal_bams),
+)
+```
+
+In a static shell template, `{bams}` expands to one shell-quoted path per tuple
+element, separated by spaces. An empty plain tuple expands to the empty string.
+For repeated flags or another layout, use a Python command callback; its
+`args.inputs.bams` is an ordered `tuple[Path, ...]`. Group membership, element
+order, input name, and any `Many` bounds participate in the default fingerprint.
+
 ## Python command callbacks
 
 When a command must be assembled from resolved values, pass a module-level

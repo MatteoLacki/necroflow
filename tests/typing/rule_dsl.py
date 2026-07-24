@@ -1,10 +1,13 @@
 """Static-analysis fixture for rule output and dynamic pipeline shapes."""
 
+from typing import Annotated
+
 from necroflow import (
     CommandArgs,
     Constraints,
     DAG,
     Inputs,
+    Many,
     Node,
     NodeType,
     Outputs,
@@ -59,12 +62,19 @@ def callback_rule(source: Source):
     return callback_left
 
 
+@command("cat {sources} > {left}")
+def merge_sources(sources: Annotated[tuple[Source, ...], Many()]):
+    left = output(Left)
+    return left
+
+
 pipeline = Pipeline(DAG("/tmp/necroflow-typing"))
 source_node: Node = make_source(pipeline, text="value")
 left_node: Node
 right_node: Node
 left_node, right_node = split_source(pipeline, source_node)
 callback_node: Node = callback_rule(pipeline, source_node)
+merged_node: Node = merge_sources(pipeline, (source_node,))
 
 pipeline.source = source_node
 pipeline.left, pipeline.right = split_source(pipeline, pipeline.source)

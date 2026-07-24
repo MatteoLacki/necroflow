@@ -16,7 +16,7 @@ from necroflow.nodes import (
     _topo_sort,
 )
 from necroflow.fingerprints import command_ast, python_identity
-from necroflow.rules import parse_resource, _is_node_input_contract
+from necroflow.rules import parse_resource
 
 
 def _filesystem_limits(path: Path) -> tuple[int | None, int | None]:
@@ -213,6 +213,16 @@ def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
         node.state = NodeState.STALE if stale else NodeState.UP_TO_DATE
 
 
+class _ShellArguments:
+    """Render a tuple of paths as independently quoted shell arguments."""
+
+    def __init__(self, values: tuple[Path, ...]):
+        self.values = values
+
+    def __str__(self) -> str:
+        return " ".join(shlex.quote(str(value)) for value in self.values)
+
+
 class _ConstraintFormatter:
     def __init__(self, constraints: dict[str, Any]):
         self.constraints = constraints
@@ -231,6 +241,8 @@ class _ConstraintFormatter:
 def _quote_command_substitution(value: Any) -> Any:
     if isinstance(value, _ConstraintFormatter):
         return value
+    if isinstance(value, _ShellArguments):
+        return str(value)
     return shlex.quote(str(value))
 
 
@@ -256,12 +268,11 @@ def resolve_command(node: Node) -> str | None:
         call._realized_command = result
         call._command_realized = True
         return result
-    pos_input_names = [
-        n for n, t in node.rule.inputs.specs.items() if _is_node_input_contract(t)
-    ]
-    subs: dict[str, Any] = {}
-    for iname, parent in zip(pos_input_names, node.parents):
-        subs[iname] = parent.path
+    command_inputs = call.command_args().inputs
+    subs: dict[str, Any] = {
+        name: _ShellArguments(value) if isinstance(value, tuple) else value
+        for name, value in command_inputs.items()
+    }
     subs.update(node.config)
     command_constraints = {
         "threads": node.rule.constraints.get("threads", node.rule.resources["threads"])

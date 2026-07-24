@@ -4,7 +4,11 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TYPE_CHECKING, TypeVar
+
+if TYPE_CHECKING:
+    from necroflow.nodes import Node
+
 
 _T = TypeVar("_T")
 
@@ -47,7 +51,7 @@ class NamedValues(Mapping[str, _T], Generic[_T]):
 class CommandArgs:
     """Resolved values supplied to a Python command callback."""
 
-    inputs: NamedValues[Path]
+    inputs: NamedValues[Path | tuple[Path, ...]]
     config: NamedValues[Any]
     outputs: NamedValues[Path]
     constraints: NamedValues[Any]
@@ -60,7 +64,7 @@ class FingerprintArgs:
 
     rule_name: str
     command: str | Callable[[CommandArgs], str] | None
-    inputs: NamedValues[Any]
+    inputs: NamedValues[Node | tuple[Node, ...]]
     config: NamedValues[Any]
     input_types: NamedValues[Any]
     output_types: NamedValues[Any]

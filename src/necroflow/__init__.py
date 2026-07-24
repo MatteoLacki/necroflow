@@ -11,6 +11,7 @@ from necroflow.dag import (
 from necroflow.rules import (
     Constraints,
     Inputs,
+    Many,
     Outputs,
     command,
     output,
@@ -36,6 +37,7 @@ __all__ = [
     "Node",
     "NodeType",
     "Inputs",
+    "Many",
     "Outputs",
     "Constraints",
     "command",

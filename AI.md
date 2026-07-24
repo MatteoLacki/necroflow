@@ -32,6 +32,18 @@ the `Pipeline(..., fingerprint_function=..., fingerprint_provider=...)`
 constructor arguments replace the complete policy for every rule call; a
 project function may call the public default to compose with it.
 
+## Variadic Node inputs
+
+`tuple[NodeType, ...]` declares an ordered variadic Node group and accepts an
+actual tuple as one positional rule argument. `Annotated[tuple[NodeType, ...],
+Many()]` defaults to at least one element; `min` and `max` are inclusive and
+`max=None` is unbounded. Several groups may coexist with fixed Node inputs.
+RuleCall and fingerprint contexts retain named tuples, while `RuleCall.parents`
+flattens them in declaration/element order for graph traversal. `CommandArgs`
+contains tuples of resolved Paths. Static placeholders quote every group path
+separately; callable commands control custom layouts. Grouping, order, names,
+and `Many` bounds affect the default fingerprint.
+
 ## NodeType invalidators
 
 `NodeType.invalidator` is optional and defaults to `None`. When set, it is a callable receiving the concrete `Node` and returning a stable `str` token. Necroflow stores the token at `.rip/{filename}.invalidation` after a successful run. During classification, an existing output with a missing or changed token is marked `STALE`; callback exceptions fail fast. The token does not participate in the node fingerprint.

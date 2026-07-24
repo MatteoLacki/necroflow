@@ -18,7 +18,7 @@ class RuleCall:
 
     dag: Any
     rule: Any
-    parents: list[Node]
+    inputs: NamedValues[Node | tuple[Node, ...]]
     config: dict[str, Any]
     command: str | Callable | None
     shellpath: str | None = None
@@ -38,15 +38,19 @@ class RuleCall:
         values.update(self.rule.constraints)
         return values
 
+    @property
+    def parents(self) -> list[Node]:
+        """Return all input Nodes in declaration and tuple-element order."""
+        result: list[Node] = []
+        for value in self.inputs.values():
+            result.extend(value if isinstance(value, tuple) else (value,))
+        return result
+
     def fingerprint_args(self) -> FingerprintArgs:
-        named_parents = {
-            name: parent
-            for (name, _annotation), parent in zip(self.rule._pos_inputs, self.parents)
-        }
         return FingerprintArgs(
             rule_name=self.rule.__name__,
             command=self.command,
-            inputs=NamedValues(named_parents),
+            inputs=self.inputs,
             config=NamedValues(self.config),
             input_types=NamedValues(self.rule.inputs.specs),
             output_types=NamedValues(self.rule.outputs.specs),
@@ -74,8 +78,12 @@ class RuleCall:
 
     def command_args(self) -> CommandArgs:
         named_inputs = {
-            name: parent.path
-            for (name, _annotation), parent in zip(self.rule._pos_inputs, self.parents)
+            name: (
+                tuple(parent.path for parent in value)
+                if isinstance(value, tuple)
+                else value.path
+            )
+            for name, value in self.inputs.items()
         }
         outputs = {name: node.path for name, node in self.output_nodes.items()}
         return CommandArgs(

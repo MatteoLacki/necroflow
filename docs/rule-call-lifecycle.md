@@ -95,11 +95,18 @@ nodes = self._compile_outputs(pipeline, args, kwargs)
 return self._shape_outputs(nodes)
 ```
 
-The logical parents are the validated Node arguments:
+The validated values retain their named logical shape. A fixed input stores one
+Node, while a variadic input stores one ordered tuple of Nodes:
 
 ```python
-parents = [arg for arg in args if isinstance(arg, Node)]
+node_inputs = {
+    name: value
+    for (name, _contract), value in zip(self._pos_inputs, args)
+}
 ```
+
+`RuleCall.parents` flattens those values only for graph traversal, preserving
+declaration order and each tuple’s element order.
 
 ## 5. A candidate RuleCall is fingerprinted
 
@@ -109,7 +116,7 @@ One candidate `RuleCall` represents the invocation and all of its co-outputs:
 call = RuleCall(
     dag=P.dag,
     rule=sort_text,
-    parents=[P.source],
+    inputs=NamedValues({"source": P.source}),
     config={"reverse": False},
     command=sort_text.command,
     shellpath=P.shellpath,
@@ -134,7 +141,9 @@ FingerprintArgs(
 )
 ```
 
-Parent Nodes contribute their full fingerprints. Static commands contribute
+Parent Nodes contribute their full fingerprints. A variadic input remains one
+named tuple in `FingerprintArgs.inputs`; its group boundary and element order are
+therefore available to both the default and project fingerprint functions. Static commands contribute
 their strings. Supported Python callbacks contribute canonical AST plus Python
 implementation/version identity. A project fingerprint can replace or extend
 the default policy.
@@ -282,7 +291,10 @@ CommandArgs(
 
 A callable returns one complete shell string. The result is cached on the
 canonical RuleCall, so co-outputs and duplicate factory calls realize it once.
-Static command templates use the same resolved values.
+Static command templates use the same resolved values. For a variadic input,
+`CommandArgs.inputs` contains an ordered tuple of resolved Paths; a static
+`{name}` placeholder shell-quotes each path independently and joins them with
+one space.
 
 ## 13. Execution materializes the canonical call
 
@@ -301,7 +313,7 @@ create Pipeline(dag, fingerprint/shell policy)
     ↓
 factory(P, config)
     ↓
-rule(P, canonical parents..., config...)
+rule(P, fixed Nodes and/or Node tuples, config...)
     ↓
 validate types and shared DAG ownership
     ↓

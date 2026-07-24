@@ -11,7 +11,7 @@ import re
 import sys
 import textwrap
 from types import UnionType
-from typing import Any, Callable, get_args, get_origin
+from typing import Annotated, Any, Callable, get_args, get_origin, Union
 
 from necroflow.contexts import FingerprintArgs
 
@@ -25,11 +25,13 @@ class FingerprintValueError(TypeError):
 
 
 def python_identity() -> str:
+    """Return the implementation and exact version for callback identity."""
     version = sys.version_info
     return f"{platform.python_implementation()}-{version.major}.{version.minor}.{version.micro}"
 
 
 def _frame(tag: bytes, payloads: Sequence[bytes]) -> bytes:
+    """Encode a tagged sequence with unambiguous length boundaries."""
     result = bytearray(tag)
     result.extend(len(payloads).to_bytes(8, "big"))
     for payload in payloads:
@@ -114,8 +116,22 @@ def canonical_bytes(value: Any, *, path: str = "value") -> bytes:
 
 
 def _type_name(annotation: Any) -> str:
-    if get_origin(annotation) is UnionType:
+    """Render a deterministic type identity for fingerprint input metadata."""
+    origin = get_origin(annotation)
+    if origin in (UnionType, Union):
         return "|".join(sorted(_type_name(member) for member in get_args(annotation)))
+    if origin is Annotated:
+        base, *metadata = get_args(annotation)
+        metadata_names = []
+        for value in metadata:
+            value_type = type(value)
+            type_name = f"{value_type.__module__}.{value_type.__qualname__}"
+            metadata_names.append(f"{type_name}:{value!r}")
+        return f"typing.Annotated[{_type_name(base)},{','.join(metadata_names)}]"
+    if origin is tuple:
+        members = get_args(annotation)
+        if len(members) == 2 and members[1] is Ellipsis:
+            return f"builtins.tuple[{_type_name(members[0])},...]"
     module = getattr(annotation, "__module__", "")
     qualname = getattr(annotation, "__qualname__", None)
     if qualname is not None:
@@ -124,6 +140,7 @@ def _type_name(annotation: Any) -> str:
 
 
 def _unwrapped_function(callback: Callable) -> Callable:
+    """Return an inspectable module-level callback with no captured state."""
     callback = inspect.unwrap(callback)
     if not inspect.isfunction(callback):
         raise TypeError(
@@ -199,6 +216,7 @@ def command_ast(callback: Callable) -> tuple[str, Path]:
 
 
 def validate_command_callback(callback: Callable) -> None:
+    """Require a source-inspectable callback with one CommandArgs parameter."""
     callback = _unwrapped_function(callback)
     parameters = list(inspect.signature(callback).parameters.values())
     if len(parameters) != 1 or parameters[0].kind not in (
@@ -213,6 +231,7 @@ def validate_command_callback(callback: Callable) -> None:
 
 
 def _command_identity(command: Any, recipe_identity: str | None) -> Any:
+    """Return the canonical identity payload for one rule recipe."""
     if recipe_identity is not None:
         return {"kind": "recipe", "identity": recipe_identity}
     if command is None:
@@ -234,13 +253,27 @@ def default_fingerprint(args: FingerprintArgs) -> str:
 
     parents = []
     for name, parent in args.inputs.items():
-        parents.append(
-            {
-                "name": name,
-                "fingerprint": parent.fingerprint,
-                "output": parent.output_name or "",
-            }
-        )
+        if isinstance(parent, tuple):
+            parents.append(
+                {
+                    "name": name,
+                    "group": [
+                        {
+                            "fingerprint": item.fingerprint,
+                            "output": item.output_name or "",
+                        }
+                        for item in parent
+                    ],
+                }
+            )
+        else:
+            parents.append(
+                {
+                    "name": name,
+                    "fingerprint": parent.fingerprint,
+                    "output": parent.output_name or "",
+                }
+            )
     identity = {
         "domain": FINGERPRINT_DOMAIN,
         "rule": args.rule_name,
@@ -264,6 +297,7 @@ def default_fingerprint(args: FingerprintArgs) -> str:
 
 
 def validate_fingerprint_result(value: Any, *, provider: str) -> str:
+    """Require a provider result to be one lowercase 64-hex digest."""
     if not isinstance(value, str) or _HEX_DIGEST.fullmatch(value) is None:
         raise TypeError(
             f"fingerprint function {provider!r} must return exactly 64 lowercase "
@@ -273,6 +307,7 @@ def validate_fingerprint_result(value: Any, *, provider: str) -> str:
 
 
 def validate_fingerprint_function(function: Callable, *, provider: str) -> None:
+    """Require a provider function with one FingerprintArgs parameter."""
     parameters = list(inspect.signature(function).parameters.values())
     if len(parameters) != 1 or parameters[0].kind not in (
         inspect.Parameter.POSITIONAL_ONLY,

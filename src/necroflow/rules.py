@@ -2,11 +2,23 @@ from __future__ import annotations
 
 from collections import namedtuple
 from collections.abc import Callable
+from dataclasses import dataclass
 import re
 from types import UnionType
 from string import Formatter
-from typing import Any, Generic, TypeVar, cast, get_args, get_origin, overload
+from typing import (
+    Annotated,
+    Any,
+    Generic,
+    TypeVar,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    overload,
+)
 
+from necroflow.contexts import NamedValues
 from necroflow.nodes import Node, NodeType, _is_nodetype
 from necroflow.fingerprints import validate_command_callback
 
@@ -41,6 +53,7 @@ class Inputs:
     """Declare rule inputs: NodeType values = positional Node args; plain types = config kwargs."""
 
     def __init__(self, **specs):
+        """Store named declarations in their insertion order."""
         self.specs = specs
 
 
@@ -48,6 +61,7 @@ class Outputs:
     """Declare rule outputs by name: Outputs(bam=Bam, log=Log)."""
 
     def __init__(self, **specs):
+        """Store named declarations in their insertion order."""
         self.specs = specs
 
 
@@ -55,41 +69,134 @@ class Constraints:
     """Declare scheduler constraints: Constraints(threads=4, ram="250Mi")."""
 
     def __init__(self, **kwargs):
+        """Store named scheduler constraints in declaration order."""
         self.specs = kwargs
 
 
+@dataclass(frozen=True)
+class Many:
+    """Set inclusive size bounds for a variadic Node input."""
+
+    min: int = 1
+    max: int | None = None
+
+    def __post_init__(self) -> None:
+        """Reject non-integral, negative, or contradictory bounds."""
+        if isinstance(self.min, bool) or not isinstance(self.min, int) or self.min < 0:
+            raise ValueError(
+                f"Many.min must be a non-negative integer, got {self.min!r}"
+            )
+        if self.max is not None and (
+            isinstance(self.max, bool) or not isinstance(self.max, int)
+        ):
+            raise ValueError(f"Many.max must be an integer or None, got {self.max!r}")
+        if self.max is not None and self.max < self.min:
+            raise ValueError(
+                f"Many.max must be greater than or equal to min, got "
+                f"min={self.min!r}, max={self.max!r}"
+            )
+
+
+@dataclass(frozen=True)
+class _NodeInputContract:
+    element_type: Any
+    variadic: bool = False
+    many: Many | None = None
+
+
 def _pascal_to_snake(name: str) -> str:
+    """Convert a NodeType class name into its default output name."""
     return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
 def _union_members(ann) -> tuple:
-    return get_args(ann) if get_origin(ann) is UnionType else ()
+    """Return members of either supported union spelling, or an empty tuple."""
+    return get_args(ann) if get_origin(ann) in (UnionType, Union) else ()
 
 
 def _is_nodetype_union(ann) -> bool:
+    """Return whether an annotation is a non-empty all-NodeType union."""
     members = _union_members(ann)
     return bool(members) and all(_is_nodetype(member) for member in members)
 
 
-def _is_node_input_contract(ann) -> bool:
-    return _is_nodetype(ann) or _is_nodetype_union(ann)
+def _node_input_contract(
+    rule_name: str, input_name: str, annotation: Any
+) -> _NodeInputContract | None:
+    """Classify an input annotation as a positional Node contract or config.
 
+    Fixed NodeTypes and all-NodeType unions produce scalar contracts.
+    ``tuple[NodeType, ...]`` produces a variadic contract, optionally bounded
+    by one ``Many`` item in ``Annotated`` metadata. Invalid or ambiguous Node
+    declarations raise immediately; ordinary config annotations return
+    ``None`` and are therefore handled as keyword inputs by ``Rule``.
+    """
+    base = annotation
+    metadata: tuple[Any, ...] = ()
+    if get_origin(annotation) is Annotated:
+        base, *metadata_values = get_args(annotation)
+        metadata = tuple(metadata_values)
 
-def _validate_input_contracts(rule_name: str, inputs: Inputs) -> None:
-    for name, ann in inputs.specs.items():
-        members = _union_members(ann)
-        if not members:
-            continue
+    many_values = [value for value in metadata if isinstance(value, Many)]
+    if len(many_values) > 1:
+        raise TypeError(
+            f"Rule {rule_name!r}: input {input_name!r} has more than one Many marker"
+        )
+    many = many_values[0] if many_values else None
+
+    members = _union_members(base)
+    if members:
         has_nodetype = any(_is_nodetype(member) for member in members)
         if has_nodetype and not all(_is_nodetype(member) for member in members):
             raise TypeError(
-                f"Rule {rule_name!r}: input {name!r} mixes NodeType and non-NodeType "
-                "union members; use only NodeType alternatives for positional "
-                "node inputs, or only plain types for config inputs"
+                f"Rule {rule_name!r}: input {input_name!r} mixes NodeType and "
+                "non-NodeType union members; use only NodeType alternatives for "
+                "positional node inputs, or only plain types for config inputs"
             )
+
+    if get_origin(base) is tuple:
+        tuple_args = get_args(base)
+        if len(tuple_args) == 2 and tuple_args[1] is Ellipsis:
+            element_type = tuple_args[0]
+            element_members = _union_members(element_type)
+            if element_members:
+                has_nodetype = any(_is_nodetype(member) for member in element_members)
+                if has_nodetype and not all(
+                    _is_nodetype(member) for member in element_members
+                ):
+                    raise TypeError(
+                        f"Rule {rule_name!r}: input {input_name!r} mixes "
+                        "NodeType and non-NodeType tuple element union members"
+                    )
+            if _is_nodetype(element_type) or _is_nodetype_union(element_type):
+                return _NodeInputContract(element_type, variadic=True, many=many)
+            if many is not None:
+                raise TypeError(
+                    f"Rule {rule_name!r}: input {input_name!r} uses Many with "
+                    "a tuple whose element type is not a NodeType"
+                )
+            return None
+        if many is not None or any(
+            _is_nodetype(item) or _is_nodetype_union(item) for item in tuple_args
+        ):
+            raise TypeError(
+                f"Rule {rule_name!r}: input {input_name!r} uses a fixed-length "
+                "Node tuple; use tuple[NodeType, ...]"
+            )
+        return None
+
+    if many is not None:
+        raise TypeError(
+            f"Rule {rule_name!r}: input {input_name!r} uses Many on a non-variadic "
+            "Node tuple"
+        )
+    if _is_nodetype(base) or _is_nodetype_union(base):
+        return _NodeInputContract(base)
+    return None
 
 
 def _type_contract_name(ann) -> str:
+    """Render a NodeType contract for validation error messages."""
     members = _union_members(ann)
     if members:
         return " | ".join(sorted(_type_contract_name(member) for member in members))
@@ -97,6 +204,7 @@ def _type_contract_name(ann) -> str:
 
 
 def _matches_node_type(actual, expected) -> bool:
+    """Return whether an actual NodeType satisfies a type or union contract."""
     members = _union_members(expected)
     if members:
         return any(_matches_node_type(actual, member) for member in members)
@@ -131,6 +239,7 @@ class Rule(Generic[_ReturnT]):
         recipe_identity: str | None = None,
         materializer: Callable | None = None,
     ):
+        """Validate and store a rule declaration and derive its call schema."""
         self.__name__ = name
         self.inputs = inputs
         self.outputs = outputs
@@ -140,12 +249,19 @@ class Rule(Generic[_ReturnT]):
         self.constraints = constraints.specs if constraints else {}
         self.repeat = self._validate_repeat(repeat)
         self.info = info
-        _validate_input_contracts(name, inputs)
+        contracts = {
+            input_name: _node_input_contract(name, input_name, annotation)
+            for input_name, annotation in inputs.specs.items()
+        }
         self._pos_inputs = [
-            (n, t) for n, t in inputs.specs.items() if _is_node_input_contract(t)
+            (input_name, contract)
+            for input_name, contract in contracts.items()
+            if contract is not None
         ]
         self._kw_inputs = {
-            n: t for n, t in inputs.specs.items() if not _is_node_input_contract(t)
+            input_name: inputs.specs[input_name]
+            for input_name, contract in contracts.items()
+            if contract is None
         }
         reserved = BUILTIN_COMMAND_PLACEHOLDERS & (
             set(inputs.specs) | set(outputs.specs)
@@ -172,12 +288,14 @@ class Rule(Generic[_ReturnT]):
 
     @staticmethod
     def _validate_repeat(repeat: int) -> int:
+        """Return a valid positive attempt count or raise immediately."""
         if isinstance(repeat, bool) or not isinstance(repeat, int) or repeat < 1:
             raise ValueError(f"repeat must be a positive integer, got {repeat!r}")
         return repeat
 
     @staticmethod
     def _validate_command(name, inputs, outputs, command, constraints):
+        """Ensure every static-command placeholder has a declared source."""
         pieces = [command]
         placeholders: set[str] = set()
         constraint_placeholders: set[str] = set()
@@ -216,11 +334,13 @@ class Rule(Generic[_ReturnT]):
 
     @property
     def resources(self) -> dict[str, int]:
+        """Return integer scheduler resources with one thread by default."""
         result = {k: parse_resource(v) for k, v in self.constraints.items()}
         result.setdefault("threads", 1)
         return result
 
     def _validate_pipeline(self, pipeline) -> None:
+        """Require the positional owner to be a Pipeline."""
         from necroflow.pipeline import Pipeline
 
         if not isinstance(pipeline, Pipeline):
@@ -232,6 +352,7 @@ class Rule(Generic[_ReturnT]):
     def _validate_input_presence(
         self, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> None:
+        """Require exactly the declared Node arguments and all config keys."""
         name = self.__name__
         if len(args) < len(self._pos_inputs):
             missing = [pname for pname, _ in self._pos_inputs[len(args) :]]
@@ -246,22 +367,48 @@ class Rule(Generic[_ReturnT]):
             raise TypeError(f"{name}: missing required inputs: {missing_kw!r}")
 
     def _validate_parent_nodes(self, pipeline, args: tuple[Any, ...]) -> None:
+        """Validate Node containers, bounds, types, order, and DAG ownership."""
         name = self.__name__
-        for (pname, ptype), value in zip(self._pos_inputs, args):
-            if not isinstance(value, Node):
-                raise TypeError(
-                    f"{name}: {pname!r} expected Node, got {type(value).__name__!r}"
-                )
-            if not _matches_node_type(value.node_type, ptype):
-                got = value.node_type.__name__ if value.node_type else "None"
-                raise TypeError(
-                    f"{name}: {pname!r} expected "
-                    f"{_type_contract_name(ptype)}, got {got}"
-                )
-            if value.rule_call.dag is not pipeline.dag:
-                raise ValueError(f"{name}: {pname!r} belongs to a different DAG")
+        for (pname, contract), value in zip(self._pos_inputs, args):
+            values: tuple[Any, ...]
+            if contract.variadic:
+                if not isinstance(value, tuple):
+                    raise TypeError(
+                        f"{name}: {pname!r} expected tuple of Nodes, "
+                        f"got {type(value).__name__!r}"
+                    )
+                values = value
+                minimum = contract.many.min if contract.many is not None else 0
+                maximum = contract.many.max if contract.many is not None else None
+                if len(values) < minimum or (
+                    maximum is not None and len(values) > maximum
+                ):
+                    upper = "unbounded" if maximum is None else str(maximum)
+                    raise ValueError(
+                        f"{name}: {pname!r} expected between {minimum} and {upper} "
+                        f"Nodes, got {len(values)}"
+                    )
+            else:
+                values = (value,)
+
+            for index, parent in enumerate(values):
+                position = f"{pname}[{index}]" if contract.variadic else pname
+                if not isinstance(parent, Node):
+                    raise TypeError(
+                        f"{name}: {position!r} expected Node, "
+                        f"got {type(parent).__name__!r}"
+                    )
+                if not _matches_node_type(parent.node_type, contract.element_type):
+                    got = parent.node_type.__name__ if parent.node_type else "None"
+                    raise TypeError(
+                        f"{name}: {position!r} expected "
+                        f"{_type_contract_name(contract.element_type)}, got {got}"
+                    )
+                if parent.rule_call.dag is not pipeline.dag:
+                    raise ValueError(f"{name}: {position!r} belongs to a different DAG")
 
     def _validate_config_values(self, kwargs: dict[str, Any]) -> None:
+        """Check supplied config values against runtime-checkable annotations."""
         name = self.__name__
         for key, value in kwargs.items():
             if key not in self._kw_inputs:
@@ -280,12 +427,16 @@ class Rule(Generic[_ReturnT]):
     def _compile_outputs(
         self, pipeline, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> list[Node]:
-        parents = [value for value in args if isinstance(value, Node)]
+        """Compile and intern output Nodes from validated logical inputs."""
+        node_inputs = NamedValues(
+            {name: value for (name, _contract), value in zip(self._pos_inputs, args)}
+        )
         return Node.make_outputs(
-            pipeline, self, parents, kwargs, self.command, self.outputs.specs
+            pipeline, self, node_inputs, kwargs, self.command, self.outputs.specs
         )
 
     def _shape_outputs(self, nodes: list[Node]) -> _ReturnT:
+        """Return one Node or the rule-specific named tuple of co-outputs."""
         if self._multi:
             assert self._return_type is not None
             value = self._return_type(*nodes)
@@ -294,6 +445,7 @@ class Rule(Generic[_ReturnT]):
         return cast(_ReturnT, value)
 
     def __call__(self, pipeline, /, *args: Any, **kwargs: Any) -> _ReturnT:
+        """Validate one invocation and return its canonical output Nodes."""
         self._validate_pipeline(pipeline)
         self._validate_input_presence(args, kwargs)
         self._validate_parent_nodes(pipeline, args)
@@ -477,6 +629,7 @@ def command(
         raise TypeError("name= and doc= are only valid for factory commands")
 
     def decorator(fn: Callable[..., _ReturnT]) -> Rule[_ReturnT]:
+        """Build a Rule from a decorated declaration and captured command policy."""
         rule_name, inputs, outputs, info = _parse_rule_fn(fn)
         return cast(
             Rule[_ReturnT],
@@ -532,6 +685,7 @@ def _make_text_file_rule(
     output_name: str | None,
     info: str | None,
 ) -> Rule[Node]:
+    """Build the internal materializer-backed text-file Rule."""
     if input_name in BUILTIN_COMMAND_PLACEHOLDERS:
         raise ValueError(f"text_file input_name {input_name!r} is reserved")
     if not _is_nodetype(output):
@@ -543,6 +697,7 @@ def _make_text_file_rule(
     )
 
     def materializer(node, log) -> None:
+        """Write the configured text value to the compiled output path."""
         node.path.write_text(node.config[input_name], encoding=encoding)
 
     return Rule(
@@ -576,13 +731,17 @@ def text_file_rule(
 
 
 @overload
-def text_file(fn: Callable[..., _ReturnT], /) -> Rule[_ReturnT]: ...
+def text_file(fn: Callable[..., _ReturnT], /) -> Rule[_ReturnT]:
+    """Type signature for direct ``@text_file`` decorator use."""
+    ...
 
 
 @overload
 def text_file(
     *, encoding: str = "utf-8"
-) -> Callable[[Callable[..., _ReturnT]], Rule[_ReturnT]]: ...
+) -> Callable[[Callable[..., _ReturnT]], Rule[_ReturnT]]:
+    """Type signature for configured ``@text_file(...)`` decorator use."""
+    ...
 
 
 def text_file(  # pyright: ignore[reportInconsistentOverload]
@@ -591,6 +750,7 @@ def text_file(  # pyright: ignore[reportInconsistentOverload]
     """Declare a built-in text-file rule, optionally selecting its encoding."""
 
     def decorator(declaration: Callable) -> Rule:
+        """Convert one validated text-file declaration into a Rule."""
         name, input_name, output_name, output, info = _validate_builtin_declaration(
             declaration, "text_file"
         )
@@ -614,6 +774,7 @@ def _make_symlink_file_rule(
     output_name: str | None,
     info: str | None,
 ) -> Rule[Node]:
+    """Build the internal shell-backed external-file symlink Rule."""
     if path_arg in BUILTIN_COMMAND_PLACEHOLDERS:
         raise ValueError(f"symlink_file path_arg {path_arg!r} is reserved")
     if not _is_nodetype(output):

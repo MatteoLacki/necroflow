@@ -13,6 +13,8 @@ necroflow
 │   │   ├── explicit built-in factories: text_file_rule / symlink_file_rule
 │   │   ├── lint-clean name = output(NodeType) declarations
 │   │   ├── typed Inputs / Outputs
+│   │   ├── ordered tuple[NodeType, ...] variadic inputs
+│   │   ├── optional inclusive Many(min=..., max=...) bounds
 │   │   ├── multi-output rules
 │   │   ├── co-output execution once per rule call
 │   │   ├── Constraints: threads, ram, custom resources
@@ -33,6 +35,7 @@ necroflow
 │
 ├── Commands
 │   ├── input/output path placeholders
+│   ├── independently shell-quoted expansion of variadic input groups
 │   ├── config placeholders
 │   ├── {workdir} retained side-output directory
 │   ├── constraint placeholders

@@ -99,6 +99,10 @@ These have been true since the June refactors and are load-bearing design decisi
   shared DAG. A rule call fingerprints and interns its `RuleCall` immediately; equivalent calls
   return identical Node objects. Attribute/item assignment records Pipeline-local labels and
   sections. Several labels may alias one Node; Nodes do not carry a singular pipeline label.
+- **Variadic Node inputs retain groups.** `tuple[NodeType, ...]` accepts an ordered
+  tuple, while `Annotated[tuple[NodeType, ...], Many(...)]` applies inclusive size
+  bounds. RuleCall/fingerprint/command contexts retain named tuple groups;
+  `RuleCall.parents` is their declaration-order flattening for graph traversal.
 - **Addresses are eager.** The Pipeline owns fingerprint/shell policy while its DAG owns the
   node-store root. A rule call returns Nodes with final fingerprints, relative paths, and absolute
   paths; there is no late resolution, DAG reindexing, or delayed deduplication.

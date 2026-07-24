@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from necroflow.fingerprints import validate_fingerprint_result
+from necroflow.contexts import NamedValues
 from necroflow.rule_call import RuleCall
 
 _COMPROMISED_STATES = {"running", "failed", "interrupted"}
@@ -105,7 +106,7 @@ class Node:
         cls,
         pipeline,
         rule,
-        parents: list[Node],
+        node_inputs: NamedValues[Node | tuple[Node, ...]],
         config: dict,
         command,
         outputs_specs: dict,
@@ -116,7 +117,7 @@ class Node:
         call = RuleCall(
             dag=pipeline.dag,
             rule=rule,
-            parents=parents,
+            inputs=node_inputs,
             config=config,
             command=command,
             shellpath=shellpath,
@@ -146,7 +147,7 @@ class Node:
                 Node(
                     output_name=oname,
                     node_type=otype,
-                    parents=parents,
+                    parents=call.parents,
                     config=config,
                     rule=rule,
                     command=command,

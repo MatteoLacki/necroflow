@@ -41,6 +41,9 @@ dev = [
 homepage="https://github.com/MatteoLacki/necroflow.git"
 repository="https://github.com/MatteoLacki/necroflow.git"
 
+[tool.black]
+target-version = ["py310"]
+
 [tool.pyright]
 typeCheckingMode = "basic"
 
