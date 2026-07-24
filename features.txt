@@ -18,7 +18,7 @@ necroflow
 │   │   ├── multi-output rules
 │   │   ├── co-output execution once per rule call
 │   │   ├── Constraints: threads, ram, custom resources
-│   │   ├── repeat=N compatibility metadata
+│   │   ├── repeat=N subprocess retry attempts
 │   │   └── built-in text_file rules for generated config files
 │   ├── Pipeline
 │   │   ├── references a shared DAG and owns fingerprint/shell compile policy

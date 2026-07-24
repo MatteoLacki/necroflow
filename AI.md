@@ -68,9 +68,14 @@ fingerprints. CLI run and outputs commands validate the complete absolute result
 paths against the destination filesystem before execution; link creation repeats
 the check defensively. Doctor reports failures as `NF_RESULT_PATH_INVALID`.
 
-## Rule repeat metadata
+## Rule retries
 
-`@command(..., repeat=N)` accepts repeat compatibility metadata. `repeat` is validated as a positive integer and stored as `rule.repeat`. It is compatibility metadata only: not a scheduler resource, not an execution multiplier, and not part of node fingerprints.
+`@command(..., repeat=N)` sets the maximum number of command attempts,
+including the first; the default `repeat=1` does not retry. A failed subprocess
+is retried until one attempt succeeds or all `N` attempts fail. Other failures
+are not retried. Retries remain one scheduler submission and `repeat` is not a
+scheduler resource. The default fingerprint excludes retry policy, while a
+project fingerprint function may choose to hash `FingerprintArgs.repeat`.
 
 ## CLI forced invalidation
 
@@ -88,7 +93,14 @@ The CLI accepts repeatable `--validation PATH.py:FUNCTION` flags. Each validator
 
 ## CLI output roots
 
-The CLI separates hashed node storage from job-facing links. `--nodes-dir DIR` controls the node store and defaults to `nodes`; `--results-dir DIR` controls per-job symlink folders and defaults to `results`. `--outdir DIR` / `-o DIR` remains a compatibility alias that uses one directory for both and cannot be combined with either split-dir flag. Manifests list requested output paths relative to the node store.
+The CLI separates hashed node storage from job-facing links. `--nodes-dir DIR`
+controls the node store and defaults to `nodes`; `--results-dir DIR` controls
+per-job symlink folders and defaults to `results`. `--outdir DIR` / `-o DIR`
+remains a compatibility alias that uses one directory for both and cannot be
+combined with either split-dir flag. Manifest keys are exact requested Pipeline
+labels. Their values are visible output paths relative to the per-job results
+directory, such as `dataset/config/output.txt`; those paths are symlinks into
+the node store.
 
 ## Built-in text file rules
 
