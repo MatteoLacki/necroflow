@@ -107,6 +107,21 @@ def test_simulated_crash_reruns_node(tmp_path):
     assert b_node.path.stat().st_mtime > mtime_before
 
 
+def test_unknown_state_reruns_node_instead_of_trusting_cache(tmp_path):
+    """Malformed persisted state must fail safe by forcing the node to run again."""
+
+    dag, pipeline = simple_dag(tmp_path)
+    dag.execute()
+    node = pipeline.b
+    node.state_file.write_text("unknown-state")
+    mtime_before = node.path.stat().st_mtime
+
+    time.sleep(0.05)
+    dag.execute()
+
+    assert node.path.stat().st_mtime > mtime_before
+
+
 # --- integration: failed node → FAILED state + re-run next time ---
 
 
@@ -214,6 +229,47 @@ def test_interrupted_node_reruns_on_retry(tmp_path):
     assert y.path.stat().st_mtime > y_mtime
 
 
+def test_directory_output_content_change_invalidates_children(tmp_path):
+    """Directory outputs must hash relative file names and bytes for child staleness."""
+
+    class Directory(NodeType):
+        filename = "dataset"
+
+    class Copied(NodeType):
+        filename = "copied.txt"
+
+    make_directory = Rule(
+        "make_directory",
+        Inputs(value=str),
+        Outputs(directory=Directory),
+        "mkdir -p {directory}; printf original > {directory}/item.txt",
+    )
+    copy_item = Rule(
+        "copy_item",
+        Inputs(directory=Directory),
+        Outputs(copied=Copied),
+        "cat {directory}/item.txt > {copied}",
+    )
+
+    def build():
+        dag = DAG(tmp_path)
+        pipeline = Pipeline(dag)
+        pipeline.directory = make_directory(pipeline, value="stable")
+        pipeline.copied = copy_item(pipeline, pipeline.directory)
+        dag.require(pipeline.sinks())
+        return dag, pipeline
+
+    first_dag, first = build()
+    first_dag.execute()
+    time.sleep(0.05)
+    (first.directory.path / "item.txt").write_text("changed")
+
+    second_dag, second = build()
+    second_dag.execute()
+
+    assert second.copied.path.read_text() == "changed"
+
+
 # --- integration: NodeType invalidators ---
 
 
@@ -309,6 +365,27 @@ def test_nodetype_invalidator_missing_metadata_reruns_node(tmp_path):
     dag.execute()
 
     assert P.out.path.stat().st_mtime > mtime_before
+
+
+def test_nodetype_invalidator_must_return_string_token(tmp_path):
+    """Invalidator tokens must be stable text suitable for plain metadata files."""
+
+    class InvalidToken(NodeType):
+        invalidator = lambda node: 42
+
+    rule = Rule(
+        "invalid_token",
+        Inputs(value=str),
+        Outputs(result=InvalidToken),
+        "touch {result}",
+    )
+    dag = DAG(tmp_path)
+    pipeline = Pipeline(dag)
+    pipeline.result = rule(pipeline, value="x")
+    dag.require(pipeline.sinks())
+
+    with pytest.raises(TypeError, match="invalidator for InvalidToken must return str"):
+        dag.execute()
 
 
 def test_nodetype_invalidator_exception_fails_fast(tmp_path):

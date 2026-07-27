@@ -474,6 +474,32 @@ def _validate_scheduler(scheduler: Scheduler) -> None:
         ) from None
 
 
+def _validated_schedule(
+    scheduler: Scheduler,
+    ready: list[Node],
+    remaining: list[Node],
+    available_resources: dict[str, int],
+) -> list[Node]:
+    """Return canonical ready nodes selected by a scheduler."""
+    selected = scheduler(ready, remaining, available_resources)
+    if not isinstance(selected, list):
+        raise TypeError(
+            f"scheduler must return list[Node], got {type(selected).__name__}"
+        )
+    ready_by_key = {node.relative_path: node for node in ready}
+    seen: set[Path] = set()
+    canonical: list[Node] = []
+    for node in selected:
+        key = getattr(node, "relative_path", None)
+        if key not in ready_by_key:
+            raise ValueError(f"scheduler returned node that is not ready: {key}")
+        if key in seen:
+            raise ValueError(f"scheduler returned duplicate node: {key}")
+        seen.add(key)
+        canonical.append(ready_by_key[key])
+    return canonical
+
+
 def _run_with_retries(node, log_path, runner) -> None:
     """Run a command at most ``rule.repeat`` times, stopping on success."""
     max_attempts = node.rule.repeat
@@ -577,7 +603,9 @@ def execute(
                         resource: cap - running_resources.get(resource, 0)
                         for resource, cap in caps.items()
                     }
-                    for node in scheduler(ready, remaining, available_resources):
+                    for node in _validated_schedule(
+                        scheduler, ready, remaining, available_resources
+                    ):
                         # skip co-outputs whose sibling is already running
                         coouts = [
                             c

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from datetime import date, datetime, time
 from pathlib import Path
 import shlex
 
@@ -12,6 +13,7 @@ from necroflow import (
     DAG,
     FingerprintArgs,
     Inputs,
+    NamedValues,
     NodeType,
     Outputs,
     Pipeline,
@@ -102,8 +104,31 @@ def invalid_fingerprint(args: FingerprintArgs) -> str:
     return "not-a-digest"
 
 
+def non_string_fingerprint(args: FingerprintArgs):
+    return b"a" * 64
+
+
+def fingerprint_with_wrong_arity(first, second):
+    return "a" * 64
+
+
 def _source_rule(name: str = "source") -> Rule:
     return Rule(name, Inputs(text=str), Outputs(source=Source), "touch {source}")
+
+
+def test_named_values_support_mapping_attribute_and_diagnostic_views():
+    """NamedValues must preserve mapping semantics while offering readable attributes."""
+
+    values = NamedValues({"sample": "S1", "items": "declared"})
+
+    assert len(values) == 2
+    assert list(values) == ["sample", "items"]
+    assert values.sample == "S1"
+    assert values["items"] == "declared"
+    assert callable(values.items)
+    assert repr(values) == "NamedValues(sample='S1', items='declared')"
+    with pytest.raises(AttributeError, match="missing"):
+        _ = values.missing
 
 
 def test_command_args_are_resolved_named_immutable_views(tmp_path):
@@ -277,6 +302,112 @@ def test_framed_canonical_values_preserve_boundaries_and_order():
     assert canonical_bytes({3, 1, 2}) == canonical_bytes({2, 3, 1})
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        1.25,
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        b"\x00payload",
+        Path("relative/data.txt"),
+        datetime(2026, 7, 27, 12, 34, 56),
+        date(2026, 7, 27),
+        time(12, 34, 56),
+        ("ordered", 1),
+    ],
+)
+def test_canonical_bytes_supports_declared_builtin_value_families(value):
+    """Every documented builtin fingerprint value must encode deterministically."""
+
+    assert canonical_bytes(value) == canonical_bytes(value)
+
+
+def test_canonical_bytes_rejects_non_string_mapping_keys_with_value_path():
+    """Invalid nested mapping keys must identify their location in job config."""
+
+    with pytest.raises(
+        FingerprintValueError,
+        match=r"job\.options: fingerprint mappings require string keys, got int",
+    ):
+        canonical_bytes({"options": {1: "invalid"}}, path="job")
+
+
+def test_command_callback_must_be_a_source_inspectable_function():
+    """Callable objects cannot hide command identity in instance state."""
+
+    class StatefulCommand:
+        def __call__(self, args):
+            return f"touch {args.outputs.result}"
+
+    with pytest.raises(TypeError, match="source-inspectable functions or lambdas"):
+        Rule(
+            "stateful",
+            Inputs(label=str),
+            Outputs(result=Result),
+            StatefulCommand(),
+        )
+
+
+def test_nested_command_without_captured_values_is_rejected():
+    """A command callback must remain importable at module scope."""
+
+    def nested(args):
+        return f"touch {args.outputs.result}"
+
+    with pytest.raises(TypeError, match="must be defined at module scope"):
+        Rule("nested", Inputs(label=str), Outputs(result=Result), nested)
+
+
+@pytest.mark.parametrize(
+    "callback",
+    [
+        lambda: "touch ignored",
+        lambda first, second: f"touch {first.outputs.result} {second}",
+        lambda *args: "touch ignored",
+    ],
+)
+def test_command_callback_requires_one_positional_argument(callback):
+    """Command callbacks must accept exactly one positional CommandArgs value."""
+
+    with pytest.raises(TypeError, match="exactly one positional CommandArgs argument"):
+        Rule("wrong_arity", Inputs(label=str), Outputs(result=Result), callback)
+
+
+def test_generated_command_callback_without_source_is_rejected():
+    """Generated functions cannot provide reproducible source-based identity."""
+
+    namespace = {"__name__": "generated_command_test"}
+    exec(
+        compile("def build(args):\n    return 'touch output'\n", "<generated>", "exec"),
+        namespace,
+    )
+
+    with pytest.raises(TypeError, match="has no inspectable source"):
+        Rule(
+            "generated",
+            Inputs(label=str),
+            Outputs(result=Result),
+            namespace["build"],
+        )
+
+
+def test_multiple_lambdas_on_one_source_line_are_rejected(tmp_path):
+    """A lambda command must map to exactly one AST node on its source line."""
+
+    from necroflow.config import load_callable
+
+    callbacks = tmp_path / "ambiguous.py"
+    callbacks.write_text(
+        "first, second = lambda args: 'first', lambda args: 'second'\n"
+    )
+    callback = load_callable(f"{callbacks}:first", kind="test-command")
+
+    with pytest.raises(TypeError, match="is ambiguous"):
+        Rule("ambiguous", Inputs(label=str), Outputs(result=Result), callback)
+
+
 def test_ast_formatting_and_comments_do_not_change_identity(tmp_path):
     from necroflow.config import load_callable
 
@@ -408,6 +539,31 @@ def test_invalid_project_fingerprint_result_fails_during_rule_call(tmp_path):
     )
     with pytest.raises(TypeError, match="64 lowercase hexadecimal"):
         _source_rule()(pipeline, text="x")
+
+
+def test_project_fingerprint_result_must_be_text(tmp_path):
+    """Fingerprint providers must return a textual lowercase SHA-256 digest."""
+
+    pipeline = Pipeline(
+        DAG(tmp_path),
+        fingerprint_function=non_string_fingerprint,
+        fingerprint_provider="test:bytes",
+    )
+    with pytest.raises(TypeError, match="64 lowercase hexadecimal"):
+        _source_rule()(pipeline, text="x")
+
+
+def test_project_fingerprint_function_requires_one_positional_argument(tmp_path):
+    """Fingerprint providers receive exactly one immutable FingerprintArgs view."""
+
+    with pytest.raises(
+        TypeError, match="exactly one positional FingerprintArgs argument"
+    ):
+        Pipeline(
+            DAG(tmp_path),
+            fingerprint_function=fingerprint_with_wrong_arity,
+            fingerprint_provider="test:wrong-arity",
+        )
 
 
 def test_constraints_and_repeat_remain_outside_default_fingerprint(tmp_path):

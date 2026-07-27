@@ -4,7 +4,14 @@ from necroflow.rules import Constraints, Inputs, Outputs, Rule
 
 import pytest
 from pathlib import Path
-from necroflow import NodeType, Pipeline, DAG, command, output
+from necroflow import (
+    DAG,
+    NodeType,
+    Pipeline,
+    command,
+    iter_connected_components,
+    output,
+)
 
 
 class A(NodeType):
@@ -263,6 +270,120 @@ def test_direct_node_construction_is_rejected():
 
     with pytest.raises(TypeError):
         Node()
+
+
+def test_direct_nodetype_construction_is_rejected():
+    """NodeType declarations create nodes only through managed Rule calls."""
+
+    with pytest.raises(TypeError, match="NodeType declaration, not a Node constructor"):
+        A()
+
+
+def test_nodetype_representation_is_its_declaration_name():
+    """Diagnostics should render a NodeType by its concise declaration name."""
+
+    assert repr(A) == "A"
+
+
+def test_rule_rejects_cooutputs_with_the_same_realized_filename(tmp_path):
+    """One rule call cannot map two output names onto the same filesystem path."""
+
+    class AlsoA(NodeType):
+        filename = "a.txt"
+
+    rule = Rule(
+        "duplicate_outputs",
+        Inputs(value=str),
+        Outputs(first=A, second=AlsoA),
+        "touch {first} {second}",
+    )
+
+    with pytest.raises(ValueError, match="declares duplicate output path"):
+        rule(Pipeline(DAG(tmp_path)), value="x")
+
+
+def test_connected_components_use_only_edges_inside_the_supplied_subgraph(tmp_path):
+    """A shared parent outside the requested subgraph must not connect its children."""
+
+    pipeline = Pipeline(DAG(tmp_path))
+    pipeline.a = R_make_a(pipeline, x="x")
+    pipeline.b = R_make_b(pipeline, pipeline.a)
+    pipeline.c = R_make_c(pipeline, pipeline.a)
+
+    components = list(iter_connected_components([pipeline.b, pipeline.c]))
+
+    assert [{node.relative_path for node in component} for component in components] == [
+        {pipeline.b.relative_path},
+        {pipeline.c.relative_path},
+    ]
+
+
+def test_connected_components_group_diamonds_and_isolated_nodes(tmp_path):
+    """Connected DAG shapes form one component while isolated nodes remain separate."""
+
+    pipeline = diamond(DAG(tmp_path))
+    pipeline.isolated = R_make_a(pipeline, x="isolated")
+
+    components = list(iter_connected_components(pipeline.nodes))
+
+    assert {
+        frozenset(node.relative_path for node in component) for component in components
+    } == {
+        frozenset(
+            node.relative_path
+            for node in [pipeline.a, pipeline.b, pipeline.c, pipeline.d]
+        ),
+        frozenset([pipeline.isolated.relative_path]),
+    }
+
+
+def test_pipeline_requires_a_dag_owner():
+    """A Pipeline cannot be created without the DAG that owns its node identity."""
+
+    with pytest.raises(TypeError, match="Pipeline requires an owning DAG"):
+        Pipeline("not-a-dag")
+
+
+def test_pipeline_item_access_requires_string_labels(tmp_path):
+    """Both item reads and writes require canonical string labels."""
+
+    pipeline = Pipeline(DAG(tmp_path))
+    node = R_make_a(pipeline, x="x")
+
+    with pytest.raises(TypeError, match="Pipeline label must be a string"):
+        pipeline[1] = node
+    with pytest.raises(TypeError, match="Pipeline label must be a string"):
+        _ = pipeline[1]
+
+
+def test_pipeline_item_assignment_requires_a_node(tmp_path):
+    """Item labels cannot silently accept ordinary local Python values."""
+
+    pipeline = Pipeline(DAG(tmp_path))
+    with pytest.raises(TypeError, match="Pipeline labels require Node values"):
+        pipeline["value"] = "not-a-node"
+
+
+def test_dag_require_rejects_non_nodes_and_foreign_nodes(tmp_path):
+    """Execution requirements must be Nodes owned by the selected DAG."""
+
+    dag = DAG(tmp_path / "owner")
+    foreign_pipeline = Pipeline(DAG(tmp_path / "foreign"))
+    foreign = R_make_a(foreign_pipeline, x="x")
+
+    with pytest.raises(TypeError, match="DAG requirements must be Nodes"):
+        dag.require(["not-a-node"])
+    with pytest.raises(ValueError, match="required Node belongs to a different DAG"):
+        dag.require([foreign])
+
+
+def test_pipeline_repr_matches_its_ascii_render(tmp_path):
+    """Interactive representations must expose the same DAG view as string output."""
+
+    pipeline = Pipeline(DAG(tmp_path))
+    pipeline.a = R_make_a(pipeline, x="x")
+
+    assert repr(pipeline) == str(pipeline)
 
 
 def test_execute_rejects_pipeline_view(tmp_path):

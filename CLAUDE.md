@@ -72,8 +72,9 @@ source .venv/bin/activate
 These have been true since the June refactors and are load-bearing design decisions:
 
 - **Filesystem is state, no databases.** Run state is plain text in `.rip/state`
-  (`running` / `up_to_date` / `failed` / `interrupted`); a leftover `running` after a crash
-  marks the node compromised and forces a re-run. The concurrency lock is `fcntl.flock` on
+  (`running` / `up_to_date` / `failed` / `interrupted`); a leftover `running` after a crash,
+  or any unrecognized state value, marks the node compromised and forces a re-run.
+  The concurrency lock is `fcntl.flock` on
   `.rip/necroflow.lock` — one instance per node store.
 - **Content-addressed, not time-addressed.** Staleness uses an mtime fast path, then falls back
   to the stored SHA-256 content hash (`.rip/{filename}.hash`). A parent that re-ran but produced
@@ -125,6 +126,8 @@ def my_scheduler(ready: list[Node], remaining: list[Node],
 - `ready` — nodes whose parents are all done, not yet running
 - `remaining` — all not-yet-done, not-yet-running nodes (superset of ready)
 - `available_resources` — remaining capacity for capped resources, e.g. `{"threads": 12}`
+- The return value must be a `list` containing only currently ready nodes, with no duplicates;
+  `execute()` rejects invalid selections before submission.
 - Plain callables and callable objects both work; `execute()` rejects wrong-arity schedulers
   up front with a `TypeError` naming this protocol.
 - Built-ins in `src/necroflow/schedulers.py`: `connected_component_scheduler` (default;

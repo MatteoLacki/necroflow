@@ -11,6 +11,7 @@ from necroflow import (
 
 import shutil
 import subprocess
+import fcntl
 from pathlib import Path
 
 import pytest
@@ -402,6 +403,17 @@ def test_execute_failure_raises(tmp_path):
         execute_pipeline(P)
 
 
+def test_rule_without_command_or_materializer_fails_clearly(tmp_path):
+    """A runnable rule must define either a shell command or a materializer."""
+
+    rule = Rule("empty_recipe", Inputs(value=str), Outputs(out=A), None)
+    pipeline = Pipeline(DAG(tmp_path))
+    pipeline.out = rule(pipeline, value="x")
+
+    with pytest.raises(RuntimeError, match="neither a command nor a materializer"):
+        execute_pipeline(pipeline)
+
+
 def test_missing_output_raises(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_no_output_a(P, x="x")
@@ -498,6 +510,22 @@ def test_single_node_pipeline_executes(tmp_path):
     assert P.a.path is not None and P.a.path.exists()
 
 
+def test_execute_rejects_concurrent_writer_for_the_same_node_store(tmp_path):
+    """The node-store lock must reject a second executor before it starts jobs."""
+
+    pipeline = Pipeline(DAG(tmp_path))
+    pipeline.a = R_make_a(pipeline, x="x")
+    lock_path = tmp_path / ".rip" / "necroflow.lock"
+    lock_path.parent.mkdir(parents=True)
+
+    with lock_path.open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(RuntimeError, match="Another necroflow instance"):
+            execute_pipeline(pipeline)
+
+    assert not pipeline.a.path.exists()
+
+
 # ── schedulers ────────────────────────────────────────────────────────────────
 
 
@@ -580,6 +608,40 @@ def test_custom_scheduler_invoked(tmp_path):
     P.b = R_make_b(P, P.a)
     execute_pipeline(P, scheduler=recording_scheduler)
     assert len(calls) > 0
+
+
+def test_scheduler_must_return_a_list_of_ready_nodes(tmp_path):
+    """Scheduler output must be a list containing each known ready node at most once."""
+
+    cases = {}
+
+    def not_a_list(ready, remaining, available_resources):
+        return tuple(ready)
+
+    def duplicate(ready, remaining, available_resources):
+        return [ready[0], ready[0]]
+
+    def non_ready(ready, remaining, available_resources):
+        return [next(node for node in remaining if node not in ready)]
+
+    foreign_pipeline = Pipeline(DAG(tmp_path / "foreign"))
+    foreign = R_make_a(foreign_pipeline, x="foreign")
+
+    def foreign_node(ready, remaining, available_resources):
+        return [foreign]
+
+    cases["list"] = (not_a_list, TypeError, "must return list")
+    cases["duplicate"] = (duplicate, ValueError, "duplicate node")
+    cases["non-ready"] = (non_ready, ValueError, "not ready")
+    cases["foreign"] = (foreign_node, ValueError, "not ready")
+
+    for name, (scheduler, error_type, message) in cases.items():
+        pipeline = Pipeline(DAG(tmp_path / name))
+        pipeline.a = R_make_a(pipeline, x=name)
+        pipeline.b = R_make_b(pipeline, pipeline.a)
+
+        with pytest.raises(error_type, match=message):
+            execute_pipeline(pipeline, scheduler=scheduler)
 
 
 # ── connected-component scheduler ordering ────────────────────────────────────
@@ -725,6 +787,38 @@ def test_autoclean_deletes_orphan(tmp_path):
     dag.execute(autoclean=True)
 
     assert not b_path.exists()
+
+
+def test_autoclean_removes_only_orphaned_cooutput_from_active_directory(tmp_path):
+    """Cleaning one orphaned co-output must preserve its requested sibling directory."""
+
+    first = Pipeline(DAG(tmp_path))
+    first.a, first.b = R_make_ab(first, x="x")
+    execute_pipeline(first)
+
+    dag = DAG(tmp_path)
+    second = Pipeline(dag)
+    second.a, second.b = R_make_ab(second, x="x")
+    dag.require([second.a])
+    dag.execute(autoclean=True)
+
+    assert second.a.path.exists()
+    assert not second.b.path.exists()
+    assert second.a.path.parent.exists()
+
+
+def test_autoclean_preserves_intermediate_when_cooutput_is_final(tmp_path):
+    """A requested final co-output must protect its shared rule-call directory."""
+
+    pipeline = Pipeline(DAG(tmp_path))
+    pipeline.a, pipeline.b = R_make_ab(pipeline, x="x")
+    pipeline.c = R_make_c(pipeline, pipeline.a)
+
+    execute_pipeline(pipeline, autoclean=True)
+
+    assert pipeline.a.path.exists()
+    assert pipeline.b.path.exists()
+    assert pipeline.c.path.exists()
 
 
 def test_autoclean_false_leaves_orphan(tmp_path):

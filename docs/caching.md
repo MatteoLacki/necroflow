@@ -122,7 +122,7 @@ Invalidators are evaluated during the initial node classification at the start o
   - `dependencies.toml` — full accumulated config for provenance.
   - `{filename}.hash` — SHA-256 content hash, used for STALE detection on the next run.
   - `job.log` — captured stdout/stderr.
-  - `state` — last recorded run state (`running` / `up_to_date` / `failed` / `interrupted`). If a process is killed mid-run the `state` file is left as `running`; on the next invocation necroflow detects this and re-runs the node even if its output exists on disk.
+  - `state` — last recorded run state (`running` / `up_to_date` / `failed` / `interrupted`). If a process is killed mid-run the `state` file is left as `running`; on the next invocation necroflow detects this and re-runs the node even if its output exists on disk. Unrecognized state values also force a re-run rather than trusting a malformed cache record.
 
 ### External dataset ingestion
 

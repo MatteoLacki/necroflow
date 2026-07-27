@@ -5,6 +5,7 @@ from necroflow import command, output
 
 import pytest
 from pathlib import Path
+from typing import Literal
 import necroflow.dag as dag_core
 from necroflow import DAG, NodeType, Pipeline
 from necroflow.dag import (
@@ -190,6 +191,60 @@ def test_rule_name_must_be_one_safe_relative_component(tmp_path):
 
 
 # ── command resolution ────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "declaration, message",
+    [
+        (lambda: command(42), "requires a shell string or Python callback"),
+        (lambda: command("touch", Inputs()), "requires Inputs, Outputs"),
+        (lambda: command("touch", Inputs(), Outputs()), "requires an explicit name"),
+        (
+            lambda: command("touch", Inputs(), Outputs(), name="factory", threads=2),
+            "cannot use constraint keywords",
+        ),
+        (
+            lambda: command("touch", object(), Outputs(), name="factory"),
+            "requires Inputs and Outputs declarations",
+        ),
+        (
+            lambda: command("touch", Inputs(), Outputs(), object(), name="factory"),
+            "constraints must be a Constraints object",
+        ),
+        (lambda: command("touch", name="decorator"), "only valid for factory commands"),
+    ],
+)
+def test_command_factory_rejects_ambiguous_declarations(declaration, message):
+    """Factory and decorator command forms must fail clearly when mixed or incomplete."""
+
+    with pytest.raises(TypeError, match=message):
+        declaration()
+
+
+def test_rule_call_requires_pipeline_and_node_inputs(tmp_path):
+    """Rule calls must receive their owning Pipeline followed by managed Nodes."""
+
+    with pytest.raises(TypeError, match="first argument must be the owning Pipeline"):
+        R_make_txt("not-a-pipeline", word="x")
+
+    pipeline = Pipeline(DAG(tmp_path))
+    with pytest.raises(TypeError, match="expected Node"):
+        R_to_upper(pipeline, "not-a-node", n=1)
+
+
+def test_runtime_uncheckable_config_annotation_remains_fingerprintable(tmp_path):
+    """Typing-only config contracts may skip isinstance checks but retain identity."""
+
+    rule = Rule(
+        "literal_config",
+        Inputs(mode=Literal["strict", "relaxed"]),
+        Outputs(txt=Txt),
+        "touch {txt}",
+    )
+
+    node = rule(Pipeline(DAG(tmp_path)), mode="strict")
+
+    assert len(node.fingerprint) == 64
 
 
 def test_resolve_command_input_substitution(tmp_path):

@@ -3,6 +3,7 @@
 from necroflow.rules import Constraints, Inputs, Outputs, Rule
 
 import shutil
+import fcntl
 import textwrap
 import time
 import tomlkit
@@ -111,6 +112,20 @@ def test_link_outputs_can_use_separate_nodes_and_results_dirs(tmp_path):
     content = (results_dir / "run1" / "manifest.toml").read_text()
     doc = tomlkit.parse(content)
     assert all(not str(v).startswith("../") for v in doc["outputs"].values())
+
+
+def test_link_outputs_recovers_from_malformed_manifest(tmp_path):
+    """A damaged old manifest must not block creation of current result links."""
+
+    pipeline, outdir = _make_pipeline_with_outputs(tmp_path)
+    combo_dir = outdir / "run1"
+    combo_dir.mkdir()
+    (combo_dir / "manifest.toml").write_text("not = [valid")
+
+    _create_link_outputs(outdir, [("run1", pipeline, _resolve_request(pipeline, None))])
+
+    manifest = tomlkit.parse((combo_dir / "manifest.toml").read_text())
+    assert manifest["outputs"]["log"] == "log/run.log"
 
 
 def test_link_outputs_removes_stale_generated_symlinks(tmp_path):
@@ -255,6 +270,42 @@ def _real_output(outdir: Path, filename: str) -> Path:
     matches = [p for p in outdir.rglob(filename) if not p.is_symlink()]
     assert len(matches) == 1
     return matches[0]
+
+
+def test_pipeline_factory_return_value_errors_cleanly(tmp_path):
+    """CLI pipeline factories must mutate the supplied Pipeline and return None."""
+
+    factory = tmp_path / "returning.py"
+    factory.write_text("def factory(pipeline, config):\n    return config\n")
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory}:factory"\nvalue = 1\n')
+
+    with pytest.raises(
+        SystemExit, match="must mutate the supplied Pipeline and return None"
+    ):
+        main(["outputs", "--outdir", str(tmp_path / "out"), str(job)])
+
+
+def test_load_callable_rejects_non_callable_target(tmp_path):
+    """A valid module path must still identify a callable target."""
+
+    from necroflow.config import load_callable
+
+    module = tmp_path / "values.py"
+    module.write_text("target = 42\n")
+
+    with pytest.raises(TypeError, match="target .* is not callable"):
+        load_callable(f"{module}:target", kind="test")
+
+
+def test_iter_job_configs_rejects_missing_job_file(tmp_path):
+    """The Python config API must name a missing job file before parsing."""
+
+    from necroflow.config import iter_job_configs
+
+    missing = tmp_path / "missing.toml"
+    with pytest.raises(FileNotFoundError, match="job file not found"):
+        list(iter_job_configs(missing))
 
 
 def test_callable_fingerprint_example_runs_and_records_provenance(
@@ -1508,6 +1559,93 @@ def test_provenance_json_prints_metadata(tmp_path, factory_file, capsys):
     assert payload["path"].endswith("/b.txt")
 
 
+def test_graph_output_writes_rendered_dag(tmp_path, factory_file):
+    """Graph output files must contain the same textual DAG without executing it."""
+
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    graph = tmp_path / "graph.txt"
+
+    main(["graph", "--output", str(graph), "--outdir", str(tmp_path / "out"), str(job)])
+
+    rendered = graph.read_text()
+    assert "make_a" in rendered
+    assert "make_b" in rendered
+    assert not list((tmp_path / "out").rglob("a.txt"))
+
+
+def test_provenance_missing_metadata_errors_cleanly(tmp_path):
+    """Provenance must report the exact absent metadata path for unknown outputs."""
+
+    output = tmp_path / "unknown.txt"
+
+    with pytest.raises(SystemExit, match="provenance metadata not found"):
+        main(["provenance", str(output)])
+
+
+def test_explain_rejects_unknown_label(tmp_path, factory_file):
+    """Explain node filters must name a label present in the selected jobs."""
+
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    with pytest.raises(SystemExit, match="explain label not found: absent"):
+        main(
+            ["explain", "--node", "absent", "--outdir", str(tmp_path / "out"), str(job)]
+        )
+
+
+def test_doctor_json_reports_invalid_resource_cap(tmp_path, factory_file, capsys):
+    """Doctor must assign a stable issue code to malformed resource constraints."""
+
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "doctor",
+                "--json",
+                "--constraint",
+                "missing-separator",
+                "--outdir",
+                str(tmp_path / "out"),
+                str(job),
+            ]
+        )
+
+    payload = _json_stdout(capsys)
+    assert payload["issues"][0]["code"] == "NF_RESOURCE_INVALID"
+
+
+def test_doctor_json_reports_locked_node_store(tmp_path, factory_file, capsys):
+    """Doctor must detect the same exclusive node-store lock used by execution."""
+
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    nodes_dir = tmp_path / "nodes"
+    lock_path = nodes_dir / ".rip" / "necroflow.lock"
+    lock_path.parent.mkdir(parents=True)
+
+    with lock_path.open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(SystemExit):
+            main(
+                [
+                    "doctor",
+                    "--json",
+                    "--nodes-dir",
+                    str(nodes_dir),
+                    "--results-dir",
+                    str(tmp_path / "results"),
+                    str(job),
+                ]
+            )
+
+    payload = _json_stdout(capsys)
+    assert payload["issues"][0]["code"] == "NF_NODESTORE_LOCKED"
+
+
 def test_doctor_json_ok_for_valid_job(tmp_path, factory_file, capsys):
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
@@ -1583,6 +1721,69 @@ def test_doctor_json_reports_invalid_shellpath(tmp_path, factory_file, capsys):
 
     payload = _json_stdout(capsys)
     assert payload["issues"][0]["code"] == "NF_SHELLPATH_INVALID"
+
+
+def test_doctor_text_reports_success_and_errors(tmp_path, factory_file, capsys):
+    """Doctor text mode must be concise while retaining stable issue codes."""
+
+    valid = tmp_path / "valid.toml"
+    valid.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    main(["doctor", "--outdir", str(tmp_path / "valid-out"), str(valid)])
+    assert capsys.readouterr().out.strip() == "doctor: ok"
+
+    invalid = tmp_path / "invalid.toml"
+    invalid.write_text('v = "hello"\n')
+    with pytest.raises(SystemExit):
+        main(["doctor", "--outdir", str(tmp_path / "invalid-out"), str(invalid)])
+    assert "NF_CONFIG_MISSING_PIPELINE" in capsys.readouterr().out
+
+
+def test_explain_text_prints_state_and_reasons(tmp_path, factory_file, capsys):
+    """Explain text mode must expose the same actionable state reasons as JSON."""
+
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    main(["explain", "--outdir", str(tmp_path / "out"), str(job)])
+
+    output = capsys.readouterr().out
+    assert "state: missing" in output
+    assert "will_run: true" in output
+    assert "reason: output_missing" in output
+    assert "resources: threads=1" in output
+
+
+def test_explain_json_reports_stale_causes(tmp_path, factory_file, capsys):
+    """Explain must distinguish forced, compromised, and changed-parent staleness."""
+
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    outdir = tmp_path / "out"
+    main(["--outdir", str(outdir), str(job)])
+    capsys.readouterr()
+
+    main(["explain", "--json", "--invalidate", "b", "--outdir", str(outdir), str(job)])
+    forced = {node["label"]: node for node in _json_stdout(capsys)["nodes"]}
+    assert {reason["kind"] for reason in forced["b"]["reasons"]} == {
+        "forced_invalidation"
+    }
+
+    b_output = _real_output(outdir, "b.txt")
+    (b_output.parent / ".rip" / "state").write_text("running")
+    main(["explain", "--json", "--outdir", str(outdir), str(job)])
+    compromised = {node["label"]: node for node in _json_stdout(capsys)["nodes"]}
+    assert "compromised_prior_state" in {
+        reason["kind"] for reason in compromised["b"]["reasons"]
+    }
+    (b_output.parent / ".rip" / "state").write_text("up_to_date")
+
+    time.sleep(0.05)
+    _real_output(outdir, "a.txt").write_text("changed")
+    main(["explain", "--json", "--outdir", str(outdir), str(job)])
+    changed = {node["label"]: node for node in _json_stdout(capsys)["nodes"]}
+    assert "parent_content_changed" in {
+        reason["kind"] for reason in changed["b"]["reasons"]
+    }
 
 
 def test_explain_json_reports_missing_and_up_to_date(tmp_path, factory_file, capsys):

@@ -82,6 +82,9 @@ def my_scheduler(ready, remaining, available_resources):
 dag.execute(scheduler=my_scheduler)
 ```
 
+A custom scheduler must return a `list` containing only nodes from `ready`, with no
+duplicates. Invalid selections are rejected before any selected job is submitted.
+
 ## Failure handling
 
 ```python

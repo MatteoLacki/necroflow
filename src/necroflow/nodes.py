@@ -11,8 +11,6 @@ from necroflow.fingerprints import validate_fingerprint_result
 from necroflow.contexts import NamedValues
 from necroflow.rule_call import RuleCall
 
-_COMPROMISED_STATES = {"running", "failed", "interrupted"}
-
 
 def _safe_path_component(value: str, *, kind: str) -> str:
     path = Path(value)
@@ -91,7 +89,7 @@ class Node:
     def is_compromised(self) -> bool:
         return (
             self.state_file.exists()
-            and self.state_file.read_text().strip() in _COMPROMISED_STATES
+            and self.state_file.read_text().strip() != "up_to_date"
         )
 
     def mark_running(self) -> None:

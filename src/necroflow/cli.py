@@ -533,7 +533,7 @@ def _doctor_payload(args) -> dict:
         )
     try:
         _parse_resource_caps(args)
-    except Exception as exc:
+    except (Exception, SystemExit) as exc:
         issues.append(
             _issue(
                 "NF_RESOURCE_INVALID",
