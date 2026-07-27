@@ -534,6 +534,192 @@ def test_iter_job_configs_python_api_yields_expanded_configs_without_validation(
     assert [j.config["v"] for j in jobs] == ["good", "bad"]
 
 
+def test_iter_job_configs_extends_one_table_into_multiple_configs(tmp_path):
+    """Two stage configs may inherit one shared table without sharing a Node.
+
+    Config inheritance happens while loading the job TOML, so factories receive
+    two complete dictionaries that they can serialize into independently
+    fingerprinted config-file Nodes.
+    """
+    from necroflow.config import iter_job_configs
+
+    job = tmp_path / "job.toml"
+    job.write_text(
+        "[common]\n"
+        'shared = "value"\n'
+        "[first]\n"
+        '".extends" = "common"\n'
+        'specific = "first"\n'
+        "[second]\n"
+        '".extends" = "common"\n'
+        'specific = "second"\n'
+    )
+
+    (loaded,) = iter_job_configs(job)
+
+    assert loaded.config["first"] == {"shared": "value", "specific": "first"}
+    assert loaded.config["second"] == {"shared": "value", "specific": "second"}
+
+
+def test_iter_job_configs_extends_deep_merges_with_child_overrides(tmp_path):
+    """Inherited nested tables are preserved while child values take precedence."""
+    from necroflow.config import iter_job_configs
+
+    job = tmp_path / "job.toml"
+    job.write_text(
+        "[base]\n"
+        'value = "base"\n'
+        "[base.nested]\n"
+        'shared = "base"\n'
+        'replaced = "base"\n'
+        "[child]\n"
+        '".extends" = "base"\n'
+        'value = "child"\n'
+        "[child.nested]\n"
+        'replaced = "child"\n'
+        'specific = "child"\n'
+    )
+
+    (loaded,) = iter_job_configs(job)
+
+    assert loaded.config["child"] == {
+        "value": "child",
+        "nested": {
+            "shared": "base",
+            "replaced": "child",
+            "specific": "child",
+        },
+    }
+
+
+def test_iter_job_configs_extends_accepts_absolute_dotted_table_paths(tmp_path):
+    """A nested base table can be named by its absolute dotted config path."""
+    from necroflow.config import iter_job_configs
+
+    job = tmp_path / "job.toml"
+    job.write_text(
+        "[defaults.common]\n"
+        'shared = "value"\n'
+        "[stage]\n"
+        '".extends" = "defaults.common"\n'
+        'specific = "stage"\n'
+    )
+
+    (loaded,) = iter_job_configs(job)
+
+    assert loaded.config["stage"] == {"shared": "value", "specific": "stage"}
+
+
+def test_iter_job_configs_extends_supports_inheritance_chains(tmp_path):
+    """A table may extend another inherited table without leaking metadata."""
+    from necroflow.config import iter_job_configs
+
+    job = tmp_path / "job.toml"
+    job.write_text(
+        "[base]\n"
+        "first = 1\n"
+        "[middle]\n"
+        '".extends" = "base"\n'
+        "second = 2\n"
+        "[leaf]\n"
+        '".extends" = "middle"\n'
+        "third = 3\n"
+    )
+
+    (loaded,) = iter_job_configs(job)
+
+    assert loaded.config["middle"] == {"first": 1, "second": 2}
+    assert loaded.config["leaf"] == {
+        "first": 1,
+        "second": 2,
+        "third": 3,
+    }
+
+
+def test_iter_job_configs_extends_rejects_missing_base_table(tmp_path):
+    """A misspelled base path fails with the extending table named in the error."""
+    from necroflow.config import iter_job_configs
+
+    job = tmp_path / "job.toml"
+    job.write_text("[stage]\n" '".extends" = "missing"\n')
+
+    with pytest.raises(
+        ValueError, match="config table 'stage' extends missing table 'missing'"
+    ):
+        list(iter_job_configs(job))
+
+
+def test_iter_job_configs_extends_rejects_inheritance_cycles(tmp_path):
+    """Inheritance cycles fail explicitly instead of recursing until overflow."""
+    from necroflow.config import iter_job_configs
+
+    job = tmp_path / "job.toml"
+    job.write_text(
+        "[first]\n" '".extends" = "second"\n' "[second]\n" '".extends" = "first"\n'
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="config table inheritance cycle: first -> second -> first",
+    ):
+        list(iter_job_configs(job))
+
+
+def test_iter_job_configs_extends_requires_a_dotted_path_string(tmp_path):
+    """The inheritance directive rejects non-string values with a clear error."""
+    from necroflow.config import iter_job_configs
+
+    job = tmp_path / "job.toml"
+    job.write_text("[base]\n" "value = 1\n" "[stage]\n" '".extends" = 3\n')
+
+    with pytest.raises(
+        ValueError, match="config table 'stage' .extends must be a dotted path string"
+    ):
+        list(iter_job_configs(job))
+
+
+def test_iter_job_configs_extends_rejects_non_table_target(tmp_path):
+    """An inheritance path must identify a table rather than a scalar value."""
+    from necroflow.config import iter_job_configs
+
+    job = tmp_path / "job.toml"
+    job.write_text("base = 1\n" "[stage]\n" '".extends" = "base"\n')
+
+    with pytest.raises(
+        ValueError, match="config table 'stage' extends non-table 'base'"
+    ):
+        list(iter_job_configs(job))
+
+
+def test_iter_job_configs_resolves_extends_after_grid_expansion(tmp_path):
+    """A variant-specific grid leaves an inherited independent config unchanged."""
+    from necroflow.config import iter_job_configs
+
+    job = tmp_path / "job.toml"
+    job.write_text(
+        "[common]\n"
+        'shared = "value"\n'
+        "[independent]\n"
+        '".extends" = "common"\n'
+        'stage = "independent"\n'
+        "[variant]\n"
+        '".extends" = "common"\n'
+        'method__grid = ["first", "second"]\n'
+    )
+
+    loaded = list(iter_job_configs(job))
+
+    assert len(loaded) == 2
+    assert [item.config["independent"] for item in loaded] == [
+        {"shared": "value", "stage": "independent"},
+        {"shared": "value", "stage": "independent"},
+    ]
+    assert [item.config["variant"]["method"] for item in loaded] == [
+        "first",
+        "second",
+    ]
+
+
 def test_python_api_callers_validate_expanded_configs_in_their_own_loop(
     tmp_path, factory_file
 ):

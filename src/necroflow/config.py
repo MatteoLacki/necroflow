@@ -54,6 +54,69 @@ def load_callable(spec: str, *, kind: str = "callable") -> Callable:
     return value
 
 
+def _merge_tables(base: dict[str, Any], child: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge two config tables, preferring child values."""
+    merged = dict(base)
+    for name, value in child.items():
+        inherited = merged.get(name)
+        if isinstance(inherited, dict) and isinstance(value, dict):
+            value = _merge_tables(inherited, value)
+        merged[name] = value
+    return merged
+
+
+def _get_table(config: dict[str, Any], path: str) -> dict[str, Any]:
+    """Return a config table by its absolute dotted path."""
+    value: Any = config
+    for name in path.split("."):
+        value = value[name]
+    return value
+
+
+def _resolve_extends(config: dict[str, Any]) -> dict[str, Any]:
+    """Resolve inheritance for top-level config tables."""
+    cache: dict[str, dict[str, Any]] = {}
+    resolving: list[str] = []
+
+    def resolve(path: str) -> dict[str, Any]:
+        if path in cache:
+            return cache[path]
+        if path in resolving:
+            cycle = resolving[resolving.index(path) :] + [path]
+            raise ValueError(f"config table inheritance cycle: {' -> '.join(cycle)}")
+        resolving.append(path)
+        value = _get_table(config, path)
+        if ".extends" not in value:
+            cache[path] = value
+            resolving.pop()
+            return value
+        base_path = value[".extends"]
+        if not isinstance(base_path, str) or not all(base_path.split(".")):
+            raise ValueError(
+                f"config table {path!r} .extends must be a dotted path string"
+            )
+        try:
+            base_value = _get_table(config, base_path)
+        except (KeyError, TypeError) as exc:
+            raise ValueError(
+                f"config table {path!r} extends missing table {base_path!r}"
+            ) from exc
+        if not isinstance(base_value, dict):
+            raise ValueError(f"config table {path!r} extends non-table {base_path!r}")
+        base = resolve(base_path)
+        child = {name: item for name, item in value.items() if name != ".extends"}
+        cache[path] = _merge_tables(base, child)
+        resolving.pop()
+        return cache[path]
+
+    resolved = dict(config)
+    for name, value in config.items():
+        if not isinstance(value, dict) or ".extends" not in value:
+            continue
+        resolved[name] = resolve(name)
+    return resolved
+
+
 def iter_job_configs(
     path: str | Path,
     *,
@@ -65,6 +128,7 @@ def iter_job_configs(
         raise FileNotFoundError(f"job file not found: {job_path}")
     doc = tomlkit.parse(job_path.read_text(encoding="utf-8"))
     for label, config_dict in iter_configs(doc, base_stem=job_path.stem):
+        config_dict = _resolve_extends(config_dict)
         pipeline_spec = config_dict.get(".pipeline")
         fingerprint_spec = config_dict.get(".fingerprint")
         if require_pipeline and not pipeline_spec:
