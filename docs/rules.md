@@ -149,12 +149,50 @@ The branching config value (`config.call_variants`) does not need to be passed t
 
 Two pipelines sharing the same upstream config (e.g. same `path` and `ref`) will reuse the `align` output — recognised as a cache hit — even if they take different branches downstream.
 
-**Pipeline attribute names cannot be overwritten.** Assigning to the same name twice raises `ValueError`. If you want to build a pipeline in a loop, use distinct names:
+## Local variables and Pipeline labels
+
+Pipeline labels are write-once. Assigning a second Node to the same attribute
+or item label raises `ValueError`:
+
+```python
+P.current = write_text(P, text=config["text"])
+P.current = uppercase(P, P.current)  # ValueError: current is already assigned
+```
+
+This keeps every Pipeline label bound to one unambiguous Node for the lifetime
+of the Pipeline. A label used by `.requests`, result-link creation, graph
+inspection, or `P.current` therefore always identifies the same Node. Allowing
+reassignment would make earlier Nodes inaccessible under that label and make a
+request for `current` dependent on when it was resolved.
+
+Rule results do not need labels immediately. Ordinary Python variables can hold
+and rebind intermediate Nodes:
+
+```python
+def text_pipeline(P, config):
+    current = write_text(P, text=config["text"])
+    current = uppercase(P, current)
+    current = add_prefix(P, current)
+
+    P.result = current
+```
+
+Rebinding `current` replaces the local reference; it does not mutate a Node.
+Each rule call creates and interns a new Node in the shared DAG. Only the final
+Node above receives the public Pipeline label `result`.
+
+Requiring `P.sinks()` still executes the final Node's unlabelled ancestors. An
+unlabelled Node disconnected from every required output is not executed.
+
+This pattern is useful for loops and sequential transformations. When every
+iteration should remain visible as a result, assign distinct labels instead:
 
 ```python
 for i, step in enumerate(steps):
     P[f"result_{i}"] = process(P, step_node, mode=step)
 ```
+
+See the [complete runnable example](../examples/local_variables.py).
 
 The idiomatic pattern for multi-sample or multi-condition work is one shared
 `DAG` and a separate `Pipeline(dag)` per config. Equivalent rule calls are
