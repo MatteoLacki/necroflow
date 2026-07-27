@@ -92,3 +92,152 @@ def test_base_stem_in_label():
     doc = parse('word__grid = ["a", "b"]\n')
     labels = [label for label, _ in iter_configs(doc, base_stem="mystem")]
     assert all(label.startswith("mystem") for label in labels)
+
+
+def test_nested_grids_expand_in_deterministic_cartesian_order():
+    """Nested grid paths form stable labels and preserve declaration order."""
+    doc = parse(
+        "[model]\n"
+        "width__grid = [64, 128]\n"
+        "[model.optimizer]\n"
+        "lr__grid = [0.1, 0.01]\n"
+    )
+
+    results = list(iter_configs(doc, base_stem="job"))
+
+    assert [label for label, _ in results] == [
+        "job__model_width+64__model_optimizer_lr+0p1",
+        "job__model_width+64__model_optimizer_lr+0p01",
+        "job__model_width+128__model_optimizer_lr+0p1",
+        "job__model_width+128__model_optimizer_lr+0p01",
+    ]
+    assert [config["model"]["optimizer"]["lr"] for _, config in results] == [
+        0.1,
+        0.01,
+        0.1,
+        0.01,
+    ]
+
+
+def test_table_grid_inner_dimensions_extend_explicit_labels():
+    """An explicit table label stays unique when that table contains a grid."""
+    doc = parse(
+        "[[model__grid]]\n"
+        '__label = "family"\n'
+        'name = "alpha"\n'
+        "width__grid = [64, 128]\n"
+    )
+
+    results = list(iter_configs(doc, base_stem="job"))
+
+    assert [label for label, _ in results] == [
+        "job__model+family__width+64",
+        "job__model+family__width+128",
+    ]
+    assert [config for _, config in results] == [
+        {"model": {"name": "alpha", "width": 64}},
+        {"model": {"name": "alpha", "width": 128}},
+    ]
+
+
+def test_empty_grid_is_rejected_with_its_config_path():
+    """An empty grid cannot produce a concrete config and fails descriptively."""
+    doc = parse("[model]\nwidth__grid = []\n")
+
+    with pytest.raises(
+        ValueError, match="model.width__grid must contain at least one value"
+    ):
+        list(iter_configs(doc))
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_labels"),
+    [
+        (
+            "[[model__grid]]\n"
+            '__label = "small"\n'
+            "width = 64\n"
+            "[[model__grid]]\n"
+            '__label = "large"\n'
+            "width = 128\n",
+            ["job__model+small", "job__model+large"],
+        ),
+        (
+            "[[model__grid]]\n"
+            'name = "alpha"\n'
+            "width = 64\n"
+            "[[model__grid]]\n"
+            'name = "beta"\n'
+            "width = 128\n",
+            ["job__model+alpha", "job__model+beta"],
+        ),
+        (
+            "[[model__grid]]\n" "width = 64\n" "[[model__grid]]\n" "width = 128\n",
+            ["job__model+0", "job__model+1"],
+        ),
+    ],
+)
+def test_table_grids_receive_stable_human_readable_labels(source, expected_labels):
+    """Table variants prefer explicit, unique-string, then numeric labels."""
+    results = list(iter_configs(parse(source), base_stem="job"))
+
+    assert [label for label, _ in results] == expected_labels
+    assert all("__label" not in config["model"] for _, config in results)
+
+
+def test_custom_grid_suffix_and_label_options_are_honored():
+    """Callers can select a suffix and compact nested parameter labels."""
+    doc = parse("[model]\nwidth__choice = [64, 128]\n")
+
+    results = list(
+        iter_configs(
+            doc,
+            grid_suffixes=("__choice",),
+            base_stem="job",
+            short_names=True,
+            equal_sign="=",
+        )
+    )
+
+    assert [label for label, _ in results] == ["job__width=64", "job__width=128"]
+
+
+def test_grid_expansion_does_not_mutate_the_parsed_job_document():
+    """One parsed job document can be expanded repeatedly with identical results."""
+    doc = parse('word__grid = ["first", "second"]\n')
+    original = tomlkit.dumps(doc)
+
+    first = list(iter_configs(doc, base_stem="job"))
+    second = list(iter_configs(doc, base_stem="job"))
+
+    assert first == second
+    assert tomlkit.dumps(doc) == original
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        ("width__grid = 64\n", "width__grid must be a list or array of tables"),
+        (
+            "[[model__grid]]\nwidth__grid = 64\n",
+            "width__grid must be a list",
+        ),
+    ],
+)
+def test_grid_values_must_be_lists_or_arrays_of_tables(source, message):
+    """Malformed grid declarations identify the invalid config path."""
+    with pytest.raises(TypeError, match=message):
+        list(iter_configs(parse(source)))
+
+
+def test_long_grid_labels_are_bounded_and_collision_resistant():
+    """Generated labels fit filesystem components without collapsing variants."""
+    first = "a" * 300
+    second = "a" * 299 + "b"
+    doc = tomlkit.document()
+    doc["value__grid"] = [first, second]
+
+    labels = [label for label, _ in iter_configs(doc, base_stem="job")]
+
+    assert len(labels) == len(set(labels))
+    assert all(len(label.encode("utf-8")) <= 250 for label in labels)

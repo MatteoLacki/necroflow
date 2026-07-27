@@ -34,8 +34,8 @@ result is then nested at `results/<job>/dataset/qc/<filename>`.
 ## Parameter grids
 
 Any TOML key ending in `__grid` is expanded into a Cartesian product of all
-combinations. The resulting output subfolders use the same naming scheme as
-[snakemakeconfigs](https://github.com/MatteoLacki/snakemakeconfigs).
+combinations. Result-folder labels are derived deterministically from nested
+parameter paths and their concrete values.
 
 ```toml
 ".pipeline"   = "factory.py:factory"

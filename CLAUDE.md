@@ -158,7 +158,7 @@ src/necroflow/
   executor.py        — execute(), resource caps, lock, ExecutionReport, autoclean, keep_going
   logger.py          — thread-safe job logging
   config.py          — job TOML loading and grid expansion (iter_job_configs, JobConfig)
-  grid.py            — __grid TOML expansion (vendored from snakemakeconfigs)
+  grid.py            — __grid TOML expansion and deterministic result labels
   cli.py             — CLI: run + init/graph/outputs/provenance/doctor/explain subcommands,
                        split nodes-dir/results-dir layout, manifests, symlink trees
   graphviz_render.py — optional PNG rendering (dev extra)

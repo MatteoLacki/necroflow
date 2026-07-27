@@ -1,62 +1,16 @@
-"""TOML __grid expansion — vendored from snakemakeconfigs.toml_patcher.
-
-Source: github.com/MatteoLacki/snakemakeconfigs
-Added at the bottom: iter_configs(), _to_plain_dict().
-"""
+"""Expand Necroflow job TOML ``__grid`` declarations."""
 
 from __future__ import annotations
 
 import copy
 import difflib
 import hashlib
-import os
 import re
 from itertools import product
 from typing import Any, Iterator
 
 import tomlkit
 from tomlkit.items import AoT
-
-# ── patch / grid extraction ───────────────────────────────────────────────────
-
-
-def apply_patch(base_doc, patch_doc, grid_suffixes):
-    grid_params = {}
-
-    def merge(target, updates, path=""):
-        for key, value in updates.items():
-            for suffix in grid_suffixes:
-                if key.endswith(suffix):
-                    actual_key = key[: -len(suffix)]
-                    actual_path = f"{path}.{actual_key}" if path else actual_key
-                    if isinstance(value, AoT):
-                        all_variants = []
-                        for elem in value:
-                            all_variants.extend(
-                                _expand_aot_element(elem, grid_suffixes)
-                            )
-                        grid_params[actual_path] = all_variants
-                        target[actual_key] = all_variants[0]
-                    elif isinstance(value, list):
-                        grid_params[actual_path] = value
-                        target[actual_key] = value[0]
-                    else:
-                        raise TypeError(
-                            f"{actual_path}{suffix} must be a list or array of tables"
-                        )
-                    break
-            else:
-                if isinstance(value, dict):
-                    if key not in target:
-                        target[key] = tomlkit.table()
-                    next_path = f"{path}.{key}" if path else key
-                    merge(target[key], value, next_path)
-                else:
-                    target[key] = value
-
-    result = tomlkit.parse(tomlkit.dumps(base_doc))
-    merge(result, patch_doc)
-    return result, grid_params
 
 
 def _aot_elem_to_plain_table(elem):
@@ -78,6 +32,10 @@ def _expand_aot_element(elem_table, grid_suffixes):
                     actual_path = f"{path}.{actual_key}" if path else actual_key
                     if not isinstance(value, list):
                         raise TypeError(f"{actual_path}{suffix} must be a list")
+                    if not value:
+                        raise ValueError(
+                            f"{actual_path}{suffix} must contain at least one value"
+                        )
                     local_grids[actual_path] = value
                     tbl[actual_key] = value[0]
                     del tbl[key]
@@ -104,9 +62,16 @@ def _expand_aot_element(elem_table, grid_suffixes):
             variant = _aot_elem_to_plain_table(base)
             for k, v in zip(names, combo):
                 set_nested_value(variant, k, v)
+            if explicit_label is not None:
+                dimensions = "__".join(
+                    f"{name.replace('.', '_')}+"
+                    f"{value_to_string(value, local_grids[name][0])}"
+                    for name, value in zip(names, combo)
+                )
+                variant["__label"] = f"{explicit_label}__{dimensions}"
             results.append(variant)
 
-    if explicit_label is not None:
+    if explicit_label is not None and not local_grids:
         for variant in results:
             variant["__label"] = explicit_label
     return results
@@ -123,6 +88,10 @@ def extract_grids_from_doc(doc, grid_suffixes):
                     actual_key = key[: -len(suffix)]
                     actual_path = f"{path}.{actual_key}" if path else actual_key
                     if isinstance(value, AoT):
+                        if not value:
+                            raise ValueError(
+                                f"{actual_path}{suffix} must contain at least one value"
+                            )
                         all_variants = []
                         for elem in value:
                             all_variants.extend(
@@ -132,6 +101,10 @@ def extract_grids_from_doc(doc, grid_suffixes):
                         table[actual_key] = all_variants[0]
                         del table[key]
                     elif isinstance(value, list):
+                        if not value:
+                            raise ValueError(
+                                f"{actual_path}{suffix} must contain at least one value"
+                            )
                         grid_params[actual_path] = value
                         table[actual_key] = value[0]
                         del table[key]
@@ -333,7 +306,7 @@ def _compute_value_only_keys(
     return value_only
 
 
-# ── necroflow addition ────────────────────────────────────────────────────────
+# ── public expansion API ──────────────────────────────────────────────────────
 
 
 def iter_configs(
@@ -345,8 +318,8 @@ def iter_configs(
 ) -> Iterator[tuple[str, dict]]:
     """Yield (label, config_dict) pairs from a TOML doc with __grid dimensions.
 
-    label matches the filename snakemakeconfigs would produce, without the .toml
-    extension — e.g. 'experiment__layers+128__lr+0p01'.
+    Labels encode nested parameter paths and values without the ``.toml``
+    extension, for example ``experiment__layers+128__lr+0p01``.
     config_dict is a plain Python dict (tomlkit types stripped).
 
     If the doc has no __grid keys, yields a single (base_stem, full_config) pair.
