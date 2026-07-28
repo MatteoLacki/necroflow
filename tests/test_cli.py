@@ -1656,6 +1656,52 @@ def test_doctor_json_ok_for_valid_job(tmp_path, factory_file, capsys):
     assert payload == {"issues": [], "ok": True}
 
 
+def test_doctor_json_reports_multiple_pipeline_labels_as_info(tmp_path, capsys):
+    """Aliased labels should be visible without making a runnable job invalid."""
+
+    factory_file = tmp_path / "alias_pipe.py"
+    factory_file.write_text(
+        FACTORY_SRC.replace(
+            "    P.b = make_b(P, P.a)",
+            "    P.b = make_b(P, P.a)\n    P.alias = P.b",
+        )
+    )
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    main(["doctor", "--json", "--outdir", str(tmp_path / "out"), str(job)])
+
+    payload = _json_stdout(capsys)
+    assert payload["ok"] is True
+    assert len(payload["issues"]) == 1
+    issue = payload["issues"][0]
+    assert issue["code"] == "NF_MULTIPLE_LABELS"
+    assert issue["severity"] == "info"
+    assert issue["job"] == "job"
+    assert issue["labels"] == ["b", "alias"]
+    assert issue["path"].endswith("/b.txt")
+
+
+def test_doctor_text_prints_multiple_pipeline_labels_without_failing(tmp_path, capsys):
+    """Informational findings must be printed while doctor still exits successfully."""
+
+    factory_file = tmp_path / "alias_pipe.py"
+    factory_file.write_text(
+        FACTORY_SRC.replace(
+            "    P.b = make_b(P, P.a)",
+            "    P.b = make_b(P, P.a)\n    P.alias = P.b",
+        )
+    )
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    main(["doctor", "--outdir", str(tmp_path / "out"), str(job)])
+
+    output = capsys.readouterr().out
+    assert "info: NF_MULTIPLE_LABELS" in output
+    assert "doctor: ok" not in output
+
+
 def test_doctor_json_reports_invalid_result_path(
     tmp_path, factory_file, monkeypatch, capsys
 ):

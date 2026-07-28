@@ -110,11 +110,8 @@ necroflow doctor job.toml
 necroflow doctor --json job.toml
 ```
 
-`doctor` reports stable issue codes such as `NF_CONFIG_MISSING_PIPELINE`,
-`NF_PIPELINE_IMPORT_FAILED`, `NF_VALIDATION_FAILED`,
-`NF_REQUEST_LABEL_NOT_FOUND`, `NF_SHELLPATH_INVALID`, `NF_NODESTORE_LOCKED`,
-`NF_OUTPUT_PATH_TOO_LONG`, and `NF_RESOURCE_INVALID`. It exits non-zero when
-any error issue is present.
+See [Doctor preflight checks](doctor.md) for its stable issue codes, execution
+boundary, filesystem probes, informational findings, and exit semantics.
 
 Explain what would run and why without executing rules:
 

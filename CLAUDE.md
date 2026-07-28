@@ -27,6 +27,7 @@ disagrees with the code, the code wins (and this file should be fixed).
 | Adding/editing a rule (placeholders, typed outputs, mistakes) | `.claude/skills/add-a-rule/SKILL.md` |
 | Node re-ran or cached unexpectedly | `.claude/skills/debug-stale-classification/SKILL.md` |
 | Writing a custom scheduler | `.claude/skills/write-a-scheduler/SKILL.md` |
+| Doctor preflight checks, findings, side effects, and limits | `docs/doctor.md` |
 
 Skills under `.claude/skills/` are auto-loaded by Claude Code; other agents should read them
 as plain markdown via this table.
@@ -62,8 +63,9 @@ source .venv/bin/activate
 
 - When investigating pytest failures, **read the failing test docstring first** — it states the
   invariant the test guards, not the steps.
-- A pre-commit hook at `.githooks/pre-commit` (via `core.hooksPath`) runs `black` on all tracked
-  Python files, re-stages them, then runs `pytest`; a failing test rejects the commit.
+- A pre-commit hook at `.githooks/pre-commit` (via `core.hooksPath`) acts only when
+  staged changes include Python files. It runs `black` on existing changed Python paths,
+  re-stages them, then runs `pytest`; a failing test rejects the commit.
   **If a commit is rejected, diagnose and fix the failing tests before re-attempting.**
 - Regression tests land in the same commit as the fix.
 

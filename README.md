@@ -259,6 +259,7 @@ text = '{\n  "mode": "uppercase"\n}\n'
 - [Manuscript argument conspect](docs/paper-arguments.md)
 - [Release checklist](docs/release.md)
 - [Development](docs/development.md)
+- [Doctor preflight checks](docs/doctor.md)
 
 ## What is not yet implemented
 

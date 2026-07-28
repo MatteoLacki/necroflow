@@ -559,6 +559,22 @@ def _doctor_payload(args) -> dict:
         issues.append(_issue("NF_CONFIG_PARSE_FAILED", "error", str(exc)))
         return {"ok": False, "issues": issues}
 
+    for job_label, pipeline, _request in combos:
+        for node in pipeline.nodes:
+            labels = pipeline.labels_for(node)
+            if len(labels) > 1:
+                issues.append(
+                    _issue(
+                        "NF_MULTIPLE_LABELS",
+                        "info",
+                        f"job {job_label!r}: Pipeline labels {labels!r} "
+                        "refer to the same node",
+                        job=job_label,
+                        labels=list(labels),
+                        path=node.relative_path.as_posix(),
+                    )
+                )
+
     try:
         _validate_result_paths(results_dir, combos)
     except ValueError as exc:
@@ -689,11 +705,11 @@ def _doctor(args) -> None:
     if args.json:
         _emit_json(payload)
     else:
-        if payload["ok"]:
-            print("doctor: ok")
-        else:
+        if payload["issues"]:
             for issue in payload["issues"]:
                 print(f"{issue['severity']}: {issue['code']}: {issue['message']}")
+        else:
+            print("doctor: ok")
     if not payload["ok"]:
         raise SystemExit(1)
 

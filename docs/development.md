@@ -1,6 +1,6 @@
 # Development
 
-[Previous: Release Checklist](release.md) | [README](../README.md) | [Next: README](../README.md)
+[Previous: Release Checklist](release.md) | [README](../README.md) | [Next: Doctor](doctor.md)
 
 Use the local development environment for tests, builds, and releases:
 
@@ -20,8 +20,9 @@ make test
 ```
 
 The repository also has a pre-commit hook in `.githooks/pre-commit` when
-`core.hooksPath` is configured. It runs Black over the Python codebase and then
-runs `pytest` before allowing a commit.
+`core.hooksPath` is configured. When staged changes include Python files, it
+runs Black over existing changed Python paths and then runs the full
+`pytest` suite before allowing a commit. Commits without staged Python changes skip both.
 
 ## Release Builds
 
@@ -82,4 +83,4 @@ The default tag is `v<provided-version>` when a version is passed on the Make
 command line, otherwise `v<necroflow.__version__>`. Override it with
 `TAG=vX.Y.Z` when needed.
 
-[Previous: Release Checklist](release.md) | [README](../README.md) | [Next: README](../README.md)
+[Previous: Release Checklist](release.md) | [README](../README.md) | [Next: Doctor](doctor.md)

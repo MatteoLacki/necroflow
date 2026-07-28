@@ -3,16 +3,26 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
+mapfile -d '' -t changed_python_files < <(
+    git diff --cached --name-only --diff-filter=ACMRD --no-renames -z -- '*.py'
+)
+if [ "${#changed_python_files[@]}" -eq 0 ]; then
+    echo "[pre-commit] no staged Python changes — skipping Black and pytest."
+    exit 0
+fi
+
 if [ ! -f .venv/bin/black ] || [ ! -f .venv/bin/pytest ]; then
     echo "[pre-commit] .venv is missing black or pytest — run 'make venv' first" >&2
     exit 1
 fi
 
-mapfile -t python_files < <(git ls-files '*.py')
+mapfile -d '' -t python_files < <(
+    git diff --cached --name-only --diff-filter=ACMR --no-renames -z -- '*.py'
+)
 if [ "${#python_files[@]}" -gt 0 ]; then
-    echo "[pre-commit] formatting Python files with black..."
+    echo "[pre-commit] formatting staged Python files with black..."
     .venv/bin/black "${python_files[@]}"
-    git add "${python_files[@]}"
+    git add -- "${python_files[@]}"
 fi
 
 echo "[pre-commit] running pytest..."
