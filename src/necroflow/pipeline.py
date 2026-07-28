@@ -4,6 +4,7 @@ from collections.abc import Callable
 import os
 from pathlib import Path, PurePosixPath
 
+from necroflow import keywords as pipeline_keywords
 from necroflow.nodes import Node
 from necroflow.rule_call import RuleCall
 from necroflow.fingerprints import (
@@ -384,6 +385,8 @@ class Pipeline(_GraphBase):
 
     def _assign_node(self, name: str, value: Node) -> None:
         label_path = _validate_pipeline_label(name, value.path.name)
+        if name in pipeline_keywords.RESERVED:
+            raise ValueError(f"Pipeline label {name!r} is reserved")
         if name in self._node_names:
             raise ValueError(f"Pipeline label {name!r} already assigned")
         if value.rule_call.dag is not self._dag:
