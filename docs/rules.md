@@ -180,6 +180,8 @@ def text_pipeline(P, config):
 Rebinding `current` replaces the local reference; it does not mutate a Node.
 Each rule call creates and interns a new Node in the shared DAG. Only the final
 Node above receives the public Pipeline label `result`.
+What needs to be noted, is that the not-last version of Node cannot be requested and to bypass that a user must actually come up with a unique name.
+The same is the case for loops, see below.
 
 Requiring `P.sinks()` still executes the final Node's unlabelled ancestors. An
 unlabelled Node disconnected from every required output is not executed.
