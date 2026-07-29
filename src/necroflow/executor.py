@@ -1,3 +1,23 @@
+"""Local execution orchestration for a prepared :class:`~necroflow.pipeline.DAG`.
+
+The executor coordinates domains owned by other modules: ``dag.py`` classifies
+cache state, ``nodes.py`` persists run state, schedulers order eligible work,
+and rules provide commands and resource requirements. This module owns the run
+lifecycle:
+
+1. Lock the node store and classify the required subgraph.
+2. Promote MISSING/STALE nodes to READY once their parents are UP_TO_DATE.
+3. Let the scheduler prioritise READY nodes, then enforce resource caps here.
+4. Run one representative per rule call; its co-outputs complete together.
+5. Record provenance, reports, failures, and optional cleanup.
+
+The normal state path is MISSING/STALE -> READY -> RUNNING -> UP_TO_DATE.
+UP_TO_DATE nodes are cache hits and never enter the worker pool. A failed or
+interrupted parent causes dependent work to become FAILED without being run.
+ORPHAN nodes are outside the required subgraph and are only touched by
+``autoclean``.
+"""
+
 from __future__ import annotations
 
 import concurrent.futures
@@ -37,6 +57,12 @@ if TYPE_CHECKING:
 
 @dataclass
 class ExecutionEvent:
+    """One node's cached or attempted outcome.
+
+    Co-outputs receive separate events even though one command produces them;
+    their timings therefore describe the shared rule-call execution.
+    """
+
     node_key: str
     rule: str
     output_name: str | None
@@ -53,6 +79,8 @@ class ExecutionEvent:
     output_size_human: str | None = None
 
     def to_toml_dict(self) -> dict[str, Any]:
+        """Return non-null event fields using execution-summary names."""
+
         data: dict[str, Any] = {
             "key": self.node_key,
             "rule": self.rule,
@@ -77,12 +105,21 @@ class ExecutionEvent:
 
 @dataclass
 class ExecutionReport:
+    """Execution events indexed by stable node-relative paths.
+
+    Dependency-blocked nodes have no event because no execution was attempted.
+    """
+
     events: dict[str, ExecutionEvent] = field(default_factory=dict)
 
     def add(self, event: ExecutionEvent) -> None:
+        """Store or replace the event for its stable node key."""
+
         self.events[event.node_key] = event
 
     def get(self, node_or_key) -> ExecutionEvent | None:
+        """Look up an event by Node or POSIX relative-path key."""
+
         key = (
             node_or_key
             if isinstance(node_or_key, str)
@@ -92,10 +129,14 @@ class ExecutionReport:
 
 
 def _utc_now() -> str:
+    """Return an ISO-8601 UTC timestamp for persisted run metadata."""
+
     return datetime.now(timezone.utc).isoformat()
 
 
 def _human_size(size: int) -> str:
+    """Format an integer byte count using binary units."""
+
     value = float(size)
     units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"]
     for unit in units:
@@ -106,6 +147,8 @@ def _human_size(size: int) -> str:
 
 
 def _rule_output_size_bytes(output_dir: Path) -> int:
+    """Measure a rule-call directory, excluding its ``.rip`` metadata."""
+
     if not output_dir.exists():
         return 0
     total = 0
@@ -128,6 +171,8 @@ def _event_for_node(
     error: str | None = None,
     output_size_bytes: int | None = None,
 ) -> ExecutionEvent:
+    """Build an event from a node and one execution's measured outcome."""
+
     return ExecutionEvent(
         node_key=node.relative_path.as_posix(),
         rule=node.rule.__name__ if node.rule else "unknown",
@@ -149,6 +194,8 @@ def _event_for_node(
 
 
 def _write_run_stats(node, event: ExecutionEvent) -> None:
+    """Write the last successful rule-call measurements to ``.rip/run.toml``."""
+
     if node.path is None:
         return
     run = {
@@ -166,6 +213,8 @@ def _write_run_stats(node, event: ExecutionEvent) -> None:
 
 
 def _record_cached_events(report: ExecutionReport, active: list) -> None:
+    """Add events for active cache hits, measuring shared directories once."""
+
     measured_dirs: dict[Path, int] = {}
     for node in active:
         if node.state != NodeState.UP_TO_DATE or node.path is None:
@@ -192,6 +241,12 @@ def _record_success_events(
     finished_at: str,
     duration_seconds: float,
 ) -> None:
+    """Record a successful rule call for each active output it produced.
+
+    Cached siblings are omitted because they did not need this execution. All
+    recorded siblings share timing and output-directory size.
+    """
+
     size = _rule_output_size_bytes(node.path.parent)
     for conode in node.output_nodes.values():
         if conode.relative_path not in active_keys:
@@ -223,6 +278,8 @@ def _record_failure_event(
     exit_code: int | None,
     error: str,
 ) -> None:
+    """Record the failed representative node for one rule-call attempt."""
+
     report.add(
         _event_for_node(
             node,
@@ -523,22 +580,32 @@ def execute(
     node_runner=None,
     forced_stale_keys: set[Path] | None = None,
 ) -> ExecutionReport:
-    """Run the DAG's required nodes, respecting declared resource caps.
+    """Run the DAG's required subgraph and return its execution report.
 
-    Classifies each node as Missing/Stale/UpToDate/Orphan before execution.
-    Skips UpToDate and Orphan nodes. Writes dependencies.toml after each
-    successful job.
+    Cache classification happens before execution. UP_TO_DATE nodes become
+    cached report events, ORPHAN nodes are excluded, and MISSING/STALE nodes run
+    once all parents are UP_TO_DATE. Co-outputs of one rule call may all become
+    READY, but only one representative is submitted and completion marks the
+    siblings together.
 
-    resource_caps: {resource: int} upper bounds (e.g. {"threads": 8, "ram": 4*2**30}).
-    Defaults to {"threads": os.cpu_count()}. Resources not in caps are unconstrained.
-    A job whose requirements exceed a cap still runs solo when nothing else is running.
+    ``resource_caps`` maps resource names to total capacity and defaults to all
+    detected CPUs for ``threads``. Uncapped resource names are ignored. A job
+    exceeding a cap may run alone so an undersized cap cannot deadlock it.
 
-    keep_going=False (default): raise on the first failure.
-    keep_going=True: continue running independent nodes; raise ExceptionGroup
-    at the end listing all failures.
+    ``scheduler`` prioritises READY nodes; dependency gates, resource admission,
+    worker submission, and state transitions remain executor responsibilities.
+    ``keep_going=False`` re-raises the first attempted-job failure.
+    ``keep_going=True`` continues independent branches and raises an
+    ExceptionGroup containing all attempted-job failures at the end.
 
-    node_runner: optional callable(node, log_path) replacing _run_node. Use this to
-    intercept subprocess execution (e.g. to feed output to a TUI).
+    ``autoclean`` removes orphans and completed intermediates. ``dry_run``
+    performs classification and reporting without commands or deletion.
+    ``node_runner`` may replace ``_run_node(node, log_path)`` to intercept
+    subprocess execution. ``forced_stale_keys`` explicitly invalidates matching
+    active cache hits and their descendants for this invocation.
+
+    The node-store lock is held from classification through the final job so no
+    second executor can observe or mutate partially updated state.
     """
     if not isinstance(dag, DAG):
         raise TypeError(f"execute requires a DAG, got {type(dag).__name__}")
@@ -550,6 +617,8 @@ def execute(
         caps.update(resource_caps)
     outdir = dag.nodes_dir
     with _acquire_lock(outdir):
+        # Classify under the execution lock so another process cannot invalidate
+        # the filesystem snapshot before jobs start.
         active, active_keys, n_cleaned = _prepare_active(
             dag, autoclean, dry_run, forced_stale_keys
         )
@@ -567,6 +636,8 @@ def execute(
             _logger.dry_run_summary(n_would_run, n_up_to_date)
             return report
 
+        # Resources are reserved exactly while their Future remains in this map
+        # and are released after its result has been handled.
         running: dict = {}  # future -> (node, start_time, start_wall, job_resources)
         running_resources: dict[str, int] = {}
         errors: list = []  # exceptions collected in keep_going mode
@@ -580,6 +651,8 @@ def execute(
             NodeState.RUNNING,
         }
 
+        # Autoclean needs reverse edges to know when every consumer of an
+        # intermediate and every co-output sharing its directory is finished.
         if autoclean:
             children: dict[Path, list] = {n.relative_path: [] for n in active}
             for n in active:
@@ -595,6 +668,8 @@ def execute(
                 max_workers=len(active) or 1
             ) as pool:
                 while any(n.state in needs_run for n in active):
+                    # Dependency state gates eligibility. The scheduler sees only
+                    # READY nodes and cannot start work ahead of its parents.
                     _promote_states(active)
 
                     ready = [n for n in active if n.state == NodeState.READY]
@@ -606,7 +681,8 @@ def execute(
                     for node in _validated_schedule(
                         scheduler, ready, remaining, available_resources
                     ):
-                        # skip co-outputs whose sibling is already running
+                        # Submit one representative when several co-output Nodes
+                        # of the same rule call are simultaneously READY.
                         coouts = [
                             c
                             for c in node.output_nodes.values()
@@ -615,7 +691,8 @@ def execute(
                         if any(c.state == NodeState.RUNNING for c in coouts):
                             continue
                         job_res = node.rule.resources
-                        # run if all capped resources have room, or nothing else is running (solo fallback)
+                        # The solo fallback prevents a job declaring more than a
+                        # configured cap from stalling forever.
                         can_run = (not running) or all(
                             running_resources.get(r, 0) + v <= caps[r]
                             for r, v in job_res.items()
@@ -635,9 +712,12 @@ def execute(
                             for r, v in job_res.items():
                                 running_resources[r] = running_resources.get(r, 0) + v
 
+                    # No submitted or existing job means the scheduler made no
+                    # further progress; never call wait() with an empty set.
                     if not running:
                         break
 
+                    # Re-schedule as soon as capacity or dependencies may change.
                     done_fs, _ = concurrent.futures.wait(
                         running, return_when=concurrent.futures.FIRST_COMPLETED
                     )
@@ -646,6 +726,8 @@ def execute(
                         elapsed = time.monotonic() - start
                         finished_wall = _utc_now()
                         try:
+                            # Runner return is provisional success; completion also
+                            # validates outputs and commits metadata and state.
                             f.result()
                             n_cleaned += _on_job_done(
                                 node,
@@ -662,6 +744,8 @@ def execute(
                             _logger.job_done(node, elapsed)
                             n_run += 1
                         except Exception as exc:
+                            # Negative process codes represent signals. Other
+                            # exceptions have no meaningful process exit code.
                             log_path = node.path.parent / ".rip" / "job.log"
                             if isinstance(exc, subprocess.CalledProcessError):
                                 rc = exc.returncode
@@ -719,6 +803,14 @@ def execute(
 
 
 def _run_node(node, log_path) -> None:
+    """Execute one rule call, capturing command output in ``job.log``.
+
+    Built-in materializers write directly through Python. Other rules resolve
+    to a shell command and use the Pipeline's selected shell when configured.
+    Output validation and state transitions remain in the parent executor
+    thread.
+    """
+
     node.path.parent.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "w") as log:
