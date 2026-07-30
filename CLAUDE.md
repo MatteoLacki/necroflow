@@ -107,6 +107,9 @@ These have been true since the June refactors and are load-bearing design decisi
   separator, Linux byte-limit, and file/directory-conflicting result paths. Labels select
   visible links and remain outside fingerprints. CLI result paths receive an exact
   destination-filesystem preflight before execution and again before link creation.
+- **Filename-less NodeTypes are input-only.** A `NodeType` with `filename = None` may be
+  used as a fixed, union, or variadic input contract, but every Rule output must resolve to an
+  explicit filename. Rule declaration rejects filename-less outputs; output names are not fallbacks.
 - **Variadic Node inputs retain groups.** `tuple[NodeType, ...]` accepts an ordered
   tuple, while `Annotated[tuple[NodeType, ...], Many(...)]` applies inclusive size
   bounds. RuleCall/fingerprint/command contexts retain named tuple groups;

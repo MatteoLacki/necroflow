@@ -54,6 +54,13 @@ contains tuples of resolved Paths. Static placeholders quote every group path
 separately; callable commands control custom layouts. Grouping, order, names,
 and `Many` bounds affect the default fingerprint.
 
+## Abstract NodeType contracts
+
+A `NodeType` with `filename = None` is an input-only format contract. Rules may
+accept it and receive Nodes of concrete subclasses, but every declared output
+NodeType must resolve to a non-`None` filename. `Rule` construction rejects
+filename-less outputs immediately; output names are not filename fallbacks.
+
 ## NodeType invalidators
 
 `NodeType.invalidator` is optional and defaults to `None`. When set, it is a callable receiving the concrete `Node` and returning a stable `str` token. Necroflow stores the token at `.rip/{filename}.invalidation` after a successful run. During classification, an existing output with a missing or changed token is marked `STALE`; callback exceptions fail fast. The token does not participate in the node fingerprint.

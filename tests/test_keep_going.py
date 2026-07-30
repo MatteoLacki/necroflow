@@ -6,19 +6,19 @@ from necroflow import Pipeline, DAG, NodeType, NodeState
 
 
 class A(NodeType):
-    pass
+    filename = "a"
 
 
 class B(NodeType):
-    pass
+    filename = "b"
 
 
 class C(NodeType):
-    pass
+    filename = "c"
 
 
 class D(NodeType):
-    pass
+    filename = "d"
 
 
 R_make_a = Rule("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")

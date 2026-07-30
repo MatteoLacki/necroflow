@@ -48,6 +48,9 @@ class NodeType(metaclass=NodeTypeMeta):
 
     class Fastq(NodeType): ...
     class SortedBam(Bam): filename = "sorted.bam"
+
+    Filename-less subclasses are input-only type contracts. Every Rule output
+    must use a NodeType whose filename resolves to a string.
     """
 
     filename: str | None = None
@@ -131,8 +134,10 @@ class Node:
         nodes: list[Node] = []
         output_paths: set[Path] = set()
         for oname, otype in outputs_specs.items():
+            output_filename = otype.filename
+            assert output_filename is not None
             filename = _safe_path_component(
-                otype.filename or oname, kind=f"output {oname!r} filename"
+                output_filename, kind=f"output {oname!r} filename"
             )
             relative_path = call.relative_path / filename
             if relative_path in output_paths:

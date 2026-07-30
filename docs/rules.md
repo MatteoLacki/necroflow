@@ -322,7 +322,13 @@ def quantify(bam: SortedBam, gene_model: str):  # only accepts sorted bam
 The same pattern is useful for format families. Define a base `NodeType` for the
 format contract, then make every concrete output subclass it. Downstream rules
 can accept the base class when they only care that the input is a valid member
-of that family:
+of that family. A `NodeType` whose `filename` is `None` is input-only:
+using it in `output(...)` or `Outputs(...)` raises `TypeError` when the Rule is
+declared. Every concrete output type must resolve to a non-`None` filename;
+necroflow does not infer one from the output variable or mapping key.
+
+This makes a filename-less base class an abstract format contract without
+requiring a separate marker:
 
 ```python
 class MmappetDataset(NodeType):

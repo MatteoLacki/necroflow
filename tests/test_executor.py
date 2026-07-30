@@ -648,7 +648,7 @@ def test_scheduler_must_return_a_list_of_ready_nodes(tmp_path):
 
 
 class Step(NodeType):
-    pass  # reused across all chain rules below
+    filename = "s"  # reused across all chain rules below
 
 
 Rchain_c2_s1 = Rule("c2_s1", Inputs(x=str), Outputs(s=Step), "touch {s}")
@@ -703,31 +703,31 @@ def test_scheduler_exhausts_smallest_chain_first(tmp_path):
 
 
 class FA(NodeType):
-    pass
+    filename = "a"
 
 
 class FB(NodeType):
-    pass
+    filename = "b"
 
 
 class FC(NodeType):
-    pass
+    filename = "c"
 
 
 class FD(NodeType):
-    pass
+    filename = "d"
 
 
 class FE(NodeType):
-    pass
+    filename = "e"
 
 
 class FF(NodeType):
-    pass
+    filename = "f"
 
 
 class FG(NodeType):
-    pass
+    filename = "g"
 
 
 Rfork_ra = Rule("ra", Inputs(x=str), Outputs(a=FA), "touch {a}")

@@ -125,10 +125,10 @@ def test_fingerprint_changes_on_inputs_type_change():
     """Changing the declared Inputs NodeType must change the fingerprint."""
 
     class FastqA(NodeType):
-        pass
+        filename = "fastq"
 
     class FastqB(NodeType):
-        pass
+        filename = "fastq"
 
     Ra_raw = Rule("raw", Inputs(path=str), Outputs(fastq=FastqA), "touch {fastq}")
     Ra_align = Rule(
@@ -181,6 +181,70 @@ def test_output_filename_must_be_one_safe_relative_component(tmp_path):
 
     with pytest.raises(ValueError, match="one relative path component"):
         rule(Pipeline(DAG(tmp_path)), x="x")
+
+
+def test_rule_rejects_filename_less_output_type_at_declaration():
+    """A filename-less NodeType is an input contract, not a concrete output."""
+
+    class MmappetDataset(NodeType):
+        pass
+
+    with pytest.raises(
+        TypeError,
+        match="output 'dataset'.*MmappetDataset.*must define filename",
+    ):
+        Rule(
+            "emit_dataset",
+            Inputs(),
+            Outputs(dataset=MmappetDataset),
+            "mkdir {dataset}",
+        )
+
+
+def test_command_decorator_rejects_filename_less_output_type():
+    """Decorator sugar must reject abstract outputs while the module loads."""
+
+    class MmappetDataset(NodeType):
+        pass
+
+    with pytest.raises(
+        TypeError,
+        match="output 'dataset'.*MmappetDataset.*must define filename",
+    ):
+
+        @command("mkdir {dataset}")
+        def emit_dataset():
+            dataset = output(MmappetDataset)
+            return dataset
+
+
+def test_filename_less_nodetype_remains_a_valid_input_contract(tmp_path):
+    """Abstract format families must continue accepting concrete subclasses."""
+
+    class MmappetDataset(NodeType):
+        pass
+
+    class PrecursorTable(MmappetDataset):
+        filename = "precursors.mmappet"
+
+    produce = Rule(
+        "produce_precursors",
+        Inputs(),
+        Outputs(dataset=PrecursorTable),
+        "mkdir {dataset}",
+    )
+    consume = Rule(
+        "consume_mmappet",
+        Inputs(dataset=MmappetDataset),
+        Outputs(txt=Txt),
+        "printf consumed > {txt}",
+    )
+    pipeline = Pipeline(DAG(tmp_path))
+
+    dataset = produce(pipeline)
+    consumed = consume(pipeline, dataset)
+
+    assert consumed.parents == [dataset]
 
 
 def test_rule_name_must_be_one_safe_relative_component(tmp_path):

@@ -173,7 +173,9 @@ call.relative_path = Path(rule.__name__) / fingerprint
 call.workdir = P.dag.nodes_dir / call.relative_path
 ```
 
-Each output receives a unique declared filename:
+Each output receives its declared `NodeType.filename`. Rule construction has
+already rejected output NodeTypes whose `filename` is `None`; filename-less
+NodeTypes remain valid as input contracts, but there is no output-name fallback:
 
 ```python
 node.relative_path = call.relative_path / output_filename

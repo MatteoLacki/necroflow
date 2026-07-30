@@ -7,15 +7,15 @@ from necroflow import Pipeline, DAG, NodeType, NodeState, classify_nodes
 
 
 class Fastq(NodeType):
-    pass
+    filename = "fastq"
 
 
 class Bam(NodeType):
-    pass
+    filename = "bam"
 
 
 class Log(NodeType):
-    pass
+    filename = "log"
 
 
 R_raw_fastq = Rule("raw_fastq", Inputs(path=str), Outputs(fastq=Fastq), "touch {fastq}")

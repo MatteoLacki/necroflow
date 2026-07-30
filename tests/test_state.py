@@ -10,15 +10,15 @@ from necroflow.nodes import Node
 
 
 class A(NodeType):
-    pass
+    filename = "a"
 
 
 class B(NodeType):
-    pass
+    filename = "b"
 
 
 class C(NodeType):
-    pass
+    filename = "c"
 
 
 R_make_a = Rule("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
@@ -160,11 +160,11 @@ def test_interrupted_node_state(tmp_path):
 
 
 class X(NodeType):
-    pass
+    filename = "x"
 
 
 class Y(NodeType):
-    pass
+    filename = "y"
 
 
 R2_make_x = Rule("make_x", Inputs(v=str), Outputs(x=X), "touch {x}")
@@ -371,6 +371,7 @@ def test_nodetype_invalidator_must_return_string_token(tmp_path):
     """Invalidator tokens must be stable text suitable for plain metadata files."""
 
     class InvalidToken(NodeType):
+        filename = "result"
         invalidator = lambda node: 42
 
     rule = Rule(

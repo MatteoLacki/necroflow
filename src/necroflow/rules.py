@@ -243,6 +243,7 @@ class Rule(Generic[_ReturnT]):
         """Validate and store a rule declaration and derive its call schema."""
         self.__name__ = name
         self.inputs = inputs
+        self._validate_outputs(name, outputs)
         self.outputs = outputs
         self.command = command
         self.recipe_identity = recipe_identity
@@ -288,6 +289,21 @@ class Rule(Generic[_ReturnT]):
             validate_command_callback(command)
         elif command is not None:
             self._validate_command(name, inputs, outputs, command, self.constraints)
+
+    @staticmethod
+    def _validate_outputs(name: str, outputs: Outputs) -> None:
+        """Require concrete NodeTypes with explicit filenames for every output."""
+        for output_name, output_type in outputs.specs.items():
+            if not _is_nodetype(output_type):
+                raise TypeError(
+                    f"Rule {name!r}: output {output_name!r} must be a NodeType, "
+                    f"got {output_type!r}"
+                )
+            if output_type.filename is None:
+                raise TypeError(
+                    f"Rule {name!r}: output {output_name!r} NodeType "
+                    f"{output_type.__name__} must define filename"
+                )
 
     def _validated_input_defaults(
         self,
