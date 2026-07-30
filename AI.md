@@ -12,6 +12,16 @@ Built-in placeholders:
 
 `{workdir}` is created before the command subprocess starts. Its contents are kept by default. With `autoclean=True`, intermediate rule-call directories are removed as whole directories once all active children are up to date, so `{workdir}` side files are cleaned together with declared outputs.
 
+## Command input defaults
+
+Decorated `@command` rules honor Python defaults on scalar/config parameters;
+explicit factory and direct `Rule` construction use `input_defaults`. Defaults
+are type-checked when the `Rule` is declared, expanded before call validation,
+and included in config, provenance, command contexts, and fingerprints. Omitted
+and explicitly equal values intern to the same Node. Fixed and variadic Node
+inputs must not have defaults. Built-in `text_file` and `symlink_file` inputs
+remain explicit.
+
 ## Callable commands and fingerprint v2
 
 `command()` accepts a static shell string or a module-level, closure-free,

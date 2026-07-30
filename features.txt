@@ -13,6 +13,7 @@ necroflow
 │   │   ├── explicit built-in factories: text_file_rule / symlink_file_rule
 │   │   ├── lint-clean name = output(NodeType) declarations
 │   │   ├── typed Inputs / Outputs
+│   │   ├── scalar/config input defaults with explicit Node dependencies
 │   │   ├── ordered tuple[NodeType, ...] variadic inputs
 │   │   ├── optional inclusive Many(min=..., max=...) bounds
 │   │   ├── multi-output rules

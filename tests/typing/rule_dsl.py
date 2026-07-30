@@ -35,6 +35,12 @@ def make_source(text: str):
     return source
 
 
+@command("printf %s {text} > {source}")
+def make_default_source(text: str = "default"):
+    source = output(Source)
+    return source
+
+
 @command("cp {source} {left} && cp {source} {right}")
 def split_source(source: Source):
     left = output(Left)
@@ -70,6 +76,7 @@ def merge_sources(sources: Annotated[tuple[Source, ...], Many()]):
 
 pipeline = Pipeline(DAG("/tmp/necroflow-typing"))
 source_node: Node = make_source(pipeline, text="value")
+default_source_node: Node = make_default_source(pipeline)
 left_node: Node
 right_node: Node
 left_node, right_node = split_source(pipeline, source_node)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import namedtuple
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import re
 from types import UnionType
@@ -238,6 +238,7 @@ class Rule(Generic[_ReturnT]):
         repeat: int = 1,
         recipe_identity: str | None = None,
         materializer: Callable | None = None,
+        input_defaults: Mapping[str, Any] | None = None,
     ):
         """Validate and store a rule declaration and derive its call schema."""
         self.__name__ = name
@@ -263,6 +264,8 @@ class Rule(Generic[_ReturnT]):
             for input_name, contract in contracts.items()
             if contract is None
         }
+        self._input_defaults = self._validated_input_defaults(input_defaults, contracts)
+        self._validate_config_values(self._input_defaults)
         reserved = BUILTIN_COMMAND_PLACEHOLDERS & (
             set(inputs.specs) | set(outputs.specs)
         )
@@ -285,6 +288,31 @@ class Rule(Generic[_ReturnT]):
             validate_command_callback(command)
         elif command is not None:
             self._validate_command(name, inputs, outputs, command, self.constraints)
+
+    def _validated_input_defaults(
+        self,
+        input_defaults: Mapping[str, Any] | None,
+        contracts: dict[str, _NodeInputContract | None],
+    ) -> dict[str, Any]:
+        """Copy defaults and require them to name scalar/config inputs."""
+        if input_defaults is None:
+            return {}
+        if not isinstance(input_defaults, Mapping):
+            raise TypeError(f"Rule {self.__name__!r}: input_defaults must be a mapping")
+        defaults = dict(input_defaults)
+        unknown = [name for name in defaults if name not in contracts]
+        if unknown:
+            raise TypeError(
+                f"Rule {self.__name__!r}: unknown input defaults: "
+                f"{sorted(unknown, key=repr)!r}"
+            )
+        for name in defaults:
+            if contracts[name] is not None:
+                raise TypeError(
+                    f"Rule {self.__name__!r}: Node input {name!r} "
+                    "must not have a default"
+                )
+        return defaults
 
     @staticmethod
     def _validate_repeat(repeat: int) -> int:
@@ -352,7 +380,7 @@ class Rule(Generic[_ReturnT]):
     def _validate_input_presence(
         self, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> None:
-        """Require exactly the declared Node arguments and all config keys."""
+        """Require exactly the declared Nodes and all normalized config keys."""
         name = self.__name__
         if len(args) < len(self._pos_inputs):
             missing = [pname for pname, _ in self._pos_inputs[len(args) :]]
@@ -407,10 +435,10 @@ class Rule(Generic[_ReturnT]):
                 if parent.rule_call.dag is not pipeline.dag:
                     raise ValueError(f"{name}: {position!r} belongs to a different DAG")
 
-    def _validate_config_values(self, kwargs: dict[str, Any]) -> None:
+    def _validate_config_values(self, config: dict[str, Any]) -> None:
         """Check supplied config values against runtime-checkable annotations."""
         name = self.__name__
-        for key, value in kwargs.items():
+        for key, value in config.items():
             if key not in self._kw_inputs:
                 continue
             expected = self._kw_inputs[key]
@@ -424,15 +452,21 @@ class Rule(Generic[_ReturnT]):
                     f"got {type(value).__name__!r}"
                 )
 
+    def _effective_config(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Return declared defaults overlaid with explicit call values."""
+        config = dict(self._input_defaults)
+        config.update(kwargs)
+        return config
+
     def _compile_outputs(
-        self, pipeline, args: tuple[Any, ...], kwargs: dict[str, Any]
+        self, pipeline, args: tuple[Any, ...], config: dict[str, Any]
     ) -> list[Node]:
         """Compile and intern output Nodes from validated logical inputs."""
         node_inputs = NamedValues(
             {name: value for (name, _contract), value in zip(self._pos_inputs, args)}
         )
         return Node.make_outputs(
-            pipeline, self, node_inputs, kwargs, self.command, self.outputs.specs
+            pipeline, self, node_inputs, config, self.command, self.outputs.specs
         )
 
     def _shape_outputs(self, nodes: list[Node]) -> _ReturnT:
@@ -447,10 +481,11 @@ class Rule(Generic[_ReturnT]):
     def __call__(self, pipeline, /, *args: Any, **kwargs: Any) -> _ReturnT:
         """Validate one invocation and return its canonical output Nodes."""
         self._validate_pipeline(pipeline)
-        self._validate_input_presence(args, kwargs)
+        config = self._effective_config(kwargs)
+        self._validate_input_presence(args, config)
         self._validate_parent_nodes(pipeline, args)
-        self._validate_config_values(kwargs)
-        nodes = self._compile_outputs(pipeline, args, kwargs)
+        self._validate_config_values(config)
+        nodes = self._compile_outputs(pipeline, args, config)
         return self._shape_outputs(nodes)
 
 
@@ -576,6 +611,18 @@ def _parse_rule_fn(fn) -> tuple:
     return rule_name, inputs_specs, outputs_specs, info
 
 
+def _decorated_input_defaults(fn: Callable, input_names: set[str]) -> dict[str, Any]:
+    """Return Python defaults belonging to annotated rule inputs."""
+    import inspect
+
+    parameters = inspect.signature(fn).parameters
+    return {
+        name: parameter.default
+        for name, parameter in parameters.items()
+        if name in input_names and parameter.default is not inspect.Parameter.empty
+    }
+
+
 def command(
     cmd: str | Callable,
     *declarations,
@@ -587,6 +634,8 @@ def command(
     """Create a factory rule or return the decorator-sugar adapter.
 
     ``repeat`` is the maximum number of command attempts, including the first.
+    Decorated scalar/config defaults come from the Python signature. Factory
+    rules may declare them with ``input_defaults={name: value}``.
     """
     if isinstance(cmd, list):
         raise TypeError(
@@ -604,6 +653,7 @@ def command(
             )
         if name is None:
             raise TypeError("factory command requires an explicit name=")
+        input_defaults = constraints.pop("input_defaults", None)
         if constraints:
             raise TypeError(
                 "factory command declarations cannot use constraint keywords"
@@ -624,6 +674,7 @@ def command(
             constraints=factory_constraints,
             info=doc,
             repeat=repeat,
+            input_defaults=input_defaults,
         )
     if name is not None or doc is not None:
         raise TypeError("name= and doc= are only valid for factory commands")
@@ -631,6 +682,7 @@ def command(
     def decorator(fn: Callable[..., _ReturnT]) -> Rule[_ReturnT]:
         """Build a Rule from a decorated declaration and captured command policy."""
         rule_name, inputs, outputs, info = _parse_rule_fn(fn)
+        input_defaults = _decorated_input_defaults(fn, set(inputs))
         return cast(
             Rule[_ReturnT],
             Rule[Any](
@@ -641,6 +693,7 @@ def command(
                 constraints=Constraints(**constraints) if constraints else None,
                 info=info,
                 repeat=repeat,
+                input_defaults=input_defaults,
             ),
         )
 

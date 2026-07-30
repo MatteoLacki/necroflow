@@ -81,22 +81,30 @@ configuration values.
 ## 4. Inputs and configuration are validated
 
 The rule validates positional Node inputs against declared NodeTypes and
-keyword values against their declared Python types. It rejects missing, extra,
-misordered, or cross-DAG inputs before creating outputs.
+config values against their declared Python types. Decorated command rules
+derive scalar/config defaults from their Python signature; explicit Rule and
+factory construction use ``input_defaults``. Rule construction rejects unknown
+defaults, wrongly typed defaults, and defaults on fixed or variadic Node inputs.
+
+At call time, explicit keyword values overlay a fresh copy of the defaults.
+This effective config is then used for presence/type validation and output
+compilation. The caller's ``kwargs`` mapping is not mutated.
 
 `Rule.__call__` coordinates the phases through focused methods:
 
 ```python
 self._validate_pipeline(pipeline)
-self._validate_input_presence(args, kwargs)
+config = self._effective_config(kwargs)
+self._validate_input_presence(args, config)
 self._validate_parent_nodes(pipeline, args)
-self._validate_config_values(kwargs)
-nodes = self._compile_outputs(pipeline, args, kwargs)
+self._validate_config_values(config)
+nodes = self._compile_outputs(pipeline, args, config)
 return self._shape_outputs(nodes)
 ```
 
-The validated values retain their named logical shape. A fixed input stores one
-Node, while a variadic input stores one ordered tuple of Nodes:
+The validated values retain their named logical shape. Config contains every
+effective default as a concrete value. A fixed input stores one Node, while a
+variadic input stores one ordered tuple of Nodes:
 
 ```python
 node_inputs = {
@@ -140,6 +148,12 @@ FingerprintArgs(
     recipe_identity=sort_text.recipe_identity,
 )
 ```
+
+Only effective config is fingerprinted; default declaration metadata is not a
+second identity input. Consequently, omitting a default and passing that same
+value explicitly produce the same fingerprint. Changing a default changes the
+fingerprint for calls that omit it, while calls with an explicit override retain
+the fingerprint associated with that explicit value.
 
 Parent Nodes contribute their full fingerprints. A variadic input remains one
 named tuple in `FingerprintArgs.inputs`; its group boundary and element order are
@@ -327,6 +341,8 @@ create Pipeline(dag, fingerprint/shell policy)
 factory(P, config)
     ↓
 rule(P, fixed Nodes and/or Node tuples, config...)
+    ↓
+overlay explicit config on declared scalar defaults
     ↓
 validate types and shared DAG ownership
     ↓

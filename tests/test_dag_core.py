@@ -703,6 +703,105 @@ def test_command_decorator_accepts_repeat_and_constraints():
     assert make_txt.resources == {"threads": 2}
 
 
+def test_command_decorator_applies_config_defaults_before_fingerprinting(tmp_path):
+    """Omitted and explicit defaults must describe one canonical rule call.
+
+    Defaults are effective config, not declaration-only metadata: they must be
+    available on the Node and an explicit override must change its identity.
+    """
+
+    @command("printf '%s %s %s' {word} {threshold} {plugin} > {txt}")
+    def make_txt(
+        word: str,
+        threshold: float = 0.05,
+        plugin: str | None = None,
+    ):
+        txt = output(Txt)
+        return txt
+
+    pipeline = Pipeline(DAG(tmp_path))
+    omitted = make_txt(pipeline, word="value")
+    explicit = make_txt(
+        pipeline,
+        word="value",
+        threshold=0.05,
+        plugin=None,
+    )
+    overridden = make_txt(
+        pipeline,
+        word="value",
+        threshold=0.01,
+        plugin="adapter",
+    )
+
+    assert omitted is explicit
+    assert omitted.config == {
+        "threshold": 0.05,
+        "plugin": None,
+        "word": "value",
+    }
+    assert overridden.fingerprint != omitted.fingerprint
+
+
+def test_declared_default_affects_only_omitted_effective_config(tmp_path):
+    """Defaults affect identity through effective config, not extra metadata."""
+
+    lower_default = Rule(
+        "thresholded",
+        Inputs(threshold=float),
+        Outputs(txt=Txt),
+        "printf %s {threshold} > {txt}",
+        input_defaults={"threshold": 0.05},
+    )
+    higher_default = Rule(
+        "thresholded",
+        Inputs(threshold=float),
+        Outputs(txt=Txt),
+        "printf %s {threshold} > {txt}",
+        input_defaults={"threshold": 0.10},
+    )
+    lower_pipeline = Pipeline(DAG(tmp_path / "lower"))
+    higher_pipeline = Pipeline(DAG(tmp_path / "higher"))
+
+    assert (
+        lower_default(lower_pipeline).fingerprint
+        != higher_default(higher_pipeline).fingerprint
+    )
+    assert (
+        lower_default(lower_pipeline, threshold=0.20).fingerprint
+        == higher_default(higher_pipeline, threshold=0.20).fingerprint
+    )
+
+
+def test_command_decorator_rejects_wrongly_typed_config_default():
+    """An invalid default is a broken rule schema and must fail at declaration."""
+
+    with pytest.raises(TypeError, match="'count' expected"):
+
+        @command("printf %s {count} > {txt}")
+        def make_txt(count: int = "invalid"):
+            txt = output(Txt)
+            return txt
+
+
+def test_command_decorator_rejects_node_input_defaults():
+    """Fixed and variadic Node inputs are dependencies and must stay explicit."""
+
+    with pytest.raises(TypeError, match="Node input 'source' must not have a default"):
+
+        @command("cat {source} > {txt}")
+        def consume(source: Txt = None):
+            txt = output(Txt)
+            return txt
+
+    with pytest.raises(TypeError, match="Node input 'sources' must not have a default"):
+
+        @command("cat {sources} > {txt}")
+        def merge(sources: tuple[Txt, ...] = ()):
+            txt = output(Txt)
+            return txt
+
+
 def test_command_decorator_body_return_multi():
     @command("tr a-z A-Z < {txt} | tee {log} > {upper}")
     def to_upper(txt: Txt):
@@ -882,6 +981,76 @@ def test_command_factory_preserves_order_and_doc():
     assert result._fields == ("left", "right")
     assert result.left.node_type is Txt
     assert result.right.node_type is Log
+
+
+def test_command_factory_and_rule_accept_input_defaults(tmp_path):
+    """Both explicit construction paths must expose the same default semantics."""
+
+    factory = command(
+        "printf '%s %s' {text} {suffix} > {txt}",
+        Inputs(text=str, suffix=str | None),
+        Outputs(txt=Txt),
+        name="factory_default",
+        input_defaults={"text": "factory", "suffix": None},
+    )
+    direct = Rule(
+        "direct_default",
+        Inputs(text=str),
+        Outputs(txt=Txt),
+        "printf %s {text} > {txt}",
+        input_defaults={"text": "direct"},
+    )
+    pipeline = Pipeline(DAG(tmp_path))
+
+    assert factory(pipeline).config == {"text": "factory", "suffix": None}
+    assert factory(pipeline) is factory(
+        pipeline,
+        text="factory",
+        suffix=None,
+    )
+    assert direct(pipeline).config == {"text": "direct"}
+
+
+def test_rule_rejects_defaults_for_unknown_and_node_inputs():
+    """A defaults mapping may name only declared scalar/config inputs."""
+
+    with pytest.raises(TypeError, match="unknown input defaults.*missing"):
+        Rule(
+            "unknown_default",
+            Inputs(text=str),
+            Outputs(txt=Txt),
+            "touch {txt}",
+            input_defaults={"missing": "value"},
+        )
+
+    with pytest.raises(TypeError, match="Node input 'source' must not have a default"):
+        Rule(
+            "node_default",
+            Inputs(source=Txt),
+            Outputs(txt=Txt),
+            "cat {source} > {txt}",
+            input_defaults={"source": None},
+        )
+
+    with pytest.raises(TypeError, match="'count' expected"):
+        Rule(
+            "wrong_type_default",
+            Inputs(count=int),
+            Outputs(txt=Txt),
+            "printf %s {count} > {txt}",
+            input_defaults={"count": "invalid"},
+        )
+
+
+def test_decorator_input_defaults_constraint_remains_a_resource():
+    """The factory keyword must not steal an existing decorator constraint name."""
+
+    @command("printf %s {text} > {txt}", input_defaults=2)
+    def make_txt(text: str):
+        txt = output(Txt)
+        return txt
+
+    assert make_txt.resources["input_defaults"] == 2
 
 
 def test_registry_construction_api_is_not_exported():

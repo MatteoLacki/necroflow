@@ -17,6 +17,57 @@ run_sage = command(
 
 The decorator form below remains supported as syntactic sugar.
 
+## Command input defaults
+
+Scalar/config inputs on decorated command rules may use ordinary Python
+defaults. Node inputs remain explicit dependencies and must not have defaults:
+
+```python
+@command("sage --train-fdr {train_fdr} --test-fdr {test_fdr} {spectra} -o {results}")
+def run_sage(
+    spectra: SpectraFile,
+    train_fdr: float = 0.05,
+    test_fdr: float = 0.01,
+    plugin: str | None = None,
+):
+    results = output(SageResults)
+    return results
+
+P.results = run_sage(P, P.spectra)
+```
+
+Explicit factory rules declare the same policy with ``input_defaults``:
+
+```python
+run_sage = command(
+    "sage --train-fdr {train_fdr} --test-fdr {test_fdr} {spectra} -o {results}",
+    Inputs(
+        spectra=SpectraFile,
+        train_fdr=float,
+        test_fdr=float,
+        plugin=str | None,
+    ),
+    Outputs(results=SageResults),
+    name="run_sage",
+    input_defaults={
+        "train_fdr": 0.05,
+        "test_fdr": 0.01,
+        "plugin": None,
+    },
+)
+```
+
+Defaults are validated when the Rule is declared. A default may name only a
+declared scalar/config input and must satisfy its runtime-checkable annotation;
+a default on a fixed or variadic Node input raises ``TypeError``. Specialized
+``text_file`` and ``symlink_file`` declarations continue to require their one
+input explicitly.
+
+Defaults are expanded before a rule call is validated and fingerprinted. An
+omitted value and the same value passed explicitly therefore intern to the same
+Node. Overriding or changing an effective default changes the fingerprint just
+like changing any other config input.
+
 ## Variadic Node inputs
 
 Use `tuple[NodeType, ...]` when a rule consumes an ordered number of Nodes
