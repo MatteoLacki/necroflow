@@ -1,4 +1,6 @@
 EXAMPLE_OUTDIR = examples/output
+PDB_EXAMPLE_RAW = build/pdb-example/raw.txt
+PDB_EXAMPLE_TRACE = build/pdb-example/trace.txt
 PYTHON ?= .venv/bin/python
 PYTEST ?= .venv/bin/pytest
 PYRIGHT ?= .venv/bin/pyright
@@ -16,7 +18,7 @@ CURRENT_VERSION = $(shell PYTHONPATH=src $(PYTHON) -c 'import necroflow; print(n
 RELEASE_VERSION = $(if $(REQUESTED_VERSION),$(REQUESTED_VERSION),$(CURRENT_VERSION))
 TAG ?= v$(RELEASE_VERSION)
 
-.PHONY: all venv test typecheck example clean-example clean-dist bump-version maybe-bump-version build check-dist upload_test_pypi upload_pypi release_test_pypi release_pypi tag-release sage-image sage-image-archive
+.PHONY: all venv test typecheck example pdb-example clean-example clean-dist bump-version maybe-bump-version build check-dist upload_test_pypi upload_pypi release_test_pypi release_pypi tag-release sage-image sage-image-archive
 
 all: venv
 
@@ -35,6 +37,22 @@ typecheck: $(PYRIGHT)
 
 example:
 	$(PYTHON) -m necroflow.cli --outdir $(EXAMPLE_OUTDIR) examples/necroalchemy_job.toml
+
+# Run a normal example under scripted pdb breakpoints and retain a concise trace.
+pdb-example: venv
+	rm -rf build/pdb-example/work
+	mkdir -p build/pdb-example/work
+	cd build/pdb-example/work && \
+		PYTHONUNBUFFERED=1 $(abspath $(PYTHON)) -m pdb \
+		$(abspath examples/local_variables.py) \
+		< $(abspath examples/local_variables.pdb) \
+		> $(abspath $(PDB_EXAMPLE_RAW)) 2>&1
+	sed -n "/=== DAG and Pipeline declaration ===/,/The program finished/p" $(PDB_EXAMPLE_RAW) | \
+		sed -e "s/^'\(===.*===\)'$$/\1/" \
+		-e '/^> \//d' -e '/^-> /d' -e '/^\[EOF\]$$/d' \
+		-e '/The program finished/d' > $(PDB_EXAMPLE_TRACE)
+	@cat $(PDB_EXAMPLE_TRACE)
+	@echo "Trace written to $(PDB_EXAMPLE_TRACE)"
 
 clean-example:
 	rm -rf $(EXAMPLE_OUTDIR)
