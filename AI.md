@@ -99,7 +99,7 @@ The CLI accepts repeatable `--validation PATH.py:FUNCTION` flags. Each validator
 
 ## Execution reports
 
-`execute()` returns an `ExecutionReport`; `DAG.execute()` stores it as `dag.last_execution_report` and returns it. Successful rule calls write `.rip/run.toml` with start/end timestamps, `duration_seconds`, `exit_code`, and total rule-call output size excluding `.rip`. CLI runs write `results/<job>/execution.toml` after link finalization, covering each requested node and ancestor. The run-level summary survives `--autoclean`, while node-local `.rip/run.toml` can disappear with cleaned intermediates. Cached nodes are reported as `cached = true` with measured current output size and no new duration. With `--keep-going`, the executor attaches the report to the raised `ExceptionGroup` and the CLI writes summaries before re-raising.
+`execute()` returns a `dict[str, ExecutionEvent]` keyed by each Node's stable POSIX relative path; `DAG.execute()` stores the same dict as `dag.last_execution_report` and returns it. Successful rule calls write `.rip/run.toml` with start/end timestamps, `duration_seconds`, `exit_code`, and total rule-call output size excluding `.rip`. CLI runs write `results/<job>/execution.toml` after link finalization, covering each requested node and ancestor. The run-level summary survives `--autoclean`, while node-local `.rip/run.toml` can disappear with cleaned intermediates. Cached nodes are reported as `cached = true` with measured current output size and no new duration. With `--keep-going`, the executor attaches the dict to the raised `ExceptionGroup` and the CLI writes summaries before re-raising.
 
 ## CLI output roots
 

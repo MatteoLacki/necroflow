@@ -27,7 +27,7 @@ import os
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -101,31 +101,6 @@ class ExecutionEvent:
         }
         data.update({k: v for k, v in optional.items() if v is not None})
         return data
-
-
-@dataclass
-class ExecutionReport:
-    """Execution events indexed by stable node-relative paths.
-
-    Dependency-blocked nodes have no event because no execution was attempted.
-    """
-
-    events: dict[str, ExecutionEvent] = field(default_factory=dict)
-
-    def add(self, event: ExecutionEvent) -> None:
-        """Store or replace the event for its stable node key."""
-
-        self.events[event.node_key] = event
-
-    def get(self, node_or_key) -> ExecutionEvent | None:
-        """Look up an event by Node or POSIX relative-path key."""
-
-        key = (
-            node_or_key
-            if isinstance(node_or_key, str)
-            else node_or_key.relative_path.as_posix()
-        )
-        return self.events.get(key)
 
 
 def _utc_now() -> str:
@@ -212,7 +187,7 @@ def _write_run_stats(node, event: ExecutionEvent) -> None:
     (rip / "run.toml").write_text(tomlkit.dumps(data), encoding="utf-8")
 
 
-def _record_cached_events(report: ExecutionReport, active: list) -> None:
+def _record_cached_events(report: dict[str, ExecutionEvent], active: list) -> None:
     """Add events for active cache hits, measuring shared directories once."""
 
     measured_dirs: dict[Path, int] = {}
@@ -221,18 +196,17 @@ def _record_cached_events(report: ExecutionReport, active: list) -> None:
             continue
         output_dir = node.path.parent
         size = measured_dirs.setdefault(output_dir, _rule_output_size_bytes(output_dir))
-        report.add(
-            _event_for_node(
-                node,
-                state="up_to_date",
-                cached=True,
-                output_size_bytes=size,
-            )
+        event = _event_for_node(
+            node,
+            state="up_to_date",
+            cached=True,
+            output_size_bytes=size,
         )
+        report[event.node_key] = event
 
 
 def _record_success_events(
-    report: ExecutionReport,
+    report: dict[str, ExecutionEvent],
     node,
     *,
     active_keys: set,
@@ -263,12 +237,12 @@ def _record_success_events(
             exit_code=0,
             output_size_bytes=size,
         )
-        report.add(event)
+        report[event.node_key] = event
     _write_run_stats(node, event)
 
 
 def _record_failure_event(
-    report: ExecutionReport,
+    report: dict[str, ExecutionEvent],
     node,
     *,
     state: str,
@@ -280,18 +254,17 @@ def _record_failure_event(
 ) -> None:
     """Record the failed representative node for one rule-call attempt."""
 
-    report.add(
-        _event_for_node(
-            node,
-            state=state,
-            cached=False,
-            started_at=started_at,
-            finished_at=finished_at,
-            duration_seconds=duration_seconds,
-            exit_code=exit_code,
-            error=error,
-        )
+    event = _event_for_node(
+        node,
+        state=state,
+        cached=False,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_seconds=duration_seconds,
+        exit_code=exit_code,
+        error=error,
     )
+    report[event.node_key] = event
 
 
 @contextmanager
@@ -471,7 +444,7 @@ def _on_job_done(
     autoclean: bool,
     children: dict,
     final_keys: set,
-    report: ExecutionReport,
+    report: dict[str, ExecutionEvent],
     started_at: str,
     finished_at: str,
     duration_seconds: float,
@@ -579,8 +552,13 @@ def execute(
     dry_run: bool = False,
     node_runner=None,
     forced_stale_keys: set[Path] | None = None,
-) -> ExecutionReport:
+) -> dict[str, ExecutionEvent]:
     """Run the DAG's required subgraph and return its execution report.
+
+    The report is a dict mapping each cached or attempted Node's stable POSIX
+    relative-path key to its :class:`ExecutionEvent`. Dependency-blocked Nodes
+    have no entry because no cache hit or execution attempt occurred for them.
+    ``DAG.execute()`` stores and returns this same dict.
 
     Cache classification happens before execution. UP_TO_DATE nodes become
     cached report events, ORPHAN nodes are excluded, and MISSING/STALE nodes run
@@ -622,7 +600,7 @@ def execute(
         active, active_keys, n_cleaned = _prepare_active(
             dag, autoclean, dry_run, forced_stale_keys
         )
-        report = ExecutionReport()
+        report: dict[str, ExecutionEvent] = {}
         _record_cached_events(report, active)
 
         if dry_run:

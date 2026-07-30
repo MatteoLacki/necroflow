@@ -778,7 +778,7 @@ def _write_execution_summaries(
         for node in sorted(
             _requested_with_ancestors(request), key=lambda n: n.relative_path
         ):
-            event = report.get(node)
+            event = report.get(node.relative_path.as_posix())
             if event is None:
                 continue
             values = event.to_toml_dict()

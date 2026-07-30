@@ -102,6 +102,12 @@ Each job's stdout/stderr is captured to the node store at `{rule}/{hash}/.rip/jo
 
 ## Execution reports
 
+`execute()` and `DAG.execute()` return a plain `dict[str, ExecutionEvent]`.
+Keys are `node.relative_path.as_posix()` values, so callers look up an event with
+`report[node.relative_path.as_posix()]`. The dict contains active cache hits and
+attempted outputs; dependency-blocked Nodes have no entry. `DAG.execute()` also
+stores the same dict as `dag.last_execution_report`.
+
 Each successful rule call writes node-local runtime metadata to the rule-call
 metadata directory:
 

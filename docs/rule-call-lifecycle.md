@@ -331,6 +331,12 @@ shell command, and verifies every declared co-output exists. The immutable
 state, dependency hashes, invalidator tokens, provenance, and run statistics
 under the rule-call's `.rip/` directory.
 
+Execution returns a plain dict mapping each cached or attempted Node's
+`relative_path.as_posix()` key to its `ExecutionEvent`. `DAG.execute()` stores
+and returns that same dict; a keep-going `ExceptionGroup` carries it as
+`execution_report`. Nodes blocked by failed dependencies have no event because
+they were neither cache hits nor attempted.
+
 ## Compact sequence
 
 ```text

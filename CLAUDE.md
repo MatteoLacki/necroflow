@@ -140,9 +140,10 @@ def my_scheduler(ready: list[Node], remaining: list[Node],
 
 `necroflow.executor.execute(dag, resource_caps=None, scheduler=..., keep_going=False,
 autoclean=False, dry_run=False, node_runner=None, forced_stale_keys=None)
--> ExecutionReport`
+-> dict[str, ExecutionEvent]`
 
-`DAG.execute()` forwards all kwargs and stores the report as `dag.last_execution_report`.
+The dict is keyed by `node.relative_path.as_posix()`. `DAG.execute()` forwards
+all kwargs and stores the same dict as `dag.last_execution_report`.
 Full semantics: the `execute()` docstring and `docs/execution.md`.
 
 ## File map
@@ -160,7 +161,7 @@ src/necroflow/
   dag.py             — path-length checks, resolve_command, write_dependencies,
                        classify_nodes, content hashing
   pipeline.py        — _GraphBase, Pipeline (sections, labels), DAG, ASCII rendering, save()
-  executor.py        — execute(), resource caps, lock, ExecutionReport, autoclean, keep_going
+  executor.py        — execute(), resource caps, lock, ExecutionEvent, autoclean, keep_going
   logger.py          — thread-safe job logging
   config.py          — job TOML loading and grid expansion (iter_job_configs, JobConfig)
   grid.py            — __grid TOML expansion and deterministic result labels

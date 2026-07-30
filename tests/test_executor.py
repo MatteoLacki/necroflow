@@ -1276,12 +1276,14 @@ def test_symlink_file_rejects_non_nodetype_output():
 
 
 def test_execute_returns_report_and_writes_run_stats_with_output_size(tmp_path):
+    """Execution returns a plain dict indexed by stable POSIX Node keys."""
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a_from_workdir(P, x="abc")
 
     report = execute_pipeline(P)
 
-    event = report.get(P.a)
+    assert isinstance(report, dict)
+    event = report.get(P.a.relative_path.as_posix())
     assert event is not None
     assert event.cached is False
     assert event.state == "up_to_date"
@@ -1299,13 +1301,14 @@ def test_execute_returns_report_and_writes_run_stats_with_output_size(tmp_path):
 
 
 def test_execute_report_marks_cached_nodes_and_measures_size(tmp_path):
+    """Cached execution events use the same stable-keyed dict contract."""
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a_from_workdir(P, x="cached")
     execute_pipeline(P)
 
     cached_report = execute_pipeline(P)
 
-    event = cached_report.get(P.a)
+    event = cached_report.get(P.a.relative_path.as_posix())
     assert event is not None
     assert event.cached is True
     assert event.duration_seconds is None
