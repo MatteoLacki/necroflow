@@ -135,6 +135,8 @@ def shared_dag(outdir="results"):
     quantification_pipeline(quant, config)
     variants = Pipeline(dag)
     variant_pipeline(variants, config)
+    quant.finish()
+    variants.finish()
     dag.require(quant.sinks())
     dag.require(variants.sinks())
     return dag, quant, variants

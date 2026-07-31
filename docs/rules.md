@@ -237,20 +237,30 @@ The same is the case for loops, see below.
 Requiring `P.sinks()` still executes the final Node's unlabelled ancestors. An
 unlabelled Node disconnected from every required output is not executed.
 
-This pattern is useful for loops and sequential transformations. When every
-iteration should remain visible as a result, assign distinct labels instead:
+This pattern is useful for sequential transformations. When every loop
+iteration should remain visible as a result, use a prefixed subpipeline view:
 
 ```python
+def step_pipeline(P: Pipeline, source, step) -> None:
+    P.result = process(P, source, mode=step)
+
 for i, step in enumerate(steps):
-    P[f"result_{i}"] = process(P, step_node, mode=step)
+    step_pipeline(P.subpipeline(f"steps/{i}"), step_node, step)
 ```
+
+This creates requestable labels such as `steps/0/result`. A subpipeline is a
+view over its root: it shares the complete label/node collections, DAG, and
+shell policy, while attribute and item access through the view adds its prefix.
+Nested calls compose prefixes. Prefixes remain outside both fingerprints, so
+equivalent calls under different prefixes return the same canonical Node.
 
 See the [complete runnable example](../examples/local_variables.py).
 
 The idiomatic pattern for multi-sample or multi-condition work is one shared
 `DAG` and a separate `Pipeline(dag)` per config. Equivalent rule calls are
-interned immediately; after each factory, call `dag.require(P.sinks())` or
-require explicitly selected labels.
+interned immediately; after each factory, call `P.finish()`, then
+`dag.require(P.sinks())` or require explicitly selected labels. The CLI calls
+`finish()` automatically after a successful factory return.
 Attribute and item labels (`P.result` and `P["result"]`) share one namespace.
 Item labels may be canonical relative POSIX paths, so generated targets can use
 `P[f"{dataset}/{config}"]`; request them with the identical string. Components
@@ -258,19 +268,13 @@ must be non-empty, non-dot-prefixed, and neither `.` nor `..`; absolute paths an
 non-canonical separators are rejected. Components and complete visible result
 paths are checked by encoded byte length against Linux `NAME_MAX` and `PATH_MAX`.
 
-## Pipeline sections
+## Construction boundary
 
-Use `P.section(name)` to mark the author-defined stage for all later node assignments:
-
-```python
-def my_pipeline(P: Pipeline, config) -> None:
-    P.section("Read alignment")
-    P.bam = align(P, path=config.path, ref=config.ref)
-    P.section("Quantification")
-    P.counts = count_reads(P, P.bam)
-```
-
-A section is presentation metadata, not computational input: it does not change node fingerprints, paths, cache hits, execution, or provenance. `necroflow graph --json` includes the section for each unambiguous node, and `necroflow graph --png` uses section clusters only when every displayed rule call has one unambiguous section. A shared node assigned to conflicting sections across pipelines falls back to the ordinary dependency-depth layout.
+`P.finish()` freezes the root and every view. Later rule calls, label
+assignments, and subpipeline creation raise `RuntimeError`; the rule guard runs
+before fingerprinting and interning, so a late call cannot leave an orphan in
+the DAG. Only the root may finish construction. `P.sinks()` is available after
+this boundary because only then is the complete public label graph known.
 
 ## Inspecting a pipeline
 
@@ -289,6 +293,7 @@ from necroflow import DAG, Pipeline, resolve_command
 dag = DAG("results")
 P = Pipeline(dag)
 rna_pipeline(P, config)
+P.finish()
 print(P)                    # layered ASCII DAG to stdout
 P.save("pipeline.txt")      # same render to a file
 
@@ -449,6 +454,7 @@ dag = DAG("nodes")
 P = Pipeline(dag)
 P.fastq = raw_fastq(P, path=config.path)
 P.bam, P.log = align(P, P.fastq, ref="hg38")
+P.finish()
 dag.require(P.sinks())
 ```
 

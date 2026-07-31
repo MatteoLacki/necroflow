@@ -62,6 +62,7 @@ def test_sinks_source_node():
     # single node with no parents and no children — must be a sink
     P = Pipeline(DAG(TEST_NODES_DIR))
     P.a = R_make_a(P, x="x")
+    P.finish()
     assert P.sinks() == [P.a]
 
 
@@ -69,11 +70,13 @@ def test_sinks_linear():
     P = Pipeline(DAG(TEST_NODES_DIR))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
+    P.finish()
     assert P.sinks() == [P.b]
 
 
 def test_sinks_diamond():
     P = diamond()
+    P.finish()
     assert P.sinks() == [P.d]
 
 
@@ -82,12 +85,14 @@ def test_sinks_multiple():
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
     P.c = R_make_c(P, P.a)
+    P.finish()
     # b and c are both sinks (nothing depends on them)
     assert set(id(n) for n in P.sinks()) == {id(P.b), id(P.c)}
 
 
 def test_sinks_excludes_intermediate():
     P = diamond()
+    P.finish()
     sinks = P.sinks()
     assert P.a not in sinks
     assert P.b not in sinks
@@ -102,6 +107,133 @@ def test_pipeline_nodes_accumulate():
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
     assert len(P.nodes) == 2
+
+
+def test_node_label_replaces_an_existing_plain_python_attribute():
+    """Attribute-form labels must not remain shadowed by an earlier local value."""
+    P = Pipeline(DAG(TEST_NODES_DIR))
+    P.result = "not yet a node"
+    node = R_make_a(P, x="x")
+
+    P.result = node
+
+    assert P.result is node
+    assert P["result"] is node
+
+
+def test_subpipeline_assignments_use_qualified_root_labels():
+    """A subpipeline is a prefixed view over one shared Pipeline namespace."""
+    P = Pipeline(DAG(TEST_NODES_DIR))
+    P.shared = R_make_a(P, x="shared")
+    sample = P.subpipeline("samples/A")
+
+    sample.raw = R_make_a(sample, x="A")
+    sample["result"] = R_make_b(sample, P.shared)
+    P.finish()
+
+    assert sample.raw is P["samples/A/raw"]
+    assert sample["result"] is P["samples/A/result"]
+    assert sample.labels == (
+        "shared",
+        "samples/A/raw",
+        "samples/A/result",
+    )
+    assert sample.nodes == P.nodes
+    assert sample.sinks() == P.sinks()
+    assert sample.finished
+
+
+def test_nested_subpipeline_prefixes_compose():
+    """Nested reusable factories must extend, rather than replace, their prefix."""
+    P = Pipeline(DAG(TEST_NODES_DIR))
+    nested = P.subpipeline("samples/A").subpipeline("qc")
+
+    nested.report = R_make_a(nested, x="report")
+
+    assert nested.report is P["samples/A/qc/report"]
+
+
+def test_subpipelines_preserve_eager_dag_deduplication():
+    """Request prefixes must never create distinct computational identities."""
+    dag = DAG(TEST_NODES_DIR)
+    P = Pipeline(dag)
+    first = P.subpipeline("samples/A")
+    second = P.subpipeline("samples/B")
+
+    first.result = R_make_a(first, x="shared")
+    second.result = R_make_a(second, x="shared")
+
+    assert first.result is second.result
+    assert len(dag.calls) == 1
+    assert P.labels_for(first.result) == (
+        "samples/A/result",
+        "samples/B/result",
+    )
+
+
+def test_subpipeline_reports_qualified_label_collisions_during_assignment():
+    """Two views cannot publish different Nodes under one qualified request name."""
+    P = Pipeline(DAG(TEST_NODES_DIR))
+    first = P.subpipeline("samples/A")
+    second = P.subpipeline("samples/A")
+    first.result = R_make_a(first, x="first")
+
+    with pytest.raises(ValueError, match="samples/A/result.*already assigned"):
+        second.result = R_make_a(second, x="second")
+
+
+@pytest.mark.parametrize(
+    "prefix", ["", "/absolute", "../outside", "dataset/./sample", "dataset//sample"]
+)
+def test_subpipeline_rejects_invalid_request_prefixes(prefix):
+    """A request prefix must be a non-empty canonical relative POSIX path."""
+    P = Pipeline(DAG(TEST_NODES_DIR))
+
+    with pytest.raises(ValueError):
+        P.subpipeline(prefix)
+
+
+def test_pipeline_finish_freezes_root_and_all_subpipeline_views():
+    """No rule call or label binding may mutate a Pipeline after compilation."""
+    dag = DAG(TEST_NODES_DIR)
+    P = Pipeline(dag)
+    sample = P.subpipeline("sample")
+    sample.result = R_make_a(sample, x="before")
+    P.finish()
+    calls_before = len(dag.calls)
+
+    with pytest.raises(RuntimeError, match="construction has finished"):
+        R_make_a(sample, x="after")
+    assert len(dag.calls) == calls_before
+
+    with pytest.raises(RuntimeError, match="construction has finished"):
+        sample.alias = sample.result
+    with pytest.raises(RuntimeError, match="construction has finished"):
+        P.subpipeline("late")
+
+
+def test_only_root_pipeline_can_finish_shared_construction():
+    """A nested factory must not accidentally freeze its caller's Pipeline."""
+    P = Pipeline(DAG(TEST_NODES_DIR))
+    sample = P.subpipeline("sample")
+
+    with pytest.raises(RuntimeError, match="root Pipeline"):
+        sample.finish()
+
+    P.finish()
+    P.finish()
+
+
+def test_pipeline_sinks_require_finished_construction():
+    """Sink selection is meaningful only after the complete label graph exists."""
+    P = Pipeline(DAG(TEST_NODES_DIR))
+    P.a = R_make_a(P, x="x")
+
+    with pytest.raises(RuntimeError, match="not finished"):
+        P.sinks()
+
+    P.finish()
+    assert P.sinks() == [P.a]
 
 
 def test_pipeline_dot_prefix_raises():
@@ -165,6 +297,7 @@ def test_pipeline_item_labels_support_canonical_relative_paths():
     for label in labels:
         P[label] = R_make_a(P, x=label)
 
+    P.finish()
     assert P.labels == tuple(labels)
     assert all(P.labels_for(P[label]) == (label,) for label in labels)
     assert [node.relative_path for node in P.sinks()] == [
@@ -445,82 +578,6 @@ def test_workdir_is_reserved_input_output_name():
             return workdir
 
 
-def test_pipeline_sections_tag_subsequent_nodes_only():
-    P = Pipeline(DAG(TEST_NODES_DIR))
-    P.a = R_make_a(P, x="x")
-    P.section("Preparation")
-    P.b = R_make_b(P, P.a)
-    P.section("Analysis")
-    P.c = R_make_c(P, P.a)
-
-    assert P.sections == ("Preparation", "Analysis")
-    assert P.section_for(P.a) is None
-    assert P.section_for(P.b) == "Preparation"
-    assert P.section_for(P.c) == "Analysis"
-
-
-def test_pipeline_section_rejects_invalid_or_duplicate_names():
-    P = Pipeline(DAG(TEST_NODES_DIR))
-    with pytest.raises(TypeError, match="must be a string"):
-        P.section(1)
-    with pytest.raises(ValueError, match="must not be empty"):
-        P.section("  ")
-    P.section("Preparation")
-    with pytest.raises(ValueError, match="already exists"):
-        P.section("Preparation")
-
-
-def test_png_renderer_clusters_unambiguous_pipeline_sections(tmp_path, monkeypatch):
-    import sys
-    from necroflow import graphviz_render, output
-
-    class FakeGraph:
-        def __init__(self):
-            self.nodes = []
-            self.edges = []
-
-        def add_nodes_from(self, nodes):
-            self.nodes.extend(nodes)
-
-        def add_edges_from(self, edges):
-            self.edges.extend(edges)
-
-        def in_degree(self, node):
-            return sum(target == node for _source, target in self.edges)
-
-    class FakeNetworkX:
-        DiGraph = FakeGraph
-
-        def is_directed_acyclic_graph(graph):
-            return True
-
-        def topological_generations(graph):
-            yield graph.nodes
-
-    dag = DAG(tmp_path)
-    P = Pipeline(dag)
-    P.section("Preparation")
-    P.a = R_make_a(P, x="x")
-    P.section("Analysis")
-    P.b = R_make_b(P, P.a)
-    dag.require(P.sinks())
-
-    captured = {}
-    monkeypatch.setitem(sys.modules, "networkx", FakeNetworkX)
-    monkeypatch.setattr(graphviz_render.shutil, "which", lambda _name: "dot")
-    monkeypatch.setattr(
-        graphviz_render.subprocess,
-        "run",
-        lambda _args, **kwargs: captured.setdefault("dot", kwargs["input"]),
-    )
-
-    graphviz_render.render_png(dag, output_path=tmp_path / "dag.png")
-
-    assert "subgraph cluster_section_0" in captured["dot"]
-    assert 'label="Preparation";' in captured["dot"]
-    assert 'label="Analysis";' in captured["dot"]
-
-
 # ── DAG deduplication ─────────────────────────────────────────────────────────
 
 
@@ -534,6 +591,8 @@ def test_dag_deduplicates_shared_nodes():
     P2.a = R_make_a(P2, x="shared")
     P2.b = R_make_b(P2, P2.a)
 
+    P1.finish()
+    P2.finish()
     dag.require(P1.sinks())
     dag.require(P2.sinks())
     # same config → same hash → 2 unique nodes, not 4
@@ -561,19 +620,6 @@ def test_dag_interns_multioutput_rule_calls_atomically():
     assert len(dag.calls) == 1
 
 
-def test_dag_section_is_none_when_shared_nodes_have_conflicting_sections():
-    dag = DAG(TEST_NODES_DIR)
-    P1 = Pipeline(dag)
-    P1.section("Preparation")
-    P1.a = R_make_a(P1, x="shared")
-
-    P2 = Pipeline(dag)
-    P2.section("Alternative preparation")
-    P2.a = R_make_a(P2, x="shared")
-
-    assert dag.section_for(dag.nodes[0]) is None
-
-
 def test_dag_keeps_distinct_nodes():
     dag = DAG(TEST_NODES_DIR)
     P1 = Pipeline(dag)
@@ -584,6 +630,8 @@ def test_dag_keeps_distinct_nodes():
     P2.a = R_make_a(P2, x="x2")
     P2.b = R_make_b(P2, P2.a)
 
+    P1.finish()
+    P2.finish()
     dag.require(P1.sinks())
     dag.require(P2.sinks())
     assert len(dag.nodes) == 4
@@ -592,6 +640,7 @@ def test_dag_keeps_distinct_nodes():
 def test_dag_required_defaults_to_sinks():
     dag = DAG(TEST_NODES_DIR)
     P = diamond(dag)
+    P.finish()
     dag.require(P.sinks())
     assert len(dag.required_nodes) == 1
     assert dag.required_nodes[0].rule.__name__ == "make_d"
@@ -633,6 +682,7 @@ def test_str_long_range_edge():
 def test_dag_save(tmp_path):
     dag = DAG(tmp_path)
     P = diamond(dag)
+    P.finish()
     dag.require(P.sinks())
     out = tmp_path / "dag.txt"
     dag.save(out)

@@ -47,6 +47,7 @@ def make_out():
 dag = DAG("nodes")
 P = Pipeline(dag, shellpath="/bin/bash")
 P.out = make_out(P)
+P.finish()
 dag.require(P.sinks())
 dag.execute()
 ```

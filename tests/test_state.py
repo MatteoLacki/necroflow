@@ -183,6 +183,7 @@ def _xy_dag(tmp_path, y_rule="make_y_fail"):
     }
     P.x = R2_make_x(P, v="v")
     P.y = rules[y_rule](P, P.x)
+    P.finish()
     dag.require(P.sinks())
     return dag, P
 
@@ -256,6 +257,7 @@ def test_directory_output_content_change_invalidates_children(tmp_path):
         pipeline = Pipeline(dag)
         pipeline.directory = make_directory(pipeline, value="stable")
         pipeline.copied = copy_item(pipeline, pipeline.directory)
+        pipeline.finish()
         dag.require(pipeline.sinks())
         return dag, pipeline
 
@@ -298,6 +300,7 @@ def test_nodetype_invalidator_external_file_change_reruns_node(tmp_path):
     P = Pipeline(execute)
     P.out = r_make_external(P, text="payload", dependency=str(dependency))
 
+    P.finish()
     execute.require(P.sinks())
     execute.execute()
     mtime_before = P.out.path.stat().st_mtime
@@ -326,6 +329,7 @@ def test_nodetype_invalidator_output_file_change_reruns_node(tmp_path):
     dag = DAG(outdir=tmp_path)
     P = Pipeline(dag)
     P.out = r_make_output_hash(P, text="payload")
+    P.finish()
     dag.require(P.sinks())
     dag.execute()
 
@@ -354,6 +358,7 @@ def test_nodetype_invalidator_missing_metadata_reruns_node(tmp_path):
     dag = DAG(outdir=tmp_path)
     P = Pipeline(dag)
     P.out = r_make_output(P, text="payload")
+    P.finish()
     dag.require(P.sinks())
     dag.execute()
     token_file = P.out.path.parent / ".rip" / (P.out.path.name + ".invalidation")
@@ -383,6 +388,7 @@ def test_nodetype_invalidator_must_return_string_token(tmp_path):
     dag = DAG(tmp_path)
     pipeline = Pipeline(dag)
     pipeline.result = rule(pipeline, value="x")
+    pipeline.finish()
     dag.require(pipeline.sinks())
 
     with pytest.raises(TypeError, match="invalidator for InvalidToken must return str"):
@@ -410,6 +416,7 @@ def test_nodetype_invalidator_exception_fails_fast(tmp_path):
     dag = DAG(outdir=tmp_path)
     P = Pipeline(dag)
     P.out = r_make_raising(P, text="payload")
+    P.finish()
     dag.require(P.sinks())
     dag.execute()
 
@@ -443,6 +450,7 @@ def test_multi_output_invalidator_reruns_shared_command_once(tmp_path):
     dag = DAG(outdir=tmp_path)
     P = Pipeline(dag)
     P.a, P.b = r_make_pair(P, dependency=str(dependency), count=str(count))
+    P.finish()
     dag.require(P.sinks())
 
     dag.execute()

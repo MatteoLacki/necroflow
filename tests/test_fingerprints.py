@@ -174,6 +174,8 @@ def test_callable_stays_lazy_through_dedup_and_cached_execution(tmp_path):
 
     first = build()
     duplicate = build()
+    first.finish()
+    duplicate.finish()
     dag.require(first.sinks())
     dag.require(duplicate.sinks())
 
@@ -183,6 +185,7 @@ def test_callable_stays_lazy_through_dedup_and_cached_execution(tmp_path):
 
     cached_dag = DAG(tmp_path)
     cached = build(cached_dag)
+    cached.finish()
     cached_dag.require(cached.sinks())
     execute(cached_dag)
     assert CALL_COUNT == 1
@@ -520,6 +523,7 @@ def test_callable_provenance_separates_command_and_fingerprint(tmp_path):
         dynamic_command,
     )(pipeline, source, force=False)
 
+    pipeline.finish()
     pipeline.dag.require(pipeline.sinks())
     execute(pipeline.dag)
 

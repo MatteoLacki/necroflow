@@ -30,7 +30,8 @@ necroflow
 │   │   ├── canonical relative POSIX path labels for nested visible results
 │   │   ├── early label byte-limit and file/directory conflict rejection
 │   │   ├── local aliases for manifests and requests
-│   │   ├── author-declared presentation sections via P.section(...)
+│   │   ├── prefixed shared-state views via P.subpipeline(...)
+│   │   ├── explicit P.finish() construction boundary
 │   │   └── conditional Python pipeline construction
 │   └── DAG
 │       ├── owns the node store and canonical RuleCall registry
@@ -103,8 +104,8 @@ necroflow
 │   ├── init subcommand
 │   │   └── canonical starter workflow scaffold
 │   ├── graph subcommand
-│   │   ├── --json machine-readable graph with section metadata
-│   │   └── --png Graphviz rendering grouped by sections when unambiguous
+│   │   ├── --json machine-readable graph
+│   │   └── --png Graphviz rendering grouped by dependency depth
 │   ├── outputs subcommand
 │   │   └── --json requested output paths
 │   ├── provenance subcommand

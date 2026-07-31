@@ -10,7 +10,9 @@ requested outputs, and user config params. For each expanded job, the CLI
 constructs one shared `DAG(nodes_dir)`, creates each
 `Pipeline(dag, shellpath=...)`, and calls
 `factory(P, config)`. Rule calls intern immediately; after the factory returns,
-the CLI resolves requested labels or sinks with `dag.require(...)`.
+the CLI calls `P.finish()`, then resolves requested labels or sinks with
+`dag.require(...)`. Qualified labels created by `P.subpipeline(prefix)` are
+requested with their full paths, for example `samples/A/counts`.
 
 ```bash
 necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \
@@ -80,7 +82,7 @@ necroflow graph --json job.toml
 necroflow graph --png graph.png job.toml
 ```
 
-`--png` requires the `dev` extra and Graphviz `dot`. When every displayed rule call has one unambiguous `P.section(...)` label, the PNG uses labelled section clusters; otherwise it groups nodes by dependency depth. Mutable Nodes are marked in the ASCII view, mutable Graphviz edges are dashed and labelled, and JSON Nodes and edges include a `mutable` boolean.
+`--png` requires the `dev` extra and Graphviz `dot`; it groups rule calls by dependency depth. Mutable Nodes are marked in the ASCII view, mutable Graphviz edges are dashed and labelled, and JSON Nodes and edges include a `mutable` boolean.
 
 List requested output paths without running jobs:
 

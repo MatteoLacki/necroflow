@@ -2,6 +2,23 @@
 
 For a compact map of the current software surface, start with `features.txt`.
 
+## Subpipelines and finished construction
+
+`P.subpipeline(prefix)` returns a prefixed view over the same root Pipeline.
+Attribute and item assignments through the view register qualified labels on
+the root, while all views expose the same complete labels and nodes. Prefixes
+are canonical non-empty relative POSIX request paths, compose when nested, and
+remain outside both fingerprints. Equivalent rule calls through different
+views therefore intern to the same canonical Nodes. External input Nodes are
+passed explicitly to reusable subpipeline factory functions.
+
+`P.finish()` freezes the root and every view. Later rule calls fail before
+fingerprinting or DAG interning; later bindings and subpipeline creation also
+fail. Only the root may finish, root finishing is idempotent, and `P.sinks()`
+requires finished construction. The CLI calls `finish()` automatically after
+each successful factory return; direct Python callers call it before selecting
+sinks. Pipeline sections were removed; PNG graphs use dependency-depth groups.
+
 ## Rule command placeholders
 
 Rule commands are validated when a `Rule` is registered. Placeholders are limited to declared input names, declared output names, and built-in command placeholders.

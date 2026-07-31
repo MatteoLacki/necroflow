@@ -76,6 +76,7 @@ def test_command_change_changes_fingerprint():
 def test_dag_contains_all_cooutputs(tmp_path):
     dag = DAG(outdir=tmp_path)
     P = make_pipeline(dag)
+    P.finish()
     dag.require(P.sinks())
     names = [(n.rule.__name__, n.output_name) for n in dag.nodes]
     assert ("align", "bam") in names

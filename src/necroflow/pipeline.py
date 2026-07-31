@@ -12,34 +12,37 @@ _LINUX_NAME_MAX = 255
 _LINUX_PATH_MAX = 4096
 
 
-def _validate_pipeline_label(name: str, output_filename: str) -> PurePosixPath:
-    """Return a canonical, portable relative result path for a label."""
+def _validate_request_path(name: str, *, kind: str) -> PurePosixPath:
+    """Return a canonical, portable relative request path."""
     if not isinstance(name, str):
-        raise TypeError("Pipeline label must be a string")
+        raise TypeError(f"{kind} must be a string")
     if not name:
-        raise ValueError("Pipeline label must not be empty")
+        raise ValueError(f"{kind} must not be empty")
     if name.startswith("."):
-        raise ValueError(f"Pipeline label {name!r} must not start with '.'")
+        raise ValueError(f"{kind} {name!r} must not start with '.'")
 
     label_path = PurePosixPath(name)
     if label_path.is_absolute() or label_path.as_posix() != name:
-        raise ValueError(
-            f"Pipeline label {name!r} must be a canonical relative POSIX path"
-        )
+        raise ValueError(f"{kind} {name!r} must be a canonical relative POSIX path")
     for component in label_path.parts:
         if "\0" in component:
-            raise ValueError(f"Pipeline label {name!r} contains a null byte")
+            raise ValueError(f"{kind} {name!r} contains a null byte")
         if component in {".", ".."} or component.startswith("."):
             raise ValueError(
-                f"Pipeline label {name!r} contains forbidden component "
-                f"{component!r}"
+                f"{kind} {name!r} contains forbidden component {component!r}"
             )
         length = len(os.fsencode(component))
         if length > _LINUX_NAME_MAX:
             raise ValueError(
-                f"Pipeline label component too long "
+                f"{kind} component too long "
                 f"({length} > NAME_MAX {_LINUX_NAME_MAX} bytes): {component!r}"
             )
+    return label_path
+
+
+def _validate_pipeline_label(name: str, output_filename: str) -> PurePosixPath:
+    """Return a canonical, portable relative result path for a label."""
+    label_path = _validate_request_path(name, kind="Pipeline label")
 
     result_path = label_path / output_filename
     length = len(os.fsencode(result_path.as_posix()))
@@ -271,7 +274,21 @@ def write_ancestor_graph(node) -> None:
     (rip / "graph.txt").write_text(str(view) + "\n", encoding="utf-8")
 
 
+class _PipelineState:
+    """Mutable construction state shared by one root Pipeline and all its views."""
+
+    def __init__(self, dag: DAG, shellpath: str | Path | None) -> None:
+        self.dag = dag
+        self.shellpath = _normalize_shellpath(shellpath)
+        self.nodes_list: list[Node] = []
+        self.node_paths: set[Path] = set()
+        self.node_names: dict[str, Node] = {}
+        self.finished = False
+
+
 class Pipeline(_GraphBase):
+    """One compiled request namespace over a shared canonical DAG."""
+
     def __init__(
         self,
         dag: DAG,
@@ -282,69 +299,94 @@ class Pipeline(_GraphBase):
             raise TypeError(
                 f"Pipeline requires an owning DAG, got {type(dag).__name__}"
             )
-        self._dag = dag
-        self._nodes_list: list[Node] = []
-        self._node_paths: set[Path] = set()
-        self._node_names: dict[str, Node] = {}
-        self._sections = []
-        self._active_section = None
-        self._sections_by_path: dict[Path, set[str | None]] = {}
-        self._shellpath = _normalize_shellpath(shellpath)
+        self._state = _PipelineState(dag, shellpath)
+        self._request_prefix = ""
+
+    @classmethod
+    def _view(cls, state: _PipelineState, request_prefix: str) -> Pipeline:
+        """Return a prefixed view over existing root construction state."""
+        view = cls.__new__(cls)
+        view._state = state
+        view._request_prefix = request_prefix
+        return view
 
     @property
     def nodes_dir(self) -> Path:
-        return self._dag.nodes_dir
+        return self._state.dag.nodes_dir
 
     @property
     def dag(self) -> DAG:
-        return self._dag
+        return self._state.dag
 
     @property
     def shellpath(self) -> str | None:
-        return self._shellpath
-
-    def section(self, name: str) -> None:
-        """Start a named presentation section for subsequently assigned nodes."""
-        if not isinstance(name, str):
-            raise TypeError("section name must be a string")
-        name = name.strip()
-        if not name:
-            raise ValueError("section name must not be empty")
-        if name in self._sections:
-            raise ValueError(f"pipeline section {name!r} already exists")
-        self._sections.append(name)
-        self._active_section = name
+        return self._state.shellpath
 
     @property
-    def sections(self) -> tuple[str, ...]:
-        """Declared presentation sections, in author-defined order."""
-        return tuple(self._sections)
+    def request_prefix(self) -> str | None:
+        """Return this view's qualified request prefix, or None for the root."""
+        return self._request_prefix or None
 
-    def section_for(self, node: Node) -> str | None:
-        """Return the section when all labels for this Node agree."""
-        sections = self._sections_by_path.get(node.relative_path, set())
-        return next(iter(sections)) if len(sections) == 1 else None
+    @property
+    def finished(self) -> bool:
+        """Return whether construction of this shared Pipeline has finished."""
+        return self._state.finished
+
+    def _assert_open(self) -> None:
+        """Reject mutation and rule compilation after the root is finished."""
+        if self._state.finished:
+            raise RuntimeError("Pipeline construction has finished")
+
+    def _assert_finished(self) -> None:
+        """Reject operations whose meaning requires the complete Pipeline."""
+        if not self._state.finished:
+            raise RuntimeError("Pipeline construction is not finished")
+
+    def finish(self) -> None:
+        """Freeze this root Pipeline and every prefixed view over it."""
+        if self._request_prefix:
+            raise RuntimeError("only the root Pipeline can finish construction")
+        self._state.finished = True
+
+    def subpipeline(self, request_prefix: str) -> Pipeline:
+        """Return a view that qualifies assignments with a request prefix."""
+        self._assert_open()
+        prefix = _validate_request_path(
+            request_prefix, kind="Subpipeline request prefix"
+        ).as_posix()
+        if self._request_prefix:
+            prefix = f"{self._request_prefix}/{prefix}"
+        return type(self)._view(self._state, prefix)
+
+    def _qualified_label(self, name: str) -> str:
+        """Return a view-local label qualified for the root namespace."""
+        if self._request_prefix:
+            return f"{self._request_prefix}/{name}"
+        return name
 
     def labels_for(self, node: Node) -> tuple[str, ...]:
         """Return labels assigned to a canonical Node in this Pipeline.
 
-        These are Pipeline-local presentation names, returned in assignment
-        order. A Node may have several labels in one Pipeline, and the same
-        canonical Node may have different labels in other Pipelines sharing
-        the DAG. This is the authoritative lookup when producing output for a
-        particular Pipeline or job.
+        These are qualified request names owned by the shared root and returned
+        in assignment order. A Node may have several labels in one Pipeline,
+        and the same canonical Node may have different labels in other
+        Pipelines sharing the DAG. This is the authoritative lookup when
+        producing output for a particular Pipeline or job.
         """
         return tuple(
-            name for name, candidate in self._node_names.items() if candidate is node
+            name
+            for name, candidate in self._state.node_names.items()
+            if candidate is node
         )
 
     @property
     def labels(self) -> tuple[str, ...]:
-        """Return this Pipeline's labels in assignment order."""
-        return tuple(self._node_names)
+        """Return all qualified root labels in assignment order."""
+        return tuple(self._state.node_names)
 
     def sinks(self) -> list[Node]:
-        """Return labeled Nodes with no labeled dependents in this Pipeline."""
+        """Return labeled Nodes with no labeled dependents after construction."""
+        self._assert_finished()
         parent_paths = {
             parent.relative_path for node in self.nodes for parent in node.parents
         }
@@ -352,44 +394,46 @@ class Pipeline(_GraphBase):
 
     @property
     def nodes(self) -> list[Node]:
-        return self._nodes_list
+        return self._state.nodes_list
 
     def __getattr__(self, name: str) -> Node:
         try:
-            return self._node_names[name]
+            return self._state.node_names[self._qualified_label(name)]
         except KeyError as exc:
             raise AttributeError(name) from exc
 
     def __getitem__(self, name: str) -> Node:
         if not isinstance(name, str):
             raise TypeError("Pipeline label must be a string")
-        return self._node_names[name]
+        return self._state.node_names[self._qualified_label(name)]
 
     def _assign_node(self, name: str, value: Node) -> None:
-        label_path = _validate_pipeline_label(name, value.path.name)
+        self._assert_open()
+        qualified_name = self._qualified_label(name)
+        label_path = _validate_pipeline_label(qualified_name, value.path.name)
         if name in pipeline_keywords.RESERVED:
             raise ValueError(f"Pipeline label {name!r} is reserved")
-        if name in self._node_names:
-            raise ValueError(f"Pipeline label {name!r} already assigned")
-        if value.rule_call.dag is not self._dag:
-            raise ValueError(f"Node assigned as {name!r} belongs to a different DAG")
+        if qualified_name in self._state.node_names:
+            raise ValueError(f"Pipeline label {qualified_name!r} already assigned")
+        if value.rule_call.dag is not self._state.dag:
+            raise ValueError(
+                f"Node assigned as {qualified_name!r} belongs to a different DAG"
+            )
         result_path = label_path / value.path.name
-        for existing_name, existing_node in self._node_names.items():
+        for existing_name, existing_node in self._state.node_names.items():
             existing_path = PurePosixPath(existing_name) / existing_node.path.name
             if _result_paths_conflict(result_path, existing_path):
                 raise ValueError(
-                    f"Pipeline result path {result_path!s} for label {name!r} "
+                    f"Pipeline result path {result_path!s} for label "
+                    f"{qualified_name!r} "
                     f"conflicts with {existing_path!s} for label "
                     f"{existing_name!r}"
                 )
-        if value.relative_path not in self._node_paths:
-            self._nodes_list.append(value)
-            self._node_paths.add(value.relative_path)
-        self._node_names[name] = value
-        self._sections_by_path.setdefault(value.relative_path, set()).add(
-            self._active_section
-        )
-        self._dag._record_binding(value, name, self._active_section)
+        if value.relative_path not in self._state.node_paths:
+            self._state.nodes_list.append(value)
+            self._state.node_paths.add(value.relative_path)
+        self._state.node_names[qualified_name] = value
+        self._state.dag._record_binding(value, qualified_name)
 
     def __setitem__(self, name: str, value: Node) -> None:
         if not isinstance(value, Node):
@@ -422,7 +466,6 @@ class DAG(_GraphBase):
         self._calls: dict[Path, RuleCall] = {}
         self._nodes: dict[Path, Node] = {}
         self._required: set[Path] = set()
-        self._sections_by_path: dict[Path, set[str | None]] = {}
         self._labels_by_path: dict[Path, set[str]] = {}
         self.outdir = Path(outdir).expanduser().resolve()
         self.last_execution_report = None
@@ -471,9 +514,9 @@ class DAG(_GraphBase):
                 raise ValueError("required Node belongs to a different DAG")
             self._required.add(node.relative_path)
 
-    def _record_binding(self, node: Node, label: str, section: str | None) -> None:
+    def _record_binding(self, node: Node, label: str) -> None:
+        """Record one qualified Pipeline label as DAG-wide diagnostic metadata."""
         self._labels_by_path.setdefault(node.relative_path, set()).add(label)
-        self._sections_by_path.setdefault(node.relative_path, set()).add(section)
 
     def labels_for(self, node: Node) -> tuple[str, ...]:
         """Return distinct labels recorded across all Pipelines for a Node.
@@ -503,13 +546,6 @@ class DAG(_GraphBase):
     @property
     def required_nodes(self) -> list:
         return [n for path, n in self._nodes.items() if path in self._required]
-
-    def section_for(self, node: Node) -> str | None:
-        """Return the node section when all contributing pipelines agree."""
-        sections = self._sections_by_path.get(node.relative_path, set())
-        if len(sections) == 1:
-            return next(iter(sections))
-        return None
 
     def _header(self) -> str:
         return f"DAG  {len(self._nodes)} nodes  ({len(self._required)} required)"

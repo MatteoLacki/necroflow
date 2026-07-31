@@ -1,6 +1,5 @@
 """Render a DAG as a graphviz PNG, laid out like a software architecture
-diagram: orthogonal edges, nodes clustered by author-declared pipeline section when
-available, otherwise into bands by dependency depth.
+diagram with orthogonal edges and nodes grouped by dependency depth.
 
 Optional feature — requires the 'dev' extra (`pip install necroflow[dev]`)
 for networkx, and the system `dot` binary (graphviz) on PATH.
@@ -15,10 +14,6 @@ from pathlib import Path
 
 def _dot_id(nid: str) -> str:
     return '"' + nid.replace('"', '\\"') + '"'
-
-
-def _dot_text(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _group_key(node_key: str) -> str:
@@ -60,7 +55,6 @@ def render_png(
                 "threads": 1,
                 "requested": False,
                 "outputs": [],
-                "sections": set(),
             }
             order.append(gid)
         g = groups[gid]
@@ -68,7 +62,6 @@ def render_png(
         threads = dict(getattr(node.rule, "constraints", {}) or {}).get("threads", 1)
         g["threads"] = max(g["threads"], threads)
         g["outputs"].append(node.output_name or "")
-        g["sections"].add(dag.section_for(node))
 
     edges: dict[tuple[str, str], bool] = {}
     for node in dag.nodes:
@@ -109,30 +102,13 @@ def render_png(
     lines.append('  edge [color="#9aa4b2", arrowsize=0.75, penwidth=1.1];')
     lines.append("")
 
-    use_sections = all(
-        len(g["sections"]) == 1 and None not in g["sections"] for g in groups.values()
-    )
-    if use_sections:
-        by_section: dict[str, list[str]] = {}
-        for gid in order:
-            section = next(iter(groups[gid]["sections"]))
-            by_section.setdefault(section, []).append(gid)
-        layout_groups = list(by_section.items())
-    else:
-        by_depth: dict[int, list[str]] = {}
-        for gid, d in depth.items():
-            by_depth.setdefault(d, []).append(gid)
-        layout_groups = [(None, by_depth[d]) for d in sorted(by_depth)]
+    by_depth: dict[int, list[str]] = {}
+    for gid, d in depth.items():
+        by_depth.setdefault(d, []).append(gid)
+    layout_groups = [by_depth[d] for d in sorted(by_depth)]
 
-    for index, (section, gids) in enumerate(layout_groups):
-        if section is None:
-            lines.append("  { rank=same;")
-        else:
-            lines.append(f"  subgraph cluster_section_{index} {{")
-            lines.append(f'    label="{_dot_text(section)}";')
-            lines.append('    style="rounded";')
-            lines.append('    color="#c3cad2";')
-            lines.append("    margin=12;")
+    for gids in layout_groups:
+        lines.append("  { rank=same;")
         for gid in gids:
             g = groups[gid]
             is_source = G.in_degree(gid) == 0

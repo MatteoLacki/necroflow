@@ -41,7 +41,6 @@ This document condenses the manuscript arguments into a review-oriented outline.
 - The manuscript favors longer pipelines made of small rules with narrow, explicit responsibilities. (`sec:long-pipelines`, `sec:development-effort`)
 - A longer graph can expose intermediate artifacts, make local changes more isolated, and enable reuse of stable stages across analyses. (`sec:long-pipelines`, `sec:design:abstractions`)
 - This design becomes costly in systems where every additional stage requires additional wildcard and path management; lineage-derived paths lower that cost. (`sec:development-effort`, `sec:path-combinatorics-example`)
-- `P.section(name)` records author-declared pipeline stages for graph presentation without changing dependencies, execution, caching, or provenance. (`sec:long-pipelines`)
 
 ## 7. Specialised Tools and Competing Implementations
 

@@ -23,6 +23,7 @@ from necroflow.schedulers import ConnectedComponentScheduler
 
 def execute_pipeline(pipeline, **kwargs):
     """Execute one Pipeline through its owning canonical DAG."""
+    pipeline.finish()
     pipeline.dag.require(pipeline.sinks())
     return execute(pipeline.dag, **kwargs)
 
@@ -312,6 +313,7 @@ def test_execute_via_dag(tmp_path):
     P = Pipeline(dag)
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
+    P.finish()
     dag.require(P.sinks())
     dag.execute()
     assert P.b.path is not None
@@ -382,6 +384,8 @@ def test_conditional_pipeline(tmp_path):
     P2.a = R_make_a(P2, x="x")
     P2.result = R_make_c(P2, P2.a)  # branch "c"
 
+    P1.finish()
+    P2.finish()
     dag.require(P1.sinks())
     dag.require(P2.sinks())
     dag.execute()
@@ -461,6 +465,8 @@ def test_shared_node_executed_once(tmp_path):
     P2.a = R_make_a(P2, x="shared")
     P2.c = R_make_c(P2, P2.a)
 
+    P1.finish()
+    P2.finish()
     dag.require(P1.sinks())
     dag.require(P2.sinks())
     dag.execute()
@@ -490,6 +496,8 @@ def test_shared_node_path_set_on_first_pipeline(tmp_path):
     P2 = Pipeline(dag)
     P2.a = R_make_a(P2, x="shared")
 
+    P1.finish()
+    P2.finish()
     dag.require(P1.sinks())
     dag.require(P2.sinks())
     dag.execute()
@@ -504,6 +512,7 @@ def test_single_node_pipeline_executes(tmp_path):
     dag = DAG(tmp_path)
     P = Pipeline(dag)
     P.a = R_make_a(P, x="x")
+    P.finish()
     dag.require(P.sinks())
     dag.execute()
     assert P.a.path is not None and P.a.path.exists()

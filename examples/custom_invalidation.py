@@ -48,6 +48,7 @@ def build_pipeline(dag: DAG) -> Pipeline:
 def run_once() -> Path:
     dag = DAG(OUTDIR)
     P = build_pipeline(dag)
+    P.finish()
     dag.require(P.sinks())
     dag.execute()
     return P.prepared.path

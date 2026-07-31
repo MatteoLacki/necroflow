@@ -46,6 +46,7 @@ def build(outdir="nodes") -> tuple[DAG, Pipeline]:
     dag = DAG(outdir)
     pipeline = Pipeline(dag)
     local_variable_pipeline(pipeline, {"text": "hello"})
+    pipeline.finish()
     dag.require(pipeline.sinks())
     return dag, pipeline
 

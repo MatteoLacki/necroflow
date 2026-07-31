@@ -19,6 +19,7 @@ def sorting_pipeline(P: Pipeline, config: dict) -> None:
     P.sorted = sort_text(P, P.source, reverse=config.get("reverse", False))
 
 sorting_pipeline(P, config)
+P.finish()
 dag.require(P.sinks())
 dag.execute()
 ```
@@ -35,12 +36,15 @@ P = Pipeline(
     shellpath=selected_shell,
 )
 factory(P, config)
+P.finish()
 ```
 
 The DAG owns canonical rule calls, output Nodes, required outputs, and
-execution. The Pipeline owns the labels and presentation sections for one
-factory evaluation. Every Pipeline passed to factories participating in the
-same run references the same DAG.
+execution. One root Pipeline owns the finished state and qualified labels for
+one factory evaluation. `P.subpipeline(prefix)` creates a lightweight view over
+that same state; the view shares the DAG, shell policy, nodes, and labels while
+qualifying its attribute/item assignments. Every root Pipeline participating
+in the same run references the same DAG.
 
 ## 2. The rule receives its compiling Pipeline
 
@@ -58,9 +62,11 @@ args = (P.source,)
 kwargs = {"reverse": False}
 ```
 
-The Pipeline is positional-only and must be first. Every Node input must belong
-to `P.dag`. A canonical Node can be used from another Pipeline sharing that
-DAG, but a Node from a different DAG is rejected.
+The Pipeline is positional-only and must be first. `Rule.__call__` first checks
+that Pipeline construction remains open, so calls after `finish()` fail before
+fingerprinting or interning. Every Node input must belong to `P.dag`. A
+canonical Node can be used from another Pipeline sharing that DAG, but a Node
+from a different DAG is rejected.
 
 ## 3. Parent Nodes already have canonical addresses
 
@@ -243,9 +249,9 @@ P.sorted = node
 assert P.sorted is P["sorted"]
 ```
 
-Assignment records a label and the active presentation section in the
-Pipeline. Labels are not stored on the canonical Node because one Node can have
-different labels in different Pipelines.
+Assignment records a qualified label in the root Pipeline. Labels are not
+stored on the canonical Node because one Node can have different labels in
+different Pipelines.
 
 Several labels in one Pipeline may alias the same canonical Node:
 
@@ -274,14 +280,37 @@ plus output filename to Linux `PATH_MAX` (4096 bytes). Assignment also rejects
 result paths where one output would have to be both a file and a directory.
 These checks happen at assignment; labels remain outside both Node hashes.
 
-## 10. The factory selects required outputs
+Subpipeline views apply the same operation after qualifying the local name:
 
-The factory mutates its Pipeline and returns `None`. After it finishes, the
-caller resolves explicit labels or uses the Pipeline's sinks and marks those
-canonical outputs required:
+```python
+sample = P.subpipeline("samples/A")
+sample.result = make_result(sample, value="same")
+
+assert sample.result is P["samples/A/result"]
+assert sample.labels == P.labels
+assert sample.nodes == P.nodes
+```
+
+Nested subpipelines compose their canonical relative POSIX prefixes. Prefixes
+are request/result presentation only and never affect rule or provenance
+hashes, so equivalent calls through different views still intern to one Node.
+External input Nodes are passed explicitly to reusable subpipeline factories.
+
+## 10. Finishing freezes construction and enables request selection
+
+The factory mutates its Pipeline and returns `None`. The CLI then calls
+`P.finish()`, which freezes the root and every subpipeline view. Later rule
+calls, label assignments, and subpipeline creation raise `RuntimeError`.
+`finish()` is idempotent on the root; calling it through a view is rejected so
+a nested factory cannot freeze its caller unexpectedly. The DAG remains open,
+allowing other root Pipelines to compile into the same canonical registry.
+
+After finishing, the caller resolves explicit labels or uses the Pipeline's
+sinks and marks those canonical outputs required:
 
 ```python
 factory(P, config)
+P.finish()
 dag.require(P.sinks())
 ```
 
@@ -347,6 +376,8 @@ create shared DAG
 create Pipeline(dag, shell policy)
     ↓
 factory(P, config)
+    ├─ optional P.subpipeline(prefix) views share root state
+    └─ rule calls reject a finished root before interning
     ↓
 rule(P, fixed Nodes and/or Node tuples, config...)
     ↓
@@ -362,7 +393,9 @@ DAG dictionary lookup
     ├─ existing → return canonical RuleCall and Nodes
     └─ absent   → register call and all outputs atomically
     ↓
-P.name = node or P["name"] = node records local labels
+P.name = node or P["name"] = node records qualified root labels
+    ↓
+P.finish() freezes the root and every prefixed view
     ↓
 dag.require(P.sinks() or explicitly selected labels)
     ↓

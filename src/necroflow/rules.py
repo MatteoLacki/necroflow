@@ -503,6 +503,7 @@ class Rule(Generic[_ReturnT]):
     def __call__(self, pipeline, /, *args: Any, **kwargs: Any) -> _ReturnT:
         """Validate one invocation and return its canonical output Nodes."""
         self._validate_pipeline(pipeline)
+        pipeline._assert_open()
         config = self._effective_config(kwargs)
         self._validate_input_presence(args, config)
         self._validate_parent_nodes(pipeline, args)

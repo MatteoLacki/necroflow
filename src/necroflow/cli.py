@@ -145,6 +145,7 @@ def _resolve_invalidation_keys(pipeline, labels: list[str]) -> set[Path]:
 
 def _resolve_request(pipeline, labels: list[str] | None) -> list[_RequestedOutput]:
     """Resolve explicit labels, or all labels bound to pipeline sinks."""
+    pipeline._assert_finished()
     if labels is None:
         sinks = {node.relative_path for node in pipeline.sinks()}
         return [
@@ -233,6 +234,7 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
                         f"pipeline factory {job_config.pipeline_spec!r} must mutate "
                         "the supplied Pipeline and return None"
                     )
+                pipeline.finish()
                 request = _resolve_request(pipeline, job_config.request_labels)
                 forced_stale_keys.update(
                     _resolve_invalidation_keys(pipeline, invalidation_labels)
@@ -367,7 +369,6 @@ def _graph_payload(dag, combos, *, nodes_dir: Path) -> dict:
         "nodes": [
             {
                 **_node_json(node, nodes_dir=nodes_dir),
-                "section": dag.section_for(node),
                 "requested": node.relative_path in requested,
             }
             for node in dag.nodes
@@ -1064,10 +1065,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     graph_parser.add_argument(
         "--png",
-        help="Render the DAG as a PNG (graphviz, grouped by declared sections when "
-        "unambiguous, otherwise dependency depth) instead of ASCII. Requires the "
-        "'dev' extra and the system "
-        "'dot' binary.",
+        help="Render the DAG as a PNG grouped by dependency depth instead of "
+        "ASCII. Requires the 'dev' extra and the system 'dot' binary.",
     )
     graph_parser.set_defaults(func=_graph)
 

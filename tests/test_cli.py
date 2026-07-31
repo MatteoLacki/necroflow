@@ -52,6 +52,7 @@ def _make_pipeline_with_outputs(tmp_path) -> tuple[Pipeline, Path]:
     for node in P.nodes:
         node.path.parent.mkdir(parents=True, exist_ok=True)
         node.path.write_text(node.output_name)
+    P.finish()
     return P, tmp_path
 
 
@@ -130,6 +131,7 @@ def test_skips_missing_outputs(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.out = R_step1(P, v="hello")
     # do NOT create the output file
+    P.finish()
     combos = [("run1", P, _resolve_request(P, None))]
     _materialize_results(results_dir=tmp_path, combos=combos)
     combo_dir = tmp_path / "run1"
@@ -215,6 +217,7 @@ def test_aliases_of_one_sink_create_distinct_requested_results(tmp_path):
     P.primary.path.parent.mkdir(parents=True, exist_ok=True)
     P.primary.path.touch()
 
+    P.finish()
     request = _resolve_request(P, None)
     _materialize_results(tmp_path, [("run1", P, request)])
 
@@ -232,6 +235,7 @@ def test_non_identifier_label_is_quoted_in_manifest(tmp_path):
     P["primary result"].path.parent.mkdir(parents=True, exist_ok=True)
     P["primary result"].path.touch()
 
+    P.finish()
     _materialize_results(tmp_path, [("run1", P, _resolve_request(P, None))])
 
     manifest = tomlkit.parse((tmp_path / "run1" / "manifest.toml").read_text())
@@ -1165,6 +1169,8 @@ def test_multiple_combos(tmp_path):
         n.path.parent.mkdir(parents=True, exist_ok=True)
         n.path.touch()
 
+    P1.finish()
+    P2.finish()
     combos = [
         ("combo_alpha", P1, _resolve_request(P1, None)),
         ("combo_beta", P2, _resolve_request(P2, None)),
@@ -1497,6 +1503,51 @@ def test_outputs_json_lists_requested_paths(tmp_path, factory_file, capsys):
     assert requested[0]["result_path"].endswith("/b.txt")
 
 
+def test_subpipeline_labels_are_requestable_from_cli(tmp_path, capsys):
+    """The CLI must finish the root and resolve qualified subpipeline requests."""
+    factory = tmp_path / "subpipelines.py"
+    factory.write_text(textwrap.dedent("""\
+            from necroflow import NodeType, command, output
+
+            class Result(NodeType):
+                filename = "result.txt"
+
+            @command("touch {result}")
+            def build(value: str):
+                result = output(Result)
+                return result
+
+            def sample_pipeline(P, value):
+                P.result = build(P, value=value)
+
+            def factory(P, config):
+                for sample in config["samples"]:
+                    sample_pipeline(P.subpipeline(f"samples/{sample}"), sample)
+            """))
+    job = tmp_path / "job.toml"
+    job.write_text(
+        f'".pipeline" = "{factory}:factory"\n'
+        '".requests" = ["samples/B/result"]\n'
+        'samples = ["A", "B"]\n'
+    )
+
+    main(
+        [
+            "outputs",
+            "--json",
+            "--nodes-dir",
+            str(tmp_path / "nodes"),
+            "--results-dir",
+            str(tmp_path / "results"),
+            str(job),
+        ]
+    )
+
+    requested = _json_stdout(capsys)["jobs"][0]["requested"]
+    assert [item["label"] for item in requested] == ["samples/B/result"]
+    assert requested[0]["result_path"].endswith("/samples/B/result/result.txt")
+
+
 def test_graph_json_lists_nodes_and_edges(tmp_path, factory_file, capsys):
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
@@ -1514,6 +1565,7 @@ def test_graph_inspection_marks_mutable_nodes_and_edges(tmp_path):
     pipeline = Pipeline(DAG(tmp_path))
     pipeline.mutable = R_mutable_step1(pipeline, v="hello")
     pipeline.log = R_mutable_step2(pipeline, pipeline.mutable)
+    pipeline.finish()
     pipeline.dag.require([pipeline.log])
 
     payload = _graph_payload(
@@ -1527,25 +1579,6 @@ def test_graph_inspection_marks_mutable_nodes_and_edges(tmp_path):
     assert nodes["log"]["mutable"] is False
     assert payload["edges"][0]["mutable"] is True
     assert "[mutable]" in str(pipeline)
-
-
-def test_graph_json_includes_pipeline_sections(tmp_path):
-    P = Pipeline(DAG(tmp_path))
-    P.section("Preparation")
-    P.out = R_step1(P, v="hello")
-    P.section("Analysis")
-    P.log = R_step2(P, P.out)
-    dag = P.dag
-    dag.require(P.sinks())
-
-    payload = _graph_payload(
-        dag, [("job", P, _resolve_request(P, ["log"]))], nodes_dir=tmp_path
-    )
-
-    assert {node["label"]: node["section"] for node in payload["nodes"]} == {
-        "out": "Preparation",
-        "log": "Analysis",
-    }
 
 
 @pytest.mark.skipif(shutil.which("dot") is None, reason="graphviz 'dot' not on PATH")

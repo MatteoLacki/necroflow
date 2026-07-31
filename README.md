@@ -21,7 +21,7 @@ See [COMPARISON.md](COMPARISON.md) for a detailed comparison with Snakemake, Nex
 ## Core ideas
 
 - **Rules** describe how to produce outputs from inputs — shell command templates with typed I/O and lint-clean `name = output(NodeType)` declarations.
-- **Pipelines** wire rule calls together for a single config and can mark author-declared presentation sections for graph inspection.
+- **Pipelines** wire rule calls together for a single config; prefixed subpipeline views make reusable loop-generated outputs requestable.
 - **DAG** runs many pipelines at once, deduplicating shared upstream work across samples automatically.
 - **Paths** are derived from a lineage-derived fingerprint of the full input chain — same inputs always produce the same path, different inputs produce different paths. The filesystem is the cache.
 
@@ -37,18 +37,27 @@ source .venv/bin/activate
 
 necroflow supports POSIX systems (Linux and macOS). We do not offer native Windows support because POSIX commands are the reproducible execution target for workflows. On Windows, use [Windows Subsystem for Linux (WSL)](https://learn.microsoft.com/windows/wsl/) to run necroflow in a POSIX environment.
 
-## Pipeline sections
+## Reusable subpipelines
 
-Use `P.section(name)` in a long factory to label the stage for subsequent node assignments. Sections are presentation metadata: they appear in graph JSON and group `necroflow graph --png` output when unambiguous, but do not affect execution, cache identity, or provenance.
+`P.subpipeline(prefix)` returns a view over the same Pipeline. Assignments through the view are registered on the root with the prefix, while rule identity and DAG deduplication remain unchanged:
 
 ```python
-dag = DAG("nodes")
-P = Pipeline(dag)
-P.section("Read alignment")
-P.bam = align(P, P.fastq, ref=config.ref)
-P.section("Quantification")
-P.counts = count(P, P.bam, gene_model=config.gene_model)
+def sample_pipeline(P: Pipeline, reference, sample: dict) -> None:
+    P.fastq = raw_fastq(P, path=sample["reads"])
+    P.bam = align(P, P.fastq, reference)
+    P.counts = count(P, P.bam)
+
+def cohort_pipeline(P: Pipeline, config: dict) -> None:
+    P.reference = prepare_reference(P, path=config["reference"])
+    for sample in config["samples"]:
+        sample_pipeline(
+            P.subpipeline(f"samples/{sample['name']}"),
+            P.reference,
+            sample,
+        )
 ```
+
+The resulting labels include `samples/A/bam` and `samples/A/counts`. Prefixes are request/result names only and never enter fingerprints. The CLI calls `P.finish()` after a successful factory return. Direct Python callers must finish the root before selecting `P.sinks()`; finishing freezes the root and every subpipeline view.
 
 ## Define a pipeline
 

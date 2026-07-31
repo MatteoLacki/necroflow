@@ -294,6 +294,7 @@ if __name__ == "__main__":
     for word in WORDS:
         P = Pipeline(dag)
         alchemy_pipeline(P, word, n=3)
+        P.finish()
         dag.require(P.sinks())
 
     dag.save("/tmp/necroalchemy_dag.txt")
