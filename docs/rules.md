@@ -149,7 +149,7 @@ mapping access, such as `args.outputs.merged` and `args.outputs["merged"]`.
 Callbacks return a complete shell string. Necroflow executes it unchanged and
 does not attempt to infer or repair quoting; use `shlex.quote` or `shlex.join`
 when interpolated values require shell escaping. Argv-list commands are not
-supported in fingerprint v2.
+supported in fingerprint v3.
 
 Command callbacks must be module-level, closure-free functions or unambiguous
 source-file lambdas accepting exactly one argument. Their canonical AST and
@@ -211,7 +211,7 @@ P.current = uppercase(P, P.current)  # ValueError: current is already assigned
 ```
 
 This keeps every Pipeline label bound to one unambiguous Node for the lifetime
-of the Pipeline. A label used by `.requests`, result-link creation, graph
+of the Pipeline. A label used by `.requests`, result-copy creation, graph
 inspection, or `P.current` therefore always identifies the same Node. Allowing
 reassignment would make earlier Nodes inaccessible under that label and make a
 request for `current` dependent on when it was resolved.

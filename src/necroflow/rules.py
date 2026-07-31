@@ -282,7 +282,7 @@ class Rule(Generic[_ReturnT]):
         )
         if isinstance(command, list):
             raise TypeError(
-                f"Rule {name!r}: argv list commands were removed in fingerprint v2; "
+                f"Rule {name!r}: argv list commands are unsupported; "
                 "use a shell string or a Python callback returning a shell string"
             )
         if callable(command):
@@ -661,7 +661,7 @@ def command(
     """
     if isinstance(cmd, list):
         raise TypeError(
-            "argv list commands were removed in fingerprint v2; use a shell "
+            "argv list commands are unsupported; use a shell "
             "string or a Python callback returning a shell string"
         )
     if not isinstance(cmd, str) and not callable(cmd):

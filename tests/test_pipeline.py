@@ -256,9 +256,11 @@ def test_rule_call_compiles_path_and_fingerprint_immediately(tmp_path):
     node = R_make_a(P, x="x")
 
     assert node.path.is_absolute()
-    assert node.path.parent.parent == tmp_path.resolve() / "make_a"
-    assert len(node.fingerprint) == 64
-    assert node.path.parent.name == node.fingerprint
+    assert node.path.parent.parent.parent == tmp_path.resolve() / "make_a"
+    assert len(node.rule_hash) == 64
+    assert len(node.provenance_hash) == 64
+    assert node.path.parent.parent.name == node.rule_hash
+    assert node.path.parent.name == node.provenance_hash
 
 
 def test_pipeline_rejects_nodes_from_another_dag(tmp_path):

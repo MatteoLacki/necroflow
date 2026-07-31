@@ -1,4 +1,4 @@
-"""Tests for CLI internals: _create_link_outputs, manifest keys, main()."""
+"""Tests for CLI internals: _materialize_results, manifest keys, main()."""
 
 from necroflow.rules import Constraints, Inputs, Outputs, Rule
 
@@ -14,7 +14,7 @@ from necroflow._compat import ExceptionGroup
 from pathlib import Path
 from necroflow import NodeType, Pipeline, DAG, classify_nodes, output
 from necroflow.cli import (
-    _create_link_outputs,
+    _materialize_results,
     _graph_payload,
     _resolve_request,
     main,
@@ -51,49 +51,79 @@ def _make_pipeline_with_outputs(tmp_path) -> tuple[Pipeline, Path]:
     P.log = R_step2(P, P.out)
     for node in P.nodes:
         node.path.parent.mkdir(parents=True, exist_ok=True)
-        node.path.touch()
+        node.path.write_text(node.output_name)
     return P, tmp_path
 
 
-# ── symlink creation ──────────────────────────────────────────────────────────
+# ── result materialization ────────────────────────────────────────────────────
 
 
 def test_combo_dir_created(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
     combos = [("run1", P, _resolve_request(P, None))]
-    _create_link_outputs(outdir, combos)
+    _materialize_results(outdir, combos)
     assert (outdir / "run1").is_dir()
 
 
-def test_symlinks_created_for_existing_outputs(tmp_path):
+def test_requested_outputs_are_copied_as_regular_files(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
     combos = [("run1", P, _resolve_request(P, None))]
-    _create_link_outputs(outdir, combos)
+    _materialize_results(outdir, combos)
     combo_dir = outdir / "run1"
-    symlinks = list(combo_dir.rglob("*.txt")) + list(combo_dir.rglob("*.log"))
-    assert len(symlinks) > 0
-    assert all(f.is_symlink() for f in symlinks)
+    results = list(combo_dir.rglob("*.txt")) + list(combo_dir.rglob("*.log"))
+    assert results
+    assert all(f.is_file() and not f.is_symlink() for f in results)
 
 
-def test_symlink_path_uses_requested_label_and_filename(tmp_path):
+def test_copy_path_uses_requested_label_and_filename(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
     combos = [("run1", P, _resolve_request(P, None))]
 
-    _create_link_outputs(outdir, combos)
+    _materialize_results(outdir, combos)
 
-    link = outdir / "run1" / "log" / "run.log"
-    assert link.is_symlink()
-    assert link.resolve() == P.log.path
+    result = outdir / "run1" / "log" / "run.log"
+    assert result.is_file()
+    assert not result.is_symlink()
+    assert result.read_bytes() == P.log.path.read_bytes()
 
 
-def test_symlinks_point_to_real_files(tmp_path):
-    P, outdir = _make_pipeline_with_outputs(tmp_path)
-    combos = [("run1", P, _resolve_request(P, None))]
-    _create_link_outputs(outdir, combos)
-    combo_dir = outdir / "run1"
-    for link in combo_dir.rglob("*"):
-        if link.is_symlink():
-            assert link.resolve().exists()
+def test_materialization_preserves_intentional_symlink_outputs(tmp_path):
+    pipeline, outdir = _make_pipeline_with_outputs(tmp_path)
+    target = tmp_path / "external.log"
+    target.write_text("external")
+    pipeline.log.path.unlink()
+    pipeline.log.path.symlink_to(target.resolve())
+
+    _materialize_results(outdir, [("run1", pipeline, _resolve_request(pipeline, None))])
+
+    result = outdir / "run1" / "log" / "run.log"
+    assert result.is_symlink()
+    assert result.resolve() == target
+
+
+def test_copy_uses_clone_option_instead_of_gnu_reflink_on_macos(tmp_path, monkeypatch):
+    commands = []
+    monkeypatch.setattr(cli_core.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        cli_core.subprocess,
+        "run",
+        lambda command, check: commands.append((command, check)),
+    )
+
+    cli_core._copy_result(tmp_path / "source", tmp_path / "destination")
+
+    assert commands == [
+        (
+            [
+                "cp",
+                "-a",
+                "-c",
+                str(tmp_path / "source"),
+                str(tmp_path / "destination"),
+            ],
+            True,
+        )
+    ]
 
 
 def test_skips_missing_outputs(tmp_path):
@@ -101,59 +131,59 @@ def test_skips_missing_outputs(tmp_path):
     P.out = R_step1(P, v="hello")
     # do NOT create the output file
     combos = [("run1", P, _resolve_request(P, None))]
-    _create_link_outputs(results_dir=tmp_path, combos=combos)
+    _materialize_results(results_dir=tmp_path, combos=combos)
     combo_dir = tmp_path / "run1"
     assert combo_dir.is_dir()  # dir still created
-    assert not any(combo_dir.rglob("*.txt"))  # but no symlinks for missing output
+    assert not any(combo_dir.rglob("*.txt"))
 
 
-def test_link_outputs_can_use_separate_nodes_and_results_dirs(tmp_path):
+def test_results_can_use_separate_nodes_and_results_dirs(tmp_path):
     nodes_dir = tmp_path / "nodes"
     results_dir = tmp_path / "results"
     P, _ = _make_pipeline_with_outputs(nodes_dir)
 
-    _create_link_outputs(
-        results_dir, [("run1", P, _resolve_request(P, None))], nodes_dir=nodes_dir
-    )
+    _materialize_results(results_dir, [("run1", P, _resolve_request(P, None))])
 
-    links = [p for p in (results_dir / "run1").rglob("*") if p.is_symlink()]
-    assert links
-    assert all(p.resolve().is_file() for p in links)
-    assert (results_dir / "run1" / "log" / "run.log").resolve() == P.log.path
+    result = results_dir / "run1" / "log" / "run.log"
+    assert result.is_file() and not result.is_symlink()
+    assert result.read_bytes() == P.log.path.read_bytes()
     content = (results_dir / "run1" / "manifest.toml").read_text()
     doc = tomlkit.parse(content)
-    assert all(not str(v).startswith("../") for v in doc["outputs"].values())
+    assert doc["outputs"]["log"]["path"] == "log/run.log"
+    assert doc["outputs"]["log"]["origin_node_key"] == P.log.relative_path.as_posix()
+    assert len(doc["outputs"]["log"]["content_sha256"]) == 64
 
 
-def test_link_outputs_recovers_from_malformed_manifest(tmp_path):
-    """A damaged old manifest must not block creation of current result links."""
+def test_materialization_rejects_malformed_manifest(tmp_path):
+    """Without a readable manifest, Necroflow cannot safely identify owned copies."""
 
     pipeline, outdir = _make_pipeline_with_outputs(tmp_path)
     combo_dir = outdir / "run1"
     combo_dir.mkdir()
     (combo_dir / "manifest.toml").write_text("not = [valid")
 
-    _create_link_outputs(outdir, [("run1", pipeline, _resolve_request(pipeline, None))])
+    with pytest.raises(ValueError, match="cannot read result manifest"):
+        _materialize_results(
+            outdir, [("run1", pipeline, _resolve_request(pipeline, None))]
+        )
 
-    manifest = tomlkit.parse((combo_dir / "manifest.toml").read_text())
-    assert manifest["outputs"]["log"] == "log/run.log"
 
-
-def test_link_outputs_removes_stale_generated_symlinks(tmp_path):
+def test_materialization_removes_stale_manifest_owned_results(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
     combo_dir = outdir / "run1"
     stale = combo_dir / "step2" / "abc123" / "run.log"
     stale.parent.mkdir(parents=True)
-    stale.symlink_to(P.log.path)
+    stale.write_text("stale")
     (combo_dir / "manifest.toml").write_text(
         '[outputs]\nlog = "step2/abc123/run.log"\n'
     )
 
-    _create_link_outputs(outdir, [("run1", P, _resolve_request(P, None))])
+    _materialize_results(outdir, [("run1", P, _resolve_request(P, None))])
 
     assert not stale.exists()
     assert not stale.parent.exists()
-    assert (combo_dir / "log" / "run.log").is_symlink()
+    assert (combo_dir / "log" / "run.log").is_file()
+    assert not (combo_dir / "log" / "run.log").is_symlink()
 
 
 # ── manifest ─────────────────────────────────────────────────────────────────
@@ -162,7 +192,7 @@ def test_link_outputs_removes_stale_generated_symlinks(tmp_path):
 def test_manifest_created(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
     combos = [("run1", P, _resolve_request(P, None))]
-    _create_link_outputs(outdir, combos)
+    _materialize_results(outdir, combos)
     assert (outdir / "run1" / "manifest.toml").exists()
 
 
@@ -170,7 +200,7 @@ def test_manifest_keys_are_requested_labels(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
     sinks = _resolve_request(P, None)
     combos = [("run1", P, sinks)]
-    _create_link_outputs(outdir, combos)
+    _materialize_results(outdir, combos)
     content = (outdir / "run1" / "manifest.toml").read_text()
     doc = tomlkit.parse(content)
     keys = set(doc["outputs"].keys())
@@ -186,11 +216,12 @@ def test_aliases_of_one_sink_create_distinct_requested_results(tmp_path):
     P.primary.path.touch()
 
     request = _resolve_request(P, None)
-    _create_link_outputs(tmp_path, [("run1", P, request)])
+    _materialize_results(tmp_path, [("run1", P, request)])
 
     assert P.primary is P.alias
-    assert (tmp_path / "run1" / "primary" / "out.txt").is_symlink()
-    assert (tmp_path / "run1" / "alias" / "out.txt").is_symlink()
+    assert (tmp_path / "run1" / "primary" / "out.txt").is_file()
+    assert not (tmp_path / "run1" / "primary" / "out.txt").is_symlink()
+    assert (tmp_path / "run1" / "alias" / "out.txt").is_file()
     manifest = tomlkit.parse((tmp_path / "run1" / "manifest.toml").read_text())
     assert set(manifest["outputs"]) == {"primary", "alias"}
 
@@ -201,17 +232,17 @@ def test_non_identifier_label_is_quoted_in_manifest(tmp_path):
     P["primary result"].path.parent.mkdir(parents=True, exist_ok=True)
     P["primary result"].path.touch()
 
-    _create_link_outputs(tmp_path, [("run1", P, _resolve_request(P, None))])
+    _materialize_results(tmp_path, [("run1", P, _resolve_request(P, None))])
 
     manifest = tomlkit.parse((tmp_path / "run1" / "manifest.toml").read_text())
-    assert manifest["outputs"]["primary result"] == "primary result/out.txt"
+    assert manifest["outputs"]["primary result"]["path"] == "primary result/out.txt"
 
 
 def test_manifest_only_sinks(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
     sinks = _resolve_request(P, None)
     combos = [("run1", P, sinks)]
-    _create_link_outputs(outdir, combos)
+    _materialize_results(outdir, combos)
     content = (outdir / "run1" / "manifest.toml").read_text()
     doc = tomlkit.parse(content)
     keys = set(doc["outputs"].keys())
@@ -224,11 +255,11 @@ def test_manifest_values_are_visible_result_paths(tmp_path):
     P, outdir = _make_pipeline_with_outputs(tmp_path)
     combos = [("run1", P, _resolve_request(P, None))]
 
-    _create_link_outputs(outdir, combos)
+    _materialize_results(outdir, combos)
 
     content = (outdir / "run1" / "manifest.toml").read_text()
     doc = tomlkit.parse(content)
-    assert doc["outputs"]["log"] == "log/run.log"
+    assert doc["outputs"]["log"]["path"] == "log/run.log"
 
 
 # ── main() integration ───────────────────────────────────────────────────────
@@ -278,7 +309,11 @@ def job_toml(tmp_path, factory_file):
 
 
 def _real_output(outdir: Path, filename: str) -> Path:
-    matches = [p for p in outdir.rglob(filename) if not p.is_symlink()]
+    matches = [
+        path
+        for path in outdir.rglob(filename)
+        if len(path.parent.name) == 64 and len(path.parent.parent.name) == 64
+    ]
     assert len(matches) == 1
     return matches[0]
 
@@ -317,36 +352,6 @@ def test_iter_job_configs_rejects_missing_job_file(tmp_path):
     missing = tmp_path / "missing.toml"
     with pytest.raises(FileNotFoundError, match="job file not found"):
         list(iter_job_configs(missing))
-
-
-def test_callable_fingerprint_example_runs_and_records_provenance(
-    tmp_path, monkeypatch
-):
-    example_dir = (
-        Path(__file__).resolve().parents[1] / "examples" / "callable_fingerprint"
-    )
-    nodes_dir = tmp_path / "nodes"
-    results_dir = tmp_path / "results"
-    monkeypatch.chdir(example_dir)
-
-    main(
-        [
-            "--nodes-dir",
-            str(nodes_dir),
-            "--results-dir",
-            str(results_dir),
-            "job.toml",
-        ]
-    )
-
-    result = results_dir / "job" / "sorted" / "sorted.txt"
-    assert result.read_text() == "pear\nbanana\napple\n"
-    metadata_paths = list((nodes_dir / "sort_text").glob("*/.rip/dependencies.toml"))
-    assert len(metadata_paths) == 1
-    metadata = tomlkit.parse(metadata_paths[0].read_text())
-    assert metadata["fingerprint"]["provider"] == "fingerprint.py:project_fingerprint"
-    assert metadata["command"]["kind"] == "python"
-    assert "sort -r -u" in metadata["command"]["realized"]
 
 
 def test_main_invalidate_parent_reruns_parent_and_child(tmp_path, factory_file):
@@ -820,7 +825,8 @@ def test_main_runs_pipeline_with_default_nodes_and_results_dirs(
     assert any((tmp_path / "nodes").rglob("b.txt"))
     assert (tmp_path / "results" / "job" / "manifest.toml").exists()
     assert not any((tmp_path / "results" / "job").rglob("a.txt"))
-    assert (tmp_path / "results" / "job" / "b" / "b.txt").is_symlink()
+    result = tmp_path / "results" / "job" / "b" / "b.txt"
+    assert result.is_file() and not result.is_symlink()
 
 
 def test_main_accepts_fifo_scheduler(tmp_path, job_toml):
@@ -876,13 +882,34 @@ def test_main_runs_pipeline_with_split_nodes_and_results_dirs(tmp_path, factory_
 
     assert _real_output(nodes_dir, "a.txt").exists()
     real_b = _real_output(nodes_dir, "b.txt")
-    assert not list(results_dir.rglob("*.txt")) or all(
-        p.is_symlink() for p in results_dir.rglob("*.txt")
-    )
     assert not list((results_dir / "job").rglob("a.txt"))
-    b_link = results_dir / "job" / "b" / "b.txt"
-    assert b_link.is_symlink()
-    assert b_link.resolve() == real_b
+    result = results_dir / "job" / "b" / "b.txt"
+    assert result.is_file() and not result.is_symlink()
+    assert result.read_bytes() == real_b.read_bytes()
+
+
+def test_main_materializes_results_while_node_store_is_locked(
+    tmp_path, job_toml, monkeypatch
+):
+    nodes_dir = tmp_path / "nodes"
+
+    def assert_locked(results_dir, combos):
+        lock_path = nodes_dir / ".rip" / "necroflow.lock"
+        with lock_path.open("a") as handle:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    monkeypatch.setattr(cli_core, "_materialize_results", assert_locked)
+
+    main(
+        [
+            "--nodes-dir",
+            str(nodes_dir),
+            "--results-dir",
+            str(tmp_path / "results"),
+            str(job_toml),
+        ]
+    )
 
 
 def test_main_outdir_keeps_single_root_compatibility(tmp_path, factory_file):
@@ -962,10 +989,10 @@ def test_main_path_request_creates_nested_result_and_manifest(
     )
 
     result = results_dir / "job" / "dataset" / "config" / "b.txt"
-    assert result.is_symlink()
-    assert result.resolve() == _real_output(nodes_dir, "b.txt")
+    assert result.is_file() and not result.is_symlink()
+    assert result.read_bytes() == _real_output(nodes_dir, "b.txt").read_bytes()
     manifest = tomlkit.parse((results_dir / "job" / "manifest.toml").read_text())
-    assert manifest["outputs"]["dataset/config"] == "dataset/config/b.txt"
+    assert manifest["outputs"]["dataset/config"]["path"] == "dataset/config/b.txt"
 
     output = _real_output(nodes_dir, "b.txt")
     mtime = output.stat().st_mtime
@@ -1052,7 +1079,7 @@ def test_link_creation_defensively_validates_result_paths(tmp_path, monkeypatch)
     monkeypatch.setattr(cli_core, "_check_path_limits", reject)
 
     with pytest.raises(ValueError, match="Pipeline label 'log' is invalid"):
-        _create_link_outputs(results_dir, [("run1", P, _resolve_request(P, None))])
+        _materialize_results(results_dir, [("run1", P, _resolve_request(P, None))])
     assert not results_dir.exists()
 
 
@@ -1099,7 +1126,7 @@ def test_main_bad_request_label_errors(tmp_path, factory_file):
 def test_narrow_request_combo_excludes_prior_outputs(tmp_path, factory_file):
     """Combo dir must not link b.txt when it exists from a prior run but isn't requested.
 
-    Guards the regression where _create_link_outputs iterated all pipeline nodes
+    Guards the regression where _materialize_results iterated all pipeline nodes
     instead of only requested nodes, leaking outputs from earlier broader runs.
     """
     outdir = tmp_path / "out"
@@ -1142,7 +1169,7 @@ def test_multiple_combos(tmp_path):
         ("combo_alpha", P1, _resolve_request(P1, None)),
         ("combo_beta", P2, _resolve_request(P2, None)),
     ]
-    _create_link_outputs(tmp_path, combos)
+    _materialize_results(tmp_path, combos)
     assert (tmp_path / "combo_alpha").is_dir()
     assert (tmp_path / "combo_beta").is_dir()
 
@@ -1260,9 +1287,7 @@ def test_provenance_subcommand_prints_metadata(tmp_path, factory_file, capsys):
     assert "v = 'hello'" in captured
 
 
-def test_job_fingerprint_function_is_installed_before_output_addressing(
-    tmp_path, factory_file, capsys
-):
+def test_job_custom_fingerprint_is_rejected(tmp_path, factory_file):
     fingerprint_file = tmp_path / "fingerprint.py"
     fingerprint_file.write_text("def fingerprint(args):\n" "    return 'b' * 64\n")
     job = tmp_path / "job.toml"
@@ -1272,10 +1297,8 @@ def test_job_fingerprint_function_is_installed_before_output_addressing(
         'v = "hello"\n'
     )
 
-    main(["outputs", "--nodes-dir", str(tmp_path / "nodes"), str(job)])
-
-    captured = capsys.readouterr().out
-    assert f"/{'b' * 64}/" in captured
+    with pytest.raises(SystemExit, match="removed '.fingerprint'"):
+        main(["outputs", "--nodes-dir", str(tmp_path / "nodes"), str(job)])
 
 
 def test_outputs_shellpath_matches_run_shellpath_paths(tmp_path, factory_file, capsys):

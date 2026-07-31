@@ -17,7 +17,7 @@ disagrees with the code, the code wins (and this file should be fixed).
 | Rules, typed outputs, subtypes, conditional pipelines, sections | `docs/rules.md` |
 | Execution, scheduling, resources, failure handling, autoclean | `docs/execution.md` |
 | Output layout, `.rip/` metadata, caching, STALE detection | `docs/caching.md` |
-| CLI flags and subcommands (`run`, `graph`, `outputs`, `provenance`, `doctor`, `explain`) | `docs/cli.md` |
+| CLI flags and subcommands (`run`, `graph`, `outputs`, `provenance`, `doctor`, `explain`, `gc`) | `docs/cli.md` |
 | Job TOML format and `__grid` parameter grids | `docs/job-toml.md` |
 | Config validation callbacks | `docs/config-validation.md` |
 | Generated config files (`text_file` rules) | `docs/generated-config-files.md` |
@@ -48,7 +48,7 @@ necroflow graph --json job.toml        # DAG structure as JSON
 necroflow outputs --json job.toml      # requested output paths
 necroflow explain job.toml             # what would run and why (per-node reasons)
 necroflow doctor job.toml              # preflight checks with stable NF_* issue codes
-necroflow provenance --json nodes/rule/hash/file
+necroflow provenance --json nodes/rule/rule_hash/provenance_hash/file
 python -c "import inspect, necroflow.executor as e; print(inspect.signature(e.execute))"
 ```
 
@@ -81,9 +81,11 @@ These have been true since the June refactors and are load-bearing design decisi
 - **Content-addressed, not time-addressed.** Staleness uses an mtime fast path, then falls back
   to the stored SHA-256 content hash (`.rip/{filename}.hash`). A parent that re-ran but produced
   identical output must NOT invalidate children.
-- **Fingerprints name directories.** Fingerprint v2 uses framed canonical values and one
-  64-hex `node.fingerprint`; paths use the complete digest. Co-outputs share one canonical
-  `RuleCall`, digest, workdir, and realized command. Constraints and `repeat` remain excluded.
+- **Split hashes name directories.** Fingerprint v3 uses framed canonical values and paths
+  `{rule}/{rule_hash}/{provenance_hash}/{filename}`. The local rule hash covers recipe
+  structure; the provenance hash covers config, shell, and parent lineage. Co-outputs share
+  one canonical `RuleCall`, both hashes, workdir, and realized command. Constraints and
+  `repeat` remain excluded. Fingerprinting is framework-owned.
 - **Identity via `node.relative_path`, never `id()`.** It is a `Path` relative to
   `dag.nodes_dir` and is stable across node-store roots. Use it for adjacency, visited sets,
   requested outputs, and executor bookkeeping; serialize it with `.as_posix()` in JSON.
@@ -105,8 +107,11 @@ These have been true since the June refactors and are load-bearing design decisi
 - **Pipeline labels are safe visible paths.** Item labels may be canonical relative POSIX
   paths. Assignment rejects absolute, empty, dot-prefixed, `.`/`..`, repeated/trailing
   separator, Linux byte-limit, and file/directory-conflicting result paths. Labels select
-  visible links and remain outside fingerprints. CLI result paths receive an exact
-  destination-filesystem preflight before execution and again before link creation.
+  visible result paths and remain outside fingerprints. CLI result paths receive an exact
+  destination-filesystem preflight before execution and again before result materialization.
+- **CLI results are copies.** Only requested outputs are copied into `results/`; Linux uses
+  GNU `cp -a --reflink=auto`, macOS uses `cp -a -c`, and both fall back to physical copies.
+  `manifest.toml` records each visible path, canonical origin node key, and content hash.
 - **Filename-less NodeTypes are input-only.** A `NodeType` with `filename = None` may be
   used as a fixed, union, or variadic input contract, but every Rule output must resolve to an
   explicit filename. Rule declaration rejects filename-less outputs; output names are not fallbacks.
@@ -146,7 +151,8 @@ def my_scheduler(ready: list[Node], remaining: list[Node],
 ## `execute()` — check the docstring for details
 
 `necroflow.executor.execute(dag, resource_caps=None, scheduler=..., keep_going=False,
-autoclean=False, dry_run=False, node_runner=None, forced_stale_keys=None)
+autoclean=False, dry_run=False, node_runner=None, forced_stale_keys=None,
+on_complete=None)
 -> dict[str, ExecutionEvent]`
 
 The dict is keyed by `node.relative_path.as_posix()`. `DAG.execute()` forwards
@@ -160,8 +166,8 @@ src/necroflow/
   nodes.py           — Node, NodeState, NodeType/NodeTypeMeta, topo sort, connected components,
                        per-node state files
   rule_call.py       — concrete rule invocation, shared identity and command state
-  contexts.py        — immutable NamedValues, CommandArgs, and FingerprintArgs public views
-  fingerprints.py    — canonical v2 encoding, callable AST identity, default/project protocols
+  contexts.py        — immutable NamedValues and CommandArgs public views
+  fingerprints.py    — canonical v3 rule/provenance hashes and callable AST identity
   rules.py           — Rule internals plus command, text-file, and symlink-file declarations,
                        parse_resource with SI/binary suffixes
   schedulers.py      — Scheduler protocol, fifo_scheduler, ConnectedComponentScheduler
@@ -172,8 +178,9 @@ src/necroflow/
   logger.py          — thread-safe job logging
   config.py          — job TOML loading and grid expansion (iter_job_configs, JobConfig)
   grid.py            — __grid TOML expansion and deterministic result labels
-  cli.py             — CLI: run + init/graph/outputs/provenance/doctor/explain subcommands,
-                       split nodes-dir/results-dir layout, manifests, symlink trees
+  gc.py              — provenance-aware node-store scanning, reporting, and deletion
+  cli.py             — CLI argument parsing and command adapters, split nodes-dir/results-dir
+                       layout, manifests, copied result trees
   graphviz_render.py — optional PNG rendering (dev extra)
   keywords.py        — reserved pipeline label names
   _compat.py         — ExceptionGroup backport

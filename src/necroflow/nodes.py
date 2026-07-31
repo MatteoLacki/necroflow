@@ -7,7 +7,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
-from necroflow.fingerprints import validate_fingerprint_result
+from necroflow.fingerprints import compute_hashes
 from necroflow.contexts import NamedValues
 from necroflow.rule_call import RuleCall
 
@@ -90,9 +90,17 @@ class Node:
 
     @property
     def fingerprint(self) -> str:
-        """Full version-2 digest shared by co-outputs of one rule call."""
+        """Compatibility alias for :attr:`provenance_hash`."""
 
-        return self.rule_call.fingerprint
+        return self.provenance_hash
+
+    @property
+    def rule_hash(self) -> str:
+        return self.rule_call.rule_hash
+
+    @property
+    def provenance_hash(self) -> str:
+        return self.rule_call.provenance_hash
 
     @property
     def state_file(self) -> Path:
@@ -132,14 +140,12 @@ class Node:
             config=config,
             command=command,
             shellpath=shellpath,
-            fingerprint_provider=pipeline.fingerprint_provider,
         )
-        value = pipeline.fingerprint_function(call.fingerprint_args())
-        call._fingerprint = validate_fingerprint_result(
-            value, provider=pipeline.fingerprint_provider
-        )
+        call._rule_hash, call._provenance_hash = compute_hashes(call)
         rule_component = _safe_path_component(rule.__name__, kind="rule name")
-        call._relative_path = Path(rule_component) / call.fingerprint
+        call._relative_path = (
+            Path(rule_component) / call.rule_hash / call.provenance_hash
+        )
         workdir = call.workdir
         nodes: list[Node] = []
         output_paths: set[Path] = set()

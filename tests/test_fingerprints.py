@@ -11,7 +11,6 @@ from necroflow import (
     CommandArgs,
     Constraints,
     DAG,
-    FingerprintArgs,
     Inputs,
     NamedValues,
     NodeType,
@@ -19,7 +18,6 @@ from necroflow import (
     Pipeline,
     command,
     classify_nodes,
-    default_fingerprint,
     execute,
     output,
     resolve_command,
@@ -89,27 +87,6 @@ LAMBDA_COMMAND = lambda args: f"touch {args.outputs.result}"
 def decorated_dynamic(source: Source, force: bool):
     result = output(Result)
     return result
-
-
-def constant_fingerprint(args: FingerprintArgs) -> str:
-    return "a" * 64
-
-
-def composed_fingerprint(args: FingerprintArgs) -> str:
-    digest = default_fingerprint(args)
-    return digest[:-1] + ("0" if digest[-1] != "0" else "1")
-
-
-def invalid_fingerprint(args: FingerprintArgs) -> str:
-    return "not-a-digest"
-
-
-def non_string_fingerprint(args: FingerprintArgs):
-    return b"a" * 64
-
-
-def fingerprint_with_wrong_arity(first, second):
-    return "a" * 64
 
 
 def _source_rule(name: str = "source") -> Rule:
@@ -441,7 +418,7 @@ def test_ast_formatting_and_comments_do_not_change_identity(tmp_path):
     assert first.fingerprint == second.fingerprint
 
 
-def test_default_fingerprint_rejects_custom_config_values(tmp_path):
+def test_framework_hashing_rejects_custom_config_values(tmp_path):
     class Options:
         pass
 
@@ -454,119 +431,22 @@ def test_default_fingerprint_rejects_custom_config_values(tmp_path):
         )(Pipeline(DAG(tmp_path)), options=Options())
 
 
-def test_project_fingerprint_replaces_default_and_can_handle_custom_values(tmp_path):
-    class Options:
-        pass
-
-    pipeline = Pipeline(
-        DAG(tmp_path),
-        fingerprint_function=constant_fingerprint,
-        fingerprint_provider="test:constant",
-    )
-    pipeline.result = Rule(
-        "custom_config",
-        Inputs(options=Options),
-        Outputs(result=Result),
-        "touch {result}",
-    )(pipeline, options=Options())
-
-    assert pipeline.result.fingerprint == "a" * 64
-    assert pipeline.result.rule_call.fingerprint_provider == "test:constant"
-
-
-def test_same_call_path_with_conflicting_outputs_is_a_fingerprint_collision(tmp_path):
-    pipeline = Pipeline(
-        DAG(tmp_path),
-        fingerprint_function=constant_fingerprint,
-        fingerprint_provider="test:constant",
-    )
-    Rule("same", Inputs(value=str), Outputs(result=Result), "touch {result}")(
-        pipeline, value="first"
-    )
-
-    with pytest.raises(ValueError, match="fingerprint collision"):
-        Rule("same", Inputs(value=str), Outputs(log=Log), "touch {log}")(
-            pipeline, value="second"
-        )
-
-
-def test_truncated_fingerprint_cache_is_not_reused(tmp_path):
-    old_output = tmp_path / "source" / ("a" * 16) / "source.txt"
+def test_v2_fingerprint_cache_is_not_reused(tmp_path):
+    old_output = tmp_path / "source" / ("a" * 64) / "source.txt"
     old_output.parent.mkdir(parents=True)
     old_output.touch()
     dag = DAG(tmp_path)
-    pipeline = Pipeline(
-        dag,
-        fingerprint_function=constant_fingerprint,
-        fingerprint_provider="test:constant",
-    )
+    pipeline = Pipeline(dag)
     node = _source_rule()(pipeline, text="x")
     dag.require([node])
 
     classify_nodes(dag.nodes, dag.required_nodes)
 
-    assert node.path == tmp_path / "source" / ("a" * 64) / "source.txt"
+    assert len(node.path.relative_to(tmp_path).parts) == 4
     assert node.state.value == "missing"
 
 
-def test_project_fingerprint_is_installed_recursively_and_can_compose(tmp_path):
-    pipeline = Pipeline(
-        DAG(tmp_path),
-        fingerprint_function=composed_fingerprint,
-        fingerprint_provider="test:composed",
-    )
-    source = _source_rule()(pipeline, text="x")
-    result = Rule(
-        "consume",
-        Inputs(source=Source),
-        Outputs(result=Result),
-        "cp {source} {result}",
-    )(pipeline, source)
-    pipeline.result = result
-
-    assert result.rule_call.fingerprint_provider == "test:composed"
-    assert source.rule_call.fingerprint_provider == "test:composed"
-    assert result.fingerprint != default_fingerprint(
-        result.rule_call.fingerprint_args()
-    )
-
-
-def test_invalid_project_fingerprint_result_fails_during_rule_call(tmp_path):
-    pipeline = Pipeline(
-        DAG(tmp_path),
-        fingerprint_function=invalid_fingerprint,
-        fingerprint_provider="test:invalid",
-    )
-    with pytest.raises(TypeError, match="64 lowercase hexadecimal"):
-        _source_rule()(pipeline, text="x")
-
-
-def test_project_fingerprint_result_must_be_text(tmp_path):
-    """Fingerprint providers must return a textual lowercase SHA-256 digest."""
-
-    pipeline = Pipeline(
-        DAG(tmp_path),
-        fingerprint_function=non_string_fingerprint,
-        fingerprint_provider="test:bytes",
-    )
-    with pytest.raises(TypeError, match="64 lowercase hexadecimal"):
-        _source_rule()(pipeline, text="x")
-
-
-def test_project_fingerprint_function_requires_one_positional_argument(tmp_path):
-    """Fingerprint providers receive exactly one immutable FingerprintArgs view."""
-
-    with pytest.raises(
-        TypeError, match="exactly one positional FingerprintArgs argument"
-    ):
-        Pipeline(
-            DAG(tmp_path),
-            fingerprint_function=fingerprint_with_wrong_arity,
-            fingerprint_provider="test:wrong-arity",
-        )
-
-
-def test_constraints_and_repeat_remain_outside_default_fingerprint(tmp_path):
+def test_constraints_and_repeat_remain_outside_framework_hashes(tmp_path):
     pipeline = Pipeline(DAG(tmp_path))
     first = Rule(
         "same",
@@ -604,7 +484,6 @@ def test_explicit_shellpath_changes_callable_fingerprint(tmp_path):
     assert explicit_result.fingerprint != default_digest
     expected_shell = str(Path("/bin/bash").resolve())
     assert explicit_result.rule_call.shellpath == expected_shell
-    assert explicit_result.rule_call.fingerprint_args().shellpath == expected_shell
 
 
 def test_explicit_shellpath_does_not_change_builtin_materializer_fingerprint(tmp_path):
@@ -621,7 +500,7 @@ def test_explicit_shellpath_does_not_change_builtin_materializer_fingerprint(tmp
 
 
 def test_command_factory_rejects_argv_lists():
-    with pytest.raises(TypeError, match="argv list commands were removed"):
+    with pytest.raises(TypeError, match="argv list commands are unsupported"):
         command(
             ["touch", "{result}"],
             Inputs(label=str),
@@ -645,9 +524,10 @@ def test_callable_provenance_separates_command_and_fingerprint(tmp_path):
     execute(pipeline.dag)
 
     metadata = (pipeline.result.path.parent / ".rip" / "dependencies.toml").read_text()
-    assert "[fingerprint]" in metadata
-    assert f'digest = "{pipeline.result.fingerprint}"' in metadata
-    assert 'provider = "necroflow.default_fingerprint/v2"' in metadata
+    assert "[identity]" in metadata
+    assert 'format = "v3"' in metadata
+    assert f'rule_hash = "{pipeline.result.rule_hash}"' in metadata
+    assert f'provenance_hash = "{pipeline.result.provenance_hash}"' in metadata
     assert "[command]" in metadata
     assert 'kind = "python"' in metadata
     assert "realized = " in metadata

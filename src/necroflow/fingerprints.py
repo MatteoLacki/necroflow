@@ -7,17 +7,15 @@ import hashlib
 import inspect
 from pathlib import Path
 import platform
-import re
 import sys
 import textwrap
 from types import UnionType
 from typing import Annotated, Any, Callable, get_args, get_origin, Union
 
-from necroflow.contexts import FingerprintArgs
+from necroflow.rule_call import RuleCall
 
-FINGERPRINT_DOMAIN = "necroflow.fingerprint/v2"
-DEFAULT_FINGERPRINT_PROVIDER = "necroflow.default_fingerprint/v2"
-_HEX_DIGEST = re.compile(r"[0-9a-f]{64}")
+RULE_HASH_DOMAIN = "necroflow.rule-hash/v3"
+PROVENANCE_HASH_DOMAIN = "necroflow.provenance-hash/v3"
 
 
 class FingerprintValueError(TypeError):
@@ -111,7 +109,7 @@ def canonical_bytes(value: Any, *, path: str = "value") -> bytes:
         return _frame(b"frozenset" if isinstance(value, frozenset) else b"set", items)
     raise FingerprintValueError(
         f"{path}: unsupported fingerprint value {type(value).__name__}; "
-        "configure a project fingerprint function to define its identity"
+        "use a supported deterministic configuration value"
     )
 
 
@@ -248,18 +246,17 @@ def _command_identity(command: Any, recipe_identity: str | None) -> Any:
     raise TypeError(f"unsupported command identity {type(command).__name__}")
 
 
-def default_fingerprint(args: FingerprintArgs) -> str:
-    """Compute Necroflow's complete version-2 rule-call fingerprint."""
-
+def _parent_identity(call: RuleCall) -> list[dict[str, Any]]:
     parents = []
-    for name, parent in args.inputs.items():
+    for name, parent in call.inputs.items():
         if isinstance(parent, tuple):
             parents.append(
                 {
                     "name": name,
                     "group": [
                         {
-                            "fingerprint": item.fingerprint,
+                            "rule_hash": item.rule_hash,
+                            "provenance_hash": item.provenance_hash,
                             "output": item.output_name or "",
                             **({"mutable": True} if item.mutable else {}),
                         }
@@ -271,51 +268,78 @@ def default_fingerprint(args: FingerprintArgs) -> str:
             parents.append(
                 {
                     "name": name,
-                    "fingerprint": parent.fingerprint,
+                    "rule_hash": parent.rule_hash,
+                    "provenance_hash": parent.provenance_hash,
                     "output": parent.output_name or "",
                     **({"mutable": True} if parent.mutable else {}),
                 }
             )
+    return parents
+
+
+def _rule_hash(
+    *, rule_name, command, recipe_identity, input_types, output_types
+) -> str:
     identity = {
-        "domain": FINGERPRINT_DOMAIN,
-        "rule": args.rule_name,
-        "command": _command_identity(args.command, args.recipe_identity),
-        "config": dict(args.config.items()),
-        # Preserve the v2 wire shape while exposing shellpath directly in the API.
-        "execution_context": (
-            {"shellpath": args.shellpath} if args.shellpath is not None else {}
-        ),
-        "parents": parents,
+        "domain": RULE_HASH_DOMAIN,
+        "rule": rule_name,
+        "command": _command_identity(command, recipe_identity),
         "input_types": {
-            name: _type_name(annotation)
-            for name, annotation in args.input_types.items()
+            name: _type_name(annotation) for name, annotation in input_types.items()
         },
         "output_types": {
-            name: _type_name(annotation)
-            for name, annotation in args.output_types.items()
+            name: {
+                "type": _type_name(annotation),
+                "filename": annotation.filename,
+                "mutable": annotation.mutable,
+            }
+            for name, annotation in output_types.items()
         },
     }
-    return hashlib.sha256(canonical_bytes(identity, path="fingerprint")).hexdigest()
+    return hashlib.sha256(canonical_bytes(identity, path="rule")).hexdigest()
 
 
-def validate_fingerprint_result(value: Any, *, provider: str) -> str:
-    """Require a provider result to be one lowercase 64-hex digest."""
-    if not isinstance(value, str) or _HEX_DIGEST.fullmatch(value) is None:
-        raise TypeError(
-            f"fingerprint function {provider!r} must return exactly 64 lowercase "
-            f"hexadecimal characters, got {value!r}"
-        )
-    return value
+def rule_hash(call: RuleCall) -> str:
+    """Hash the local, configuration-independent recipe contract."""
+
+    return _rule_hash(
+        rule_name=call.rule.__name__,
+        command=call.command,
+        recipe_identity=call.rule.recipe_identity,
+        input_types=call.rule.inputs.specs,
+        output_types=call.rule.outputs.specs,
+    )
 
 
-def validate_fingerprint_function(function: Callable, *, provider: str) -> None:
-    """Require a provider function with one FingerprintArgs parameter."""
-    parameters = list(inspect.signature(function).parameters.values())
-    if len(parameters) != 1 or parameters[0].kind not in (
-        inspect.Parameter.POSITIONAL_ONLY,
-        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-    ):
-        raise TypeError(
-            f"fingerprint function {provider!r} must accept exactly one positional "
-            "FingerprintArgs argument"
-        )
+def declared_rule_hash(rule) -> str:
+    """Hash a module-level Rule without constructing a configured call."""
+
+    return _rule_hash(
+        rule_name=rule.__name__,
+        command=rule.command,
+        recipe_identity=rule.recipe_identity,
+        input_types=rule.inputs.specs,
+        output_types=rule.outputs.specs,
+    )
+
+
+def provenance_hash(call: RuleCall, local_rule_hash: str) -> str:
+    """Hash one configured invocation and its exact parent lineage."""
+
+    identity = {
+        "domain": PROVENANCE_HASH_DOMAIN,
+        "rule_hash": local_rule_hash,
+        "config": call.config,
+        "execution_context": (
+            {"shellpath": call.shellpath} if call.shellpath is not None else {}
+        ),
+        "parents": _parent_identity(call),
+    }
+    return hashlib.sha256(canonical_bytes(identity, path="provenance")).hexdigest()
+
+
+def compute_hashes(call: RuleCall) -> tuple[str, str]:
+    """Return the framework-owned v3 ``(rule_hash, provenance_hash)`` pair."""
+
+    local_rule_hash = rule_hash(call)
+    return local_rule_hash, provenance_hash(call, local_rule_hash)

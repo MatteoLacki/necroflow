@@ -98,7 +98,7 @@ This document condenses the manuscript arguments into a review-oriented outline.
 - A TOML job description provides a declarative entry point for running a Python-defined pipeline. (`sec:impl:cli`)
 - A grid mechanism expands parameter combinations for systematic analyses. (`sec:impl:cli`, `sec:case:fragpipe`)
 - The manuscript positions TOML as a compact invocation interface, not as a replacement for Python pipeline definition. (`sec:impl:cli`, `sec:intro`)
-- A labelled result folder provides named symlinks to requested artifacts, so a developer can request the complete upstream input set for a procedure under development, inspect or use it without copying cache files, then add the new procedure output to the same request. (`sec:impl:cli`)
+- A labelled result folder provides named copies of requested artifacts, using copy-on-write clones when supported, so a developer can request the complete upstream input set for a procedure under development, inspect or use it independently, then add the new procedure output to the same request. (`sec:impl:cli`)
 
 ## 15. Inspection and GUI
 

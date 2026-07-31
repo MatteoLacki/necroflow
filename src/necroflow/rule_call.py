@@ -5,8 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from necroflow.contexts import CommandArgs, FingerprintArgs, NamedValues
-from necroflow.fingerprints import DEFAULT_FINGERPRINT_PROVIDER
+from necroflow.contexts import CommandArgs, NamedValues
 
 if TYPE_CHECKING:
     from necroflow.nodes import Node
@@ -23,8 +22,8 @@ class RuleCall:
     command: str | Callable | None
     shellpath: str | None = None
     output_nodes: dict[str, Node] = field(default_factory=dict)
-    fingerprint_provider: str = DEFAULT_FINGERPRINT_PROVIDER
-    _fingerprint: str | None = None
+    _rule_hash: str | None = None
+    _provenance_hash: str | None = None
     _relative_path: Path | None = None
     _realized_command: str | None = None
     _command_realized: bool = False
@@ -46,25 +45,23 @@ class RuleCall:
             result.extend(value if isinstance(value, tuple) else (value,))
         return result
 
-    def fingerprint_args(self) -> FingerprintArgs:
-        return FingerprintArgs(
-            rule_name=self.rule.__name__,
-            command=self.command,
-            inputs=self.inputs,
-            config=NamedValues(self.config),
-            input_types=NamedValues(self.rule.inputs.specs),
-            output_types=NamedValues(self.rule.outputs.specs),
-            constraints=NamedValues(self._constraints()),
-            shellpath=self.shellpath,
-            repeat=self.rule.repeat,
-            recipe_identity=self.rule.recipe_identity,
-        )
+    @property
+    def rule_hash(self) -> str:
+        if self._rule_hash is None:
+            raise RuntimeError("RuleCall rule hash was not compiled")
+        return self._rule_hash
+
+    @property
+    def provenance_hash(self) -> str:
+        if self._provenance_hash is None:
+            raise RuntimeError("RuleCall provenance hash was not compiled")
+        return self._provenance_hash
 
     @property
     def fingerprint(self) -> str:
-        if self._fingerprint is None:
-            raise RuntimeError("RuleCall fingerprint was not compiled")
-        return self._fingerprint
+        """Compatibility alias for the invocation-specific provenance hash."""
+
+        return self.provenance_hash
 
     @property
     def relative_path(self) -> Path:

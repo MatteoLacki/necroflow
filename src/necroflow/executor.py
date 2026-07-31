@@ -21,6 +21,7 @@ ORPHAN nodes are outside the required subgraph and are only touched by
 from __future__ import annotations
 
 import concurrent.futures
+from collections.abc import Callable
 import fcntl
 import inspect
 import os
@@ -554,6 +555,7 @@ def execute(
     dry_run: bool = False,
     node_runner=None,
     forced_stale_keys: set[Path] | None = None,
+    on_complete: Callable[[dict[str, ExecutionEvent]], None] | None = None,
 ) -> dict[str, ExecutionEvent]:
     """Run the DAG's required subgraph and return its execution report.
 
@@ -583,6 +585,8 @@ def execute(
     ``node_runner`` may replace ``_run_node(node, log_path)`` to intercept
     subprocess execution. ``forced_stale_keys`` explicitly invalidates matching
     active cache hits and their descendants for this invocation.
+    ``on_complete(report)`` runs after all attempts while the node-store lock is
+    still held; it is not called for dry runs or fail-fast execution errors.
 
     The node-store lock is held from classification through the final job so no
     second executor can observe or mutate partially updated state.
@@ -771,6 +775,9 @@ def execute(
                             running_resources[r] -= v
         finally:
             _logger.summary(n_run, n_skipped, n_failed, n_cleaned)
+
+        if on_complete is not None:
+            on_complete(report)
 
     if errors:
         exc = ExceptionGroup(

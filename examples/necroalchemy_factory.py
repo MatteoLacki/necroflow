@@ -11,13 +11,13 @@ Usage (from the necroflow/ project root):
         examples/necroalchemy_grid.toml
 
 After the run, /tmp/necroalchemy_nodes/ contains the hash-addressed node output
-tree (rule/hash/file). /tmp/necroalchemy_results/ contains one symlinked
+tree (rule/rule-hash/provenance-hash/file). /tmp/necroalchemy_results/ contains one copied
 subfolder per grid combo, e.g.:
     necroalchemy_grid__word+necroflow__n+2/
     necroalchemy_grid__word+necroflow__n+5/
     ...
-Each result subfolder has a manifest.toml listing sink output paths, keyed by
-Pipeline attribute name (e.g. summary, audit).
+Each result subfolder has a manifest.toml recording sink paths, canonical
+origin node keys, and content hashes, keyed by Pipeline label.
 
 Multiple job TOML files are accepted; each expands independently and all
 pipelines share the same DAG (upstream nodes common across configs run once).

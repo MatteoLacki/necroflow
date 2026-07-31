@@ -168,16 +168,13 @@ The same pipeline can also be assembled and executed from Python directly; see [
 
 ## Where outputs live
 
-`DAG("some-dir")` writes real lineage-addressed node outputs directly under that directory. The CLI defaults to a split layout: real cached outputs under `nodes/`, plus per-job symlink folders and `manifest.toml` files under `results/`. See [Where outputs live and caching](docs/caching.md) for the full layout.
+`DAG("some-dir")` writes real lineage-addressed node outputs directly under that directory. The CLI defaults to a split layout: canonical cached outputs under `nodes/`, plus per-job copies and `manifest.toml` files under `results/`. Linux and macOS opportunistically use filesystem copy-on-write cloning, so only requested outputs can require additional physical storage. See [Where outputs live and caching](docs/caching.md) for the full layout.
 
 
 ## Manual
 
 Start with the canonical workflow in [examples/canonical](examples/canonical/),
-or copy it with `necroflow init my-workflow`. The focused
-[callable command and project fingerprint example](examples/callable_fingerprint/)
-shows how to construct commands from resolved values and customize cache
-identity.
+or copy it with `necroflow init my-workflow`.
 
 ### CLI subcommands
 
@@ -187,7 +184,7 @@ The default command form is kept for convenience, but the same run can be writte
 necroflow run job.toml
 ```
 
-This executes the requested pipeline and creates cached outputs under `nodes/` plus job-facing links and a manifest under `results/job/`.
+This executes the requested pipeline and creates cached outputs under `nodes/` plus job-facing copies and a manifest under `results/job/`.
 
 Create a starter workflow from the canonical template:
 

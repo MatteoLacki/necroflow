@@ -14,6 +14,35 @@ import tomlkit
 from necroflow.grid import iter_configs
 
 
+def _module_name(path: Path) -> str:
+    """Return the normal import name implied by a source path."""
+
+    parts = [path.stem]
+    parent = path.parent
+    while (parent / "__init__.py").is_file():
+        parts.insert(0, parent.name)
+        parent = parent.parent
+    return ".".join(parts)
+
+
+def load_module(path: str | Path, *, kind: str = "module"):
+    """Load a Python file as a fresh module with its directory on ``sys.path``."""
+
+    path = Path(path).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"{kind} file not found: {path}")
+    mod_spec = importlib.util.spec_from_file_location(_module_name(path), path)
+    if mod_spec is None or mod_spec.loader is None:
+        raise ImportError(f"could not import {kind} file: {path}")
+    module = importlib.util.module_from_spec(mod_spec)
+    sys.path.insert(0, str(path.parent))
+    try:
+        mod_spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
+    return module
+
+
 @dataclass(frozen=True)
 class JobConfig:
     """One concrete job config after TOML grid expansion."""
@@ -21,7 +50,6 @@ class JobConfig:
     label: str
     config: dict[str, Any]
     pipeline_spec: str | None
-    fingerprint_spec: str | None
     request_labels: list[str] | None
 
 
@@ -32,20 +60,7 @@ def load_callable(spec: str, *, kind: str = "callable") -> Callable:
         raise ValueError(f"{kind} spec must be 'file.py:function_name', got {spec!r}")
     path_str, func_name = spec.rsplit(":", 1)
     path = Path(path_str).resolve()
-    if not path.exists():
-        raise FileNotFoundError(f"{kind} file not found: {path}")
-    mod_spec = importlib.util.spec_from_file_location(
-        f"_necroflow_user_{kind}_{abs(hash((path, func_name)))}",
-        path,
-    )
-    if mod_spec is None or mod_spec.loader is None:
-        raise ImportError(f"could not import {kind} file: {path}")
-    module = importlib.util.module_from_spec(mod_spec)
-    sys.path.insert(0, str(path.parent))
-    try:
-        mod_spec.loader.exec_module(module)
-    finally:
-        sys.path.pop(0)
+    module = load_module(path, kind=f"{kind}-{func_name}")
     if not hasattr(module, func_name):
         raise AttributeError(f"{kind} function {func_name!r} not found in {path}")
     value = getattr(module, func_name)
@@ -130,7 +145,11 @@ def iter_job_configs(
     for label, config_dict in iter_configs(doc, base_stem=job_path.stem):
         config_dict = _resolve_extends(config_dict)
         pipeline_spec = config_dict.get(".pipeline")
-        fingerprint_spec = config_dict.get(".fingerprint")
+        if ".fingerprint" in config_dict:
+            raise ValueError(
+                f"job TOML {job_path} uses removed '.fingerprint' metadata; "
+                "fingerprinting is framework-owned"
+            )
         if require_pipeline and not pipeline_spec:
             raise ValueError(f"job TOML {job_path} has no '.pipeline' key")
         request_labels = config_dict.get(".requests", None)
@@ -149,6 +168,5 @@ def iter_job_configs(
             label=label,
             config=factory_config,
             pipeline_spec=pipeline_spec,
-            fingerprint_spec=fingerprint_spec,
             request_labels=request_labels,
         )

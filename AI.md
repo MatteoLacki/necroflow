@@ -8,7 +8,7 @@ Rule commands are validated when a `Rule` is registered. Placeholders are limite
 
 Built-in placeholders:
 
-- `{workdir}` resolves to the rule-call output directory inside the node store, `nodes/{rule}/{fingerprint}` by default, using the full 64-hex fingerprint. Use it for tools that need to write side directories or scratch files that should be retained with the cached result. The name `workdir` is reserved and cannot be used as an input or output name.
+- `{workdir}` resolves to the rule-call output directory inside the node store, `nodes/{rule}/{rule_hash}/{provenance_hash}` by default. Use it for tools that need to write side directories or scratch files that should be retained with the cached result. The name `workdir` is reserved and cannot be used as an input or output name.
 
 `{workdir}` is created before the command subprocess starts. Its contents are kept by default. With `autoclean=True`, intermediate rule-call directories are removed as whole directories once all active children are up to date, so `{workdir}` side files are cleaned together with declared outputs.
 
@@ -22,7 +22,7 @@ and explicitly equal values intern to the same Node. Fixed and variadic Node
 inputs must not have defaults. Built-in `text_file` and `symlink_file` inputs
 remain explicit.
 
-## Callable commands and fingerprint v2
+## Callable commands and fingerprint v3
 
 `command()` accepts a static shell string or a module-level, closure-free,
 source-inspectable Python function/lambda with one `CommandArgs` argument.
@@ -31,16 +31,14 @@ Callbacks receive resolved named input/output paths, config, constraints, and
 unchanged, so callback authors own shell quoting. List commands are rejected.
 
 Every canonical rule invocation owns one shared `RuleCall`; co-outputs share
-its 64-hex digest and once-per-output-root realized command. `Node.fingerprint`
-and output paths use the complete digest. Equivalent calls made through
+its 64-hex rule hash, 64-hex provenance hash, and once-per-output-root realized
+command. Paths are `{rule}/{rule_hash}/{provenance_hash}/{filename}`. Equivalent calls made through
 Pipelines sharing a DAG return the same RuleCall and Node objects immediately.
 
-`default_fingerprint(FingerprintArgs)` uses framed canonical serialization.
-Callable command identity uses canonical AST plus Python implementation/version.
-Job metadata `".fingerprint" = "path.py:function"` or
-the `Pipeline(..., fingerprint_function=..., fingerprint_provider=...)`
-constructor arguments replace the complete policy for every rule call; a
-project function may call the public default to compose with it.
+The rule hash covers local recipe structure and declared contracts. The
+provenance hash covers effective config, shell, and exact parent lineage. Both
+use framed canonical serialization. Callable command identity uses canonical
+AST plus Python implementation/version. Fingerprinting is framework-owned.
 
 ## Variadic Node inputs
 
@@ -89,9 +87,9 @@ example `P["dataset/config"]`. Assignment validates every component against the
 portable Linux `NAME_MAX` of 255 encoded bytes, validates the label plus output
 filename against `PATH_MAX` 4096, and rejects absolute paths, dot components,
 dot-prefixed components, non-canonical separators, and file/directory result
-conflicts. These labels only select visible result links and do not affect
+conflicts. These labels only select visible result copies and do not affect
 fingerprints. CLI run and outputs commands validate the complete absolute result
-paths against the destination filesystem before execution; link creation repeats
+paths against the destination filesystem before execution; copy materialization repeats
 the check defensively. Doctor reports failures as `NF_RESULT_PATH_INVALID`.
 
 ## Rule retries
@@ -100,8 +98,7 @@ the check defensively. Doctor reports failures as `NF_RESULT_PATH_INVALID`.
 including the first; the default `repeat=1` does not retry. A failed subprocess
 is retried until one attempt succeeds or all `N` attempts fail. Other failures
 are not retried. Retries remain one scheduler submission and `repeat` is not a
-scheduler resource. The default fingerprint excludes retry policy, while a
-project fingerprint function may choose to hash `FingerprintArgs.repeat`.
+scheduler resource. V3 identity excludes retry policy.
 
 ## CLI forced invalidation
 
@@ -115,18 +112,17 @@ The CLI accepts repeatable `--validation PATH.py:FUNCTION` flags. Each validator
 
 ## Execution reports
 
-`execute()` returns a `dict[str, ExecutionEvent]` keyed by each Node's stable POSIX relative path; `DAG.execute()` stores the same dict as `dag.last_execution_report` and returns it. Successful rule calls write `.rip/run.toml` with start/end timestamps, `duration_seconds`, `exit_code`, and total rule-call output size excluding `.rip`. CLI runs write `results/<job>/execution.toml` after link finalization, covering each requested node and ancestor. The run-level summary survives `--autoclean`, while node-local `.rip/run.toml` can disappear with cleaned intermediates. Cached nodes are reported as `cached = true` with measured current output size and no new duration. With `--keep-going`, the executor attaches the dict to the raised `ExceptionGroup` and the CLI writes summaries before re-raising.
+`execute()` returns a `dict[str, ExecutionEvent]` keyed by each Node's stable POSIX relative path; `DAG.execute()` stores the same dict as `dag.last_execution_report` and returns it. Successful rule calls write `.rip/run.toml` with start/end timestamps, `duration_seconds`, `exit_code`, and total rule-call output size excluding `.rip`. CLI runs write `results/<job>/execution.toml` after copy finalization, covering each requested node and ancestor. The run-level summary survives `--autoclean`, while node-local `.rip/run.toml` can disappear with cleaned intermediates. Cached nodes are reported as `cached = true` with measured current output size and no new duration. With `--keep-going`, the executor attaches the dict to the raised `ExceptionGroup` and the CLI writes summaries before re-raising.
 
 ## CLI output roots
 
-The CLI separates hashed node storage from job-facing links. `--nodes-dir DIR`
+The CLI separates hashed node storage from job-facing copies. `--nodes-dir DIR`
 controls the node store and defaults to `nodes`; `--results-dir DIR` controls
-per-job symlink folders and defaults to `results`. `--outdir DIR` / `-o DIR`
+per-job copied-output folders and defaults to `results`. `--outdir DIR` / `-o DIR`
 remains a compatibility alias that uses one directory for both and cannot be
 combined with either split-dir flag. Manifest keys are exact requested Pipeline
-labels. Their values are visible output paths relative to the per-job results
-directory, such as `dataset/config/output.txt`; those paths are symlinks into
-the node store.
+labels. Each manifest entry records the visible path, canonical origin node key,
+and content hash. Linux uses `cp -a --reflink=auto`; macOS uses `cp -a -c`.
 
 ## Built-in text file rules
 

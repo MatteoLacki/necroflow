@@ -71,7 +71,7 @@ an error.
 ## Execution boundary and side effects
 
 Doctor never executes rule commands, submits scheduler jobs, creates declared
-outputs, creates result symlinks, or changes node run-state files.
+outputs, creates result copies, or changes node run-state files.
 
 It is not a static TOML linter, however. Pipeline factories are ordinary Python
 and must run to construct the DAG. Doctor also invokes configured validation

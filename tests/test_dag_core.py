@@ -61,7 +61,13 @@ P = Pipeline(DAG("/tmp/necroflow-test-dag-core"))
 def test_compiled_paths_structure(tmp_path):
     P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hi")
-    assert txt.path == tmp_path.resolve() / "make_txt" / txt.fingerprint / "out.txt"
+    assert txt.path == (
+        tmp_path.resolve()
+        / "make_txt"
+        / txt.rule_hash
+        / txt.provenance_hash
+        / "out.txt"
+    )
 
 
 def test_compiled_paths_cooutputs_share_dir(tmp_path):
@@ -275,12 +281,8 @@ def test_rule_rejects_non_boolean_mutable_declaration():
         Rule("database", Inputs(), Outputs(database=Database), "touch {database}")
 
 
-def test_mutability_changes_only_the_consumers_fingerprint(tmp_path):
-    """A mutable policy changes edge identity without renaming its producer.
-
-    The false case keeps the established v2 wire shape, while mutable parents
-    add an explicit identity bit to each consumer that depends on them.
-    """
+def test_mutability_changes_the_rule_contract_and_consumer_provenance(tmp_path):
+    """Mutability is a local output contract propagated through lineage."""
 
     class Database(NodeType):
         filename = "state.sqlite3"
@@ -301,8 +303,10 @@ def test_mutability_changes_only_the_consumers_fingerprint(tmp_path):
     finally:
         Database.mutable = False
 
-    assert mutable_database.fingerprint == ordinary_database.fingerprint
-    assert mutable_result.fingerprint != ordinary_result.fingerprint
+    assert mutable_database.rule_hash != ordinary_database.rule_hash
+    assert mutable_database.provenance_hash != ordinary_database.provenance_hash
+    assert mutable_result.rule_hash == ordinary_result.rule_hash
+    assert mutable_result.provenance_hash != ordinary_result.provenance_hash
 
 
 def test_rule_name_must_be_one_safe_relative_component(tmp_path):
@@ -408,7 +412,7 @@ def test_resolve_command_scalar_config_stays_bare_when_shell_safe(tmp_path):
 
 
 def test_list_commands_are_rejected():
-    with pytest.raises(TypeError, match="argv list commands were removed"):
+    with pytest.raises(TypeError, match="argv list commands are unsupported"):
         Rule(
             "list_filter",
             Inputs(filter=str),
@@ -743,7 +747,7 @@ def test_command_missing_output_is_allowed():
 
 
 def test_command_factory_rejects_list_commands():
-    with pytest.raises(TypeError, match="argv list commands were removed"):
+    with pytest.raises(TypeError, match="argv list commands are unsupported"):
         command(
             ["echo {word} > {txt}", "echo done"],
             Inputs(word=str),

@@ -32,8 +32,6 @@ configuration:
 dag = DAG(nodes_dir)
 P = Pipeline(
     dag,
-    fingerprint_function=selected_fingerprint,
-    fingerprint_provider=provider_name,
     shellpath=selected_shell,
 )
 factory(P, config)
@@ -69,8 +67,9 @@ DAG, but a Node from a different DAG is rejected.
 `P.source` is an instantiated canonical Node. It already has:
 
 ```python
-P.source.fingerprint    # 64 lowercase hexadecimal characters
-P.source.relative_path # Path("source_text/<fingerprint>/input.txt")
+P.source.rule_hash       # 64 lowercase hexadecimal characters
+P.source.provenance_hash # 64 lowercase hexadecimal characters
+P.source.relative_path   # Path("source_text/<rule_hash>/<provenance_hash>/input.txt")
 P.source.path          # P.dag.nodes_dir / P.source.relative_path
 ```
 
@@ -118,7 +117,7 @@ declaration order and each tuple’s element order. Each parent has already copi
 its concrete output type's inherited `mutable` boolean when it was compiled;
 mutability is not supplied per Rule call or per input annotation.
 
-## 5. A candidate RuleCall is fingerprinted
+## 5. A candidate RuleCall receives split v3 identity
 
 One candidate `RuleCall` represents the invocation and all of its co-outputs:
 
@@ -130,52 +129,40 @@ call = RuleCall(
     config={"reverse": False},
     command=sort_text.command,
     shellpath=P.shellpath,
-    fingerprint_provider=P.fingerprint_provider,
 )
 ```
 
-The Pipeline fingerprint function receives logical `FingerprintArgs`:
+Necroflow first hashes the configuration-independent local recipe into
+`rule_hash`. That payload contains the rule name, command or built-in recipe
+identity, declared input types, and each output's type, filename, and mutability.
+`declared_rule_hash(rule)` can therefore compute it without a job config or DAG.
 
-```python
-FingerprintArgs(
-    rule_name="sort_text",
-    command=sort_text.command,
-    inputs={"source": P.source},
-    config={"reverse": False},
-    input_types={"source": SourceText},
-    output_types={"sorted": SortedText},
-    constraints={"threads": 1},
-    shellpath=P.shellpath,
-    repeat=sort_text.repeat,
-    recipe_identity=sort_text.recipe_identity,
-)
-```
+It then hashes one configured invocation into `provenance_hash` from the local
+`rule_hash`, effective config, selected shell, and ordered parent identities.
+The framework-owned hasher reads those values directly from the freshly built
+`RuleCall`, before output paths are resolved. Constraints and `repeat` are not
+identity inputs and are never passed through an intermediate fingerprint view.
 
-Only effective config is fingerprinted; default declaration metadata is not a
-second identity input. Consequently, omitting a default and passing that same
-value explicitly produce the same fingerprint. Changing a default changes the
-fingerprint for calls that omit it, while calls with an explicit override retain
-the fingerprint associated with that explicit value.
+Only effective config is hashed; default declaration metadata is not a second
+identity input. Consequently, omitting a default and passing that same value
+explicitly produce the same provenance hash. Changing a default changes the
+provenance hash for calls that omit it, while calls with an explicit override
+retain the hash associated with that explicit value.
 
-Parent Nodes contribute their full fingerprints. For a mutable parent, the
-default provider additionally records `mutable=True` on that parent entry. The
-false/default case retains the established v2 wire shape, so enabling this
-feature does not rename ordinary pipelines. A custom provider can inspect the
-concrete Nodes in `FingerprintArgs.inputs`. A variadic input remains one
-named tuple in `FingerprintArgs.inputs`; its group boundary and element order are
-therefore available to both the default and project fingerprint functions. Static commands contribute
-their strings. Supported Python callbacks contribute canonical AST plus Python
-implementation/version identity. A project fingerprint can replace or extend
-the default policy.
-
-The result must be exactly 64 lowercase hexadecimal characters.
+Parent Nodes contribute rule hash, provenance hash, output name, and mutable
+marker. A variadic input remains one named tuple, so group boundaries and order
+remain part of provenance. Static commands contribute their strings to the
+local recipe. Supported Python callbacks contribute canonical AST plus Python
+implementation/version identity. Both hashes are exactly 64 lowercase
+hexadecimal characters. The policy is framework-owned; there is no custom
+fingerprint provider.
 
 ## 6. Relative and absolute paths are derived
 
 The rule-call identity and work directory are:
 
 ```python
-call.relative_path = Path(rule.__name__) / fingerprint
+call.relative_path = Path(rule.__name__) / rule_hash / provenance_hash
 call.workdir = P.dag.nodes_dir / call.relative_path
 ```
 
@@ -192,8 +179,8 @@ node.mutable = output_type.mutable
 For a multi-output call:
 
 ```text
-run_sage/<64-hex-fingerprint>/results.json
-run_sage/<64-hex-fingerprint>/results.tsv
+run_sage/<64-hex-rule-hash>/<64-hex-provenance-hash>/results.json
+run_sage/<64-hex-rule-hash>/<64-hex-provenance-hash>/results.tsv
 ```
 
 Rule names and output filenames must each be one safe relative path component.
@@ -208,13 +195,13 @@ The DAG is a dictionary-backed canonical registry:
 dag.calls: dict[Path, RuleCall]
 ```
 
-The lookup key is `call.relative_path`, which contains the rule name and full
-fingerprint.
+The lookup key is `call.relative_path`, which contains the rule name and both
+full hashes.
 
 If no call exists, the DAG registers the candidate and all outputs atomically.
 If the key already exists, the DAG returns the existing RuleCall and its
 existing Node objects. Conflicting output declarations for one call path are a
-fingerprint collision and raise an error.
+split-hash collision and raise an error.
 
 Consequently, equivalent calls in Pipelines sharing a DAG return identical
 objects during factory evaluation:
@@ -226,20 +213,21 @@ P2.source = source_text(P2, path="input.txt")
 assert P1.source is P2.source
 ```
 
-The fingerprint callback runs for each candidate because its result is needed
+Both framework hashes are computed for each candidate because they are needed
 for lookup. The command callback does not run during lookup.
 
 ## 8. The rule returns canonical Node values
 
 A single-output rule returns one Node. A multi-output rule returns its declared
-named-tuple shape. Co-outputs share the canonical RuleCall, fingerprint,
+named-tuple shape. Co-outputs share the canonical RuleCall, both hashes,
 workdir, realized command, and execution.
 
 At return time:
 
 ```python
 node.rule_call
-node.fingerprint
+node.rule_hash
+node.provenance_hash
 node.relative_path
 node.path
 ```
@@ -284,7 +272,7 @@ absolute paths and repeated or trailing separators are rejected. Encoded
 components are limited to Linux `NAME_MAX` (255 bytes), and the relative label
 plus output filename to Linux `PATH_MAX` (4096 bytes). Assignment also rejects
 result paths where one output would have to be both a file and a directory.
-These checks happen at assignment; labels remain outside the Node fingerprint.
+These checks happen at assignment; labels remain outside both Node hashes.
 
 ## 10. The factory selects required outputs
 
@@ -307,8 +295,7 @@ Only a DAG can be executed. The executor walks every required Node and its
 canonical ancestors, classifying outputs as missing, stale, up to date, or
 orphan. An up-to-date call is skipped without realizing its callable command.
 
-The previous truncated-fingerprint layout is not probed or migrated. Full
-fingerprint paths form a new cache namespace.
+V2 paths are not probed or migrated. Split v3 paths form a new cache namespace.
 
 ## 12. Commands are realized only for submitted work
 
@@ -357,7 +344,7 @@ they were neither cache hits nor attempted.
 ```text
 create shared DAG
     ↓
-create Pipeline(dag, fingerprint/shell policy)
+create Pipeline(dag, shell policy)
     ↓
 factory(P, config)
     ↓
@@ -367,9 +354,9 @@ overlay explicit config on declared scalar defaults
     ↓
 validate types and shared DAG ownership
     ↓
-candidate RuleCall → FingerprintArgs → 64-hex fingerprint
+candidate RuleCall → 64-hex rule hash + 64-hex provenance hash
     ↓
-derive rule/fingerprint/output relative paths
+derive rule/rule-hash/provenance-hash/output relative paths
     ↓
 DAG dictionary lookup
     ├─ existing → return canonical RuleCall and Nodes

@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Generic, TYPE_CHECKING, TypeVar
-
-if TYPE_CHECKING:
-    from necroflow.nodes import Node
-
+from typing import Any, Generic, TypeVar
 
 _T = TypeVar("_T")
 
@@ -56,19 +52,3 @@ class CommandArgs:
     outputs: NamedValues[Path]
     constraints: NamedValues[Any]
     workdir: Path
-
-
-@dataclass(frozen=True)
-class FingerprintArgs:
-    """Logical rule-call values available before output path resolution."""
-
-    rule_name: str
-    command: str | Callable[[CommandArgs], str] | None
-    inputs: NamedValues[Node | tuple[Node, ...]]
-    config: NamedValues[Any]
-    input_types: NamedValues[Any]
-    output_types: NamedValues[Any]
-    constraints: NamedValues[Any]
-    shellpath: str | None
-    repeat: int
-    recipe_identity: str | None

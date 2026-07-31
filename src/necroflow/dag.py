@@ -113,14 +113,31 @@ def write_dependencies(node: Node) -> None:
     """
     data = {
         "rule": node.rule.__name__ if node.rule else "unknown",
-        "hash": node.path.parent.name,
         "config": _accumulated_config(node),
+        "outputs": [
+            {
+                "name": output.output_name,
+                "filename": output.path.name,
+                "type": (
+                    f"{output.node_type.__module__}.{output.node_type.__qualname__}"
+                ),
+                "mutable": output.mutable,
+            }
+            for output in node.output_nodes.values()
+        ],
+        "parents": [
+            {
+                "node_key": parent.relative_path.as_posix(),
+                "mutable": parent.mutable,
+            }
+            for parent in node.parents
+        ],
     }
     if node.rule_call is not None:
-        data["fingerprint"] = {
-            "format": "v2",
-            "provider": node.rule_call.fingerprint_provider,
-            "digest": node.fingerprint,
+        data["identity"] = {
+            "format": "v3",
+            "rule_hash": node.rule_hash,
+            "provenance_hash": node.provenance_hash,
         }
     if node.rule_call.shellpath is not None:
         data["execution"] = {"shellpath": node.rule_call.shellpath}
@@ -131,7 +148,9 @@ def write_dependencies(node: Node) -> None:
         }
         if callable(node.command):
             _tree, source_path = command_ast(node.command)
-            command_data["source"] = os.path.relpath(source_path, node.path.parents[2])
+            command_data["source"] = os.path.relpath(
+                source_path, node.rule_call.dag.nodes_dir
+            )
             command_data["python"] = python_identity()
         else:
             command_data["template"] = node.command

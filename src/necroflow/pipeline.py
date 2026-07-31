@@ -7,11 +7,6 @@ from pathlib import Path, PurePosixPath
 from necroflow import keywords as pipeline_keywords
 from necroflow.nodes import Node
 from necroflow.rule_call import RuleCall
-from necroflow.fingerprints import (
-    DEFAULT_FINGERPRINT_PROVIDER,
-    default_fingerprint,
-    validate_fingerprint_function,
-)
 
 _LINUX_NAME_MAX = 255
 _LINUX_PATH_MAX = 4096
@@ -281,8 +276,6 @@ class Pipeline(_GraphBase):
         self,
         dag: DAG,
         *,
-        fingerprint_function: Callable = default_fingerprint,
-        fingerprint_provider: str = DEFAULT_FINGERPRINT_PROVIDER,
         shellpath: str | Path | None = None,
     ):
         if not isinstance(dag, DAG):
@@ -296,12 +289,7 @@ class Pipeline(_GraphBase):
         self._sections = []
         self._active_section = None
         self._sections_by_path: dict[Path, set[str | None]] = {}
-        self._fingerprint_function = fingerprint_function
-        self._fingerprint_provider = fingerprint_provider
         self._shellpath = _normalize_shellpath(shellpath)
-        validate_fingerprint_function(
-            fingerprint_function, provider=fingerprint_provider
-        )
 
     @property
     def nodes_dir(self) -> Path:
@@ -310,14 +298,6 @@ class Pipeline(_GraphBase):
     @property
     def dag(self) -> DAG:
         return self._dag
-
-    @property
-    def fingerprint_function(self) -> Callable:
-        return self._fingerprint_function
-
-    @property
-    def fingerprint_provider(self) -> str:
-        return self._fingerprint_provider
 
     @property
     def shellpath(self) -> str | None:

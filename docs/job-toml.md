@@ -11,21 +11,17 @@
 # optional — Pipeline labels to request (defaults to all sink labels)
 ".requests" = ["counts", "dataset/qc"]
 
-# optional — complete project fingerprint policy
-".fingerprint" = "path/to/hashing.py:project_fingerprint"
-
 # user config — passed as the second factory argument after Pipeline
 ref    = "hg38"
 sample = "NA12878"
 ```
 
 Keys starting with `.` are necroflow metadata and are stripped before the dict
-reaches the factory. `.fingerprint` is the exception that deliberately selects
-the function used to compute output identity; the other metadata keys are not
-node config. User config can freely use names such as `pipeline` or `request`.
+reaches the factory. User config can freely use names such as `pipeline` or `request`.
 The loaded callable must have the shape `factory(P: Pipeline, config: dict) ->
-None`. Necroflow constructs `P` with `--nodes-dir`, the selected fingerprint
-function, and `--shellpath` before invoking the factory.
+None`. Necroflow constructs `P` with `--nodes-dir` and `--shellpath` before
+invoking the factory. Fingerprinting is framework-owned; `.fingerprint` is
+rejected rather than forwarded.
 
 `.requests` must be an array of strings. Each string is an exact Pipeline label;
 labels may be canonical relative POSIX paths such as `dataset/qc`. The visible

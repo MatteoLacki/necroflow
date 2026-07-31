@@ -8,7 +8,7 @@ necroflow ships a `necroflow` command. Each positional argument is a **job
 TOML** — a self-contained file that specifies the pipeline factory, optional
 requested outputs, and user config params. For each expanded job, the CLI
 constructs one shared `DAG(nodes_dir)`, creates each
-`Pipeline(dag, fingerprint_function=..., shellpath=...)`, and calls
+`Pipeline(dag, shellpath=...)`, and calls
 `factory(P, config)`. Rule calls intern immediately; after the factory returns,
 the CLI resolves requested labels or sinks with `dag.require(...)`.
 
@@ -23,8 +23,8 @@ necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \
 | Flag | Meaning |
 |---|---|
 | `--nodes-dir DIR` | Hashed node output store (default: `nodes`). |
-| `--results-dir DIR` | Per-job symlink and manifest directory (default: `results`). |
-| `--outdir DIR` / `-o DIR` | Compatibility alias that uses one directory for both node outputs and job links. Cannot be combined with `--nodes-dir` or `--results-dir`. |
+| `--results-dir DIR` | Per-job copied outputs and manifests (default: `results`). |
+| `--outdir DIR` / `-o DIR` | Compatibility alias that uses one directory for both canonical node outputs and result copies. Cannot be combined with `--nodes-dir` or `--results-dir`. |
 | `-c N` / `-call` | Thread cap — integer or `all` (default: all CPUs). |
 | `--constraint KEY=VALUE` | Additional resource cap. Repeatable. Accepts SI/binary suffixes. |
 | `--keep-going` / `-k` | Continue past failures; collect all errors at the end. |
@@ -57,14 +57,7 @@ necroflow outputs --shellpath /bin/bash job.toml
 
 Explicit shell paths affect node hashes for string commands, so `outputs --shellpath PATH` reports the same paths that `run --shellpath PATH` will produce.
 
-Job TOML may also select a project-wide fingerprint function:
-
-```toml
-".fingerprint" = "hashing.py:project_fingerprint"
-```
-
-It is loaded and applied before requested labels, invalidations, or DAG
-deduplication observe node keys.
+Fingerprinting is framework-owned. A job containing `.fingerprint` is rejected.
 
 ## Project scaffolding
 
@@ -99,9 +92,35 @@ necroflow outputs --json job.toml
 Print stored provenance for an existing cached output:
 
 ```bash
-necroflow provenance nodes/rule/hash/file
-necroflow provenance --json nodes/rule/hash/file
+necroflow provenance nodes/rule/rule_hash/provenance_hash/file
+necroflow provenance --json nodes/rule/rule_hash/provenance_hash/file
 ```
+
+Delete cache entries that cannot have been produced by the current collection
+of pipeline rules:
+
+```bash
+necroflow gc --nodes-dir nodes --gc-pipelines-script gc_pipelines.py
+necroflow gc --nodes-dir nodes --gc-pipelines-script gc_pipelines.py -y
+```
+
+The script defines a non-empty list of pipeline factory functions:
+
+```python
+from pipeline import analysis_pipeline, qc_pipeline
+
+pipelines = [analysis_pipeline, qc_pipeline]
+```
+
+GC discovers module-level rules referenced by those functions and helpers. It
+prints provenance-incompatible rule-call directories and folders that fail the
+current layout or metadata checks in separate batches, followed by their total
+size. It then asks `Delete these directories? [y/N]`; `-y` skips confirmation.
+The node-store lock is held while scanning and deleting. Rule calls with mutable
+outputs are protected from provenance-based deletion; malformed or non-current
+folders are not. A current local rule call is also deleted when its recorded
+provenance descends from an obsolete parent rule. GC has no job TOML dependency
+and never evaluates concrete job configurations.
 
 Run preflight checks without executing rules:
 

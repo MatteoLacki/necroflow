@@ -368,20 +368,23 @@ def test_variadic_fingerprint_tracks_order_grouping_and_many_bounds(tmp_path):
     )
 
 
-def test_fixed_input_fingerprint_wire_shape_is_unchanged(tmp_path):
-    pipeline = Pipeline(DAG(tmp_path))
-    source = Rule("source", Inputs(text=str), Outputs(source=Bam), "touch {source}")(
-        pipeline, text="x"
+def test_fixed_input_v3_hashes_are_deterministic(tmp_path):
+    source_rule = Rule(
+        "source", Inputs(text=str), Outputs(source=Bam), "touch {source}"
     )
-    consumed = Rule(
+    consume_rule = Rule(
         "consume", Inputs(source=Bam), Outputs(result=Merged), "cp {source} {result}"
-    )(pipeline, source)
+    )
 
-    assert (
-        source.fingerprint
-        == "e882c24a2498894ad925fca9f3be2d00de73df96ab498dcc2747254f1f99814c"
-    )
-    assert (
-        consumed.fingerprint
-        == "3df1a418360cf70b1b6f5656f9f3fd4a2429a01b881445423619f2676105b88b"
-    )
+    pipeline = Pipeline(DAG(tmp_path / "first"))
+    source = source_rule(pipeline, text="x")
+    consumed = consume_rule(pipeline, source)
+
+    other = Pipeline(DAG(tmp_path / "second"))
+    other_source = source_rule(other, text="x")
+    other_consumed = consume_rule(other, other_source)
+
+    assert source.rule_hash == other_source.rule_hash
+    assert source.provenance_hash == other_source.provenance_hash
+    assert consumed.rule_hash == other_consumed.rule_hash
+    assert consumed.provenance_hash == other_consumed.provenance_hash

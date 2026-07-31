@@ -29,7 +29,10 @@ import argparse
 import fcntl
 import json
 import os
+import secrets
 import shutil
+import subprocess
+import sys
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -37,7 +40,6 @@ from typing import Callable, TypeAlias
 
 import tomlkit
 
-from necroflow._compat import ExceptionGroup
 from necroflow import DAG, Node, Pipeline, connected_component_scheduler, fifo_scheduler
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import (
@@ -52,6 +54,7 @@ from necroflow.dag import (
 from necroflow.pipeline import _normalize_shellpath
 from necroflow.graphviz_render import render_png
 from necroflow.executor import _prepare_active
+from necroflow.gc import collect
 
 
 @dataclass(frozen=True)
@@ -223,17 +226,7 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
                 if validators:
                     _validate_job_config(job_config, validators, job_path)
                 factory = load_callable(job_config.pipeline_spec, kind="pipeline")
-                if job_config.fingerprint_spec:
-                    pipeline = Pipeline(
-                        dag,
-                        shellpath=shellpath,
-                        fingerprint_function=load_callable(
-                            job_config.fingerprint_spec, kind="fingerprint"
-                        ),
-                        fingerprint_provider=job_config.fingerprint_spec,
-                    )
-                else:
-                    pipeline = Pipeline(dag, shellpath=shellpath)
+                pipeline = Pipeline(dag, shellpath=shellpath)
                 result = factory(pipeline, job_config.config)
                 if result is not None:
                     raise TypeError(
@@ -654,24 +647,24 @@ def _run(args) -> None:
     nodes_dir, results_dir = _resolve_roots(args)
     dag, combos, forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
     _preflight_result_paths(results_dir, combos)
-    try:
-        report = dag.execute(
-            resource_caps=_parse_resource_caps(args),
-            scheduler=_load_scheduler(args.scheduler),
-            keep_going=args.keep_going,
-            autoclean=args.autoclean,
-            dry_run=args.dry_run,
-            forced_stale_keys=forced_stale_keys,
-        )
-    except ExceptionGroup as exc:
-        report = getattr(exc, "execution_report", None)
-        if args.keep_going and not args.dry_run:
-            _create_link_outputs(results_dir, combos, nodes_dir=nodes_dir)
-            _write_execution_summaries(results_dir, combos, report)
-        raise
-    if not args.dry_run:
-        _create_link_outputs(results_dir, combos, nodes_dir=nodes_dir)
+
+    def materialize(report):
+        _materialize_results(results_dir, combos)
         _write_execution_summaries(results_dir, combos, report)
+
+    dag.execute(
+        resource_caps=_parse_resource_caps(args),
+        scheduler=_load_scheduler(args.scheduler),
+        keep_going=args.keep_going,
+        autoclean=args.autoclean,
+        dry_run=args.dry_run,
+        forced_stale_keys=forced_stale_keys,
+        on_complete=None if args.dry_run else materialize,
+    )
+
+
+def _gc(args) -> None:
+    collect(args.nodes_dir, args.gc_pipelines_script, yes=args.yes)
 
 
 def _graph(args) -> None:
@@ -836,60 +829,111 @@ def _prune_empty_dirs(path: Path, stop: Path) -> None:
         path = path.parent
 
 
-def _clear_generated_result_links(combo_dir: Path) -> None:
+def _owned_result_paths(combo_dir: Path) -> set[Path]:
     manifest = combo_dir / "manifest.toml"
     if not manifest.exists():
-        return
+        return set()
     try:
         doc = tomlkit.parse(manifest.read_text(encoding="utf-8"))
-        paths = [combo_dir / str(rel) for rel in doc.get("outputs", {}).values()]
-    except Exception:
-        return
+        values = doc.get("outputs", {}).values()
+        relative_paths = [
+            value.get("path") if isinstance(value, dict) else value for value in values
+        ]
+        if any(not isinstance(value, str) for value in relative_paths):
+            raise TypeError("output path must be a string")
+    except Exception as exc:
+        raise ValueError(f"cannot read result manifest {manifest}: {exc}") from exc
+
+    paths = set()
+    for relative in relative_paths:
+        rel = Path(relative)
+        if relative == "" or rel == Path(".") or rel.is_absolute() or ".." in rel.parts:
+            raise ValueError(f"unsafe result path in {manifest}: {relative!r}")
+        paths.add(combo_dir / rel)
+    return paths
+
+
+def _clear_generated_results(combo_dir: Path, paths: set[Path]) -> None:
     for path in sorted(paths, key=lambda p: len(p.parts), reverse=True):
-        if path.is_symlink():
-            parent = path.parent
+        parent = path.parent
+        if path.is_symlink() or path.is_file():
             path.unlink()
-            _prune_empty_dirs(parent, combo_dir)
+        elif path.is_dir():
+            shutil.rmtree(path)
+        _prune_empty_dirs(parent, combo_dir)
 
 
-def _create_link_outputs(
+def _copy_result(source: Path, destination: Path) -> None:
+    command = ["cp", "-a"]
+    if sys.platform == "darwin":
+        command.append("-c")
+    else:
+        command.append("--reflink=auto")
+        command.append("--")
+    command.extend((str(source), str(destination)))
+    subprocess.run(command, check=True)
+
+
+def _materialize_results(
     results_dir: Path,
     combos: list[_Combo],
-    *,
-    nodes_dir: Path | None = None,
 ) -> None:
-    """Create per-combo symlink dirs and manifests under results_dir/{label}/.
+    """Copy requested outputs into per-combo result directories.
 
-    Only requested (sink) outputs get a symlink — ancestors are excluded.
+    GNU ``cp`` opportunistically creates reflinks; macOS requests APFS clones.
+    Symlink outputs remain symlinks because ``cp -a`` does not dereference them.
     """
     _validate_result_paths(results_dir, combos)
     for label, _pipeline, requested_outputs in combos:
         combo_dir = results_dir / label
-        _clear_generated_result_links(combo_dir)
+        combo_dir.mkdir(parents=True, exist_ok=True)
+        owned_paths = _owned_result_paths(combo_dir)
 
         manifest = tomlkit.document()
         manifest_outputs = tomlkit.table()
-        for binding in requested_outputs:
-            node = binding.node
-            if node.path is None or not node.path.exists():
-                continue
-            rel = _result_relative_path(node, binding.label)
-            link = combo_dir / rel
-            link.parent.mkdir(parents=True, exist_ok=True)
-            if link.is_symlink():
-                link.unlink()
-            elif link.exists():
-                raise FileExistsError(
-                    f"refusing to overwrite non-symlink result: {link}"
+        staged: list[tuple[Path, Path]] = []
+        try:
+            for binding in requested_outputs:
+                node = binding.node
+                if node.path is None or not node.path.exists():
+                    continue
+                rel = _result_relative_path(node, binding.label)
+                destination = combo_dir / rel
+                if (
+                    destination.exists() or destination.is_symlink()
+                ) and destination not in owned_paths:
+                    raise FileExistsError(
+                        f"refusing to overwrite unmanaged result: {destination}"
+                    )
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                temporary = destination.with_name(
+                    f".{destination.name}.necroflow-{secrets.token_hex(8)}"
                 )
-            link.symlink_to(Path(os.path.relpath(node.path, link.parent)))
-            manifest_outputs[binding.label] = rel.as_posix()
+                _copy_result(node.path, temporary)
+                staged.append((temporary, destination))
 
-        combo_dir.mkdir(parents=True, exist_ok=True)
-        manifest["outputs"] = manifest_outputs
-        (combo_dir / "manifest.toml").write_text(
-            tomlkit.dumps(manifest), encoding="utf-8"
-        )
+                entry = tomlkit.table()
+                entry["path"] = rel.as_posix()
+                entry["origin_node_key"] = node.relative_path.as_posix()
+                entry["content_sha256"] = _content_hash(temporary)
+                manifest_outputs[binding.label] = entry
+
+            _clear_generated_results(combo_dir, owned_paths)
+            for temporary, destination in staged:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(temporary, destination)
+
+            manifest["outputs"] = manifest_outputs
+            manifest_path = combo_dir / "manifest.toml"
+            manifest_temporary = combo_dir / ".manifest.toml.necroflow"
+            manifest_temporary.write_text(tomlkit.dumps(manifest), encoding="utf-8")
+            os.replace(manifest_temporary, manifest_path)
+        finally:
+            for temporary, _destination in staged:
+                if temporary.is_symlink() or temporary.is_file():
+                    temporary.unlink()
+                elif temporary.is_dir():
+                    shutil.rmtree(temporary)
 
 
 def _add_run_options(parser) -> None:
@@ -911,7 +955,7 @@ def _add_run_options(parser) -> None:
         default=None,
         type=Path,
         metavar="DIR",
-        help="Directory for per-job symlink outputs (default: results).",
+        help="Directory for per-job copied outputs (default: results).",
     )
     parser.add_argument(
         "--outdir",
@@ -1075,12 +1119,31 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Scheduling policy: connected-components (default), fifo, or a local Python callable.",
     )
     run_parser.set_defaults(func=_run)
+
+    gc_parser = subparsers.add_parser(
+        "gc", help="Delete cache entries incompatible with current pipeline rules"
+    )
+    gc_parser.add_argument("--nodes-dir", type=Path, default=Path("nodes"))
+    gc_parser.add_argument(
+        "--gc-pipelines-script", required=True, type=Path, metavar="PATH.py"
+    )
+    gc_parser.add_argument("-y", "--yes", action="store_true")
+    gc_parser.set_defaults(func=_gc)
     return parser
 
 
 def main(argv=None) -> None:
     argv = list(argv) if argv is not None else None
-    commands = {"init", "graph", "outputs", "provenance", "doctor", "explain", "run"}
+    commands = {
+        "init",
+        "graph",
+        "outputs",
+        "provenance",
+        "doctor",
+        "explain",
+        "run",
+        "gc",
+    }
     if argv and argv[0] not in commands:
         argv = ["run", *argv]
     elif argv is None:

@@ -470,11 +470,10 @@ def test_shared_node_executed_once(tmp_path):
     assert P1.b.path.exists()
     assert P2.c.path.exists()
 
-    # The shared upstream node ran once — only one make_a directory under outdir
-    make_a_dirs = list(tmp_path.glob("make_a/*/"))
-    assert len(make_a_dirs) == 1
-    # That directory has a single job.log confirming one execution
-    assert (make_a_dirs[0] / ".rip" / "job.log").exists()
+    # The shared upstream node ran once — one rule hash and one provenance hash.
+    make_a_calls = list(tmp_path.glob("make_a/*/*/"))
+    assert len(make_a_calls) == 1
+    assert (make_a_calls[0] / ".rip" / "job.log").exists()
 
 
 def test_shared_node_path_set_on_first_pipeline(tmp_path):

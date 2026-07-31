@@ -8,27 +8,34 @@
 
 ```
 nodes/
-  {rule}/{fingerprint}/{file}      ← real node outputs (64-hex content address)
+  {rule}/{rule_hash}/{provenance_hash}/{file}  ← canonical node outputs
 
 results/
   experiment__ref+hg38__aligner+bwa/
-    {node_name}/{file}             ← symlinks to requested node outputs only
-    manifest.toml                  ← requested output paths for this combo
+    {node_name}/{file}             ← copies of requested node outputs only
+    manifest.toml                  ← paths, origin node keys, and content hashes
   experiment__ref+hg38__aligner+bowtie2/
     ...
 ```
 
-Only the **requested** outputs (defaults to pipeline sinks) get a symlink — intermediate ancestors are excluded. `node_name` is the Pipeline attribute name assigned in the factory, and the file name is the declared `NodeType.filename` when present:
+Only the **requested** outputs (defaults to pipeline sinks) are copied —
+intermediate ancestors are excluded. On Linux, Necroflow uses GNU
+`cp -a --reflink=auto`; on macOS it uses `cp -a -c`. Both opportunistically
+create copy-on-write clones and fall back to physical copying when cloning is
+unavailable. Archive mode preserves an intentionally symlink-valued output as
+a symlink instead of dereferencing it.
 
 ```text
 results/experiment__ref+hg38__aligner+bwa/counts/counts.txt
 ```
 
-`manifest.toml` lists the same visible result paths keyed by node name:
+`manifest.toml` identifies every owned result and its canonical source:
 
 ```toml
-[outputs]
-counts = "counts/counts.txt"
+[outputs.counts]
+path = "counts/counts.txt"
+origin_node_key = "count/<rule_hash>/<provenance_hash>/counts.txt"
+content_sha256 = "<64 lowercase hexadecimal characters>"
 ```
 
 The key (`counts`) matches `P.counts = count(...)` in the factory function.
@@ -38,23 +45,31 @@ for a runnable example.
 
 ## Caching
 
-Each hashed node output lives at `nodes/{rule}/{fingerprint}/{filename}` by default.
-Fingerprint v2 calculates a full 64-character SHA-256 digest from a
-type-tagged, length-framed representation of the rule name, command, config,
-full parent digests, the explicit shell path, and declared `Inputs`/`Outputs` types.
-`node.fingerprint` exposes that complete digest and paths use it without
-truncation. `node.relative_path` is the canonical Path relative to the node
-store. Constraints and `repeat` are excluded.
+Fingerprint v3 splits identity into two full SHA-256 values:
 
-Full-fingerprint paths intentionally replace the earlier 16-character path
-form. Old cache directories are not probed, migrated, reused, or deleted
-automatically.
+- `rule_hash` describes the local recipe: rule name, command or built-in recipe
+  identity, declared input contracts, output contracts, filenames, and
+  mutability.
+- `provenance_hash` describes one invocation: the `rule_hash`, effective config,
+  selected shell, and ordered parent identities, including their rule hashes,
+  provenance hashes, output names, and mutable-edge markers.
+
+Each output lives at
+`nodes/{rule}/{rule_hash}/{provenance_hash}/{filename}`. The canonical
+rule-call key omits the filename; the canonical node key includes it.
+`node.rule_hash`, `node.provenance_hash`, and `node.relative_path` expose these
+values. `node.fingerprint` remains a compatibility alias for
+`node.provenance_hash`. Constraints and `repeat` remain excluded.
+
+V3 paths intentionally break compatibility with v2. Old cache directories are
+not probed, migrated, reused, or deleted automatically.
 
 During path resolution, necroflow validates generated paths against the filesystem's `NAME_MAX` and `PATH_MAX` limits. If a rule name, filename, output directory, or complete generated path would exceed those limits, path resolution fails before execution starts.
 
 ### Rule work directories
 
-Commands may use the built-in `{workdir}` placeholder to refer to the rule-call output directory: `nodes/{rule}/{fingerprint}` by default. Use it for tools that need to write a directory of side files or temporary computation products that should live next to the declared outputs:
+Commands may use the built-in `{workdir}` placeholder to refer to the rule-call
+output directory: `nodes/{rule}/{rule_hash}/{provenance_hash}` by default.
 
 ```python
 @command("dosomething --tmp {workdir}/scratch -o {result}")
@@ -70,30 +85,11 @@ still participate in identity. Any static-template placeholder that does
 appear must be a declared input/output, a command-visible constraint, or a
 built-in placeholder such as `{workdir}`.
 
-The built-in v2 fingerprint canonically supports ordinary scalar values,
+The v3 provenance hash canonically supports ordinary scalar values,
 paths, dates/times, sequences, string-keyed mappings, and sets. Unsupported
 custom objects fail with a diagnostic identifying the config field.
-
-Projects may replace the complete policy:
-
-```python
-from necroflow import FingerprintArgs, default_fingerprint
-
-def project_fingerprint(args: FingerprintArgs) -> str:
-    digest = default_fingerprint(args)
-    # Return any complete 64-character lowercase hexadecimal digest.
-    return digest
-```
-
-Select it when constructing a pipeline with
-`Pipeline(dag, fingerprint_function=project_fingerprint,
-fingerprint_provider="project.project_fingerprint/v1")`, or in job TOML with
-`".fingerprint" = "hashing.py:project_fingerprint"`. The function
-receives the original command and all logical rule-call fields, before output
-paths are derived. It replaces the default but may call
-`default_fingerprint(args)` to compose standard identity with project-specific
-dependencies. Each rule call computes this digest and its absolute output paths
-immediately.
+Fingerprint policy is framework-owned; custom fingerprint providers and the
+`.fingerprint` job key are not supported.
 
 ### Custom invalidation
 
@@ -121,7 +117,7 @@ A concrete `NodeType` may set `mutable = True` when its contents are persistent
 state that legitimately changes in place. The parent remains part of the DAG,
 command inputs, scheduling gates, provenance, and downstream identity, but its
 mtime and content hash do not stale consumers. The default fingerprint records
-`mutable=True` on that edge; ordinary edges retain the existing v2 encoding.
+`mutable=True` on that edge; ordinary edges omit the marker.
 
 Mutability suppresses only content-change invalidation. Missing, stale,
 compromised, forcibly invalidated, or invalidator-changed parents still
@@ -139,7 +135,8 @@ directory containing one.
 - Changing any upstream parameter, command, or declared type produces a new path — old results are never overwritten.
 - A parent whose mtime is newer than a child triggers a content-hash check: if the parent's bytes are unchanged, the child is **not** re-run. Only a genuine content change marks children STALE, unless the parent NodeType is mutable.
 - Each output folder contains a `.rip/` subdirectory with:
-  - `dependencies.toml` — full accumulated config for provenance.
+  - `dependencies.toml` — full accumulated config plus v3 identity, declared
+    outputs (including filename and mutability), and canonical parent node keys.
   - `{filename}.hash` — SHA-256 content hash, used for STALE detection on the next run.
   - `job.log` — captured stdout/stderr.
   - `state` — last recorded run state (`running` / `up_to_date` / `failed` / `interrupted`). If a process is killed mid-run the `state` file is left as `running`; on the next invocation necroflow detects this and re-runs the node even if its output exists on disk. Unrecognized state values also force a re-run rather than trusting a malformed cache record.
@@ -195,6 +192,12 @@ trick at all.)
 
 ## Concurrency
 
-**Only one necroflow instance may run against a given node store at a time.** `execute()` acquires an exclusive lock on `nodes/.rip/necroflow.lock` (via `fcntl.flock`) at startup and releases it on exit. A second instance targeting the same node store will fail immediately with a clear error. Running two instances against *overlapping* node stores (e.g. `nodes` and `nodes/sub`) is unsupported — there is no OS primitive to detect this, so avoid it.
+**Only one necroflow operation may mutate a given node store at a time.**
+`execute()` acquires an exclusive lock on `nodes/.rip/necroflow.lock` (via
+`fcntl.flock`) at startup; CLI result materialization completes before that lock
+is released. `necroflow gc` holds the same lock while scanning and deleting. A
+second operation targeting the same node store fails immediately. Running two
+instances against *overlapping* node stores (for example `nodes` and
+`nodes/sub`) remains unsupported because no OS primitive detects the overlap.
 
 [Previous: README](../README.md) | [README](../README.md) | [Next: Command-Line Interface](cli.md)

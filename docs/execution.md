@@ -58,10 +58,10 @@ necroflow --shellpath /bin/bash job.toml
 ```
 
 The shell path belongs to the `Pipeline` compilation policy, so it is fixed before any rule call.
-An explicit `shellpath` is included in fingerprints for static and Python
-callback commands and recorded in provenance. Built-in materializers do not
+An explicit `shellpath` is included in the provenance hash for static and
+Python callback commands and recorded in metadata. Built-in materializers do not
 use a shell and are not affected. All supported commands resolve to shell
-strings; argv-list commands were removed in fingerprint v2.
+strings; argv-list commands were removed in fingerprint v3.
 
 By default the scheduler prioritises nodes from the **smallest connected component** of remaining work — this tends to finish whole samples before starting new ones, keeping memory pressure low.
 The CLI accepts `--scheduler connected-components` (default), `--scheduler fifo`, or a local Python callable such as `--scheduler schedulers.py:my_scheduler`.
@@ -97,7 +97,9 @@ After each successful job, necroflow verifies that the declared output file exis
 
 Run state is persisted to a plain-text `state` file inside each node's `.rip/` directory between invocations. A node whose output exists on disk but whose previous run was interrupted by a signal or left in an unknown state is automatically re-executed next time.
 
-Each job's stdout/stderr is captured to the node store at `{rule}/{hash}/.rip/job.log`. On failure the log is printed to the terminal.
+Each job's stdout/stderr is captured at
+`{rule}/{rule_hash}/{provenance_hash}/.rip/job.log`. On failure the log is
+printed to the terminal.
 
 
 ## Execution reports
@@ -108,11 +110,16 @@ Keys are `node.relative_path.as_posix()` values, so callers look up an event wit
 attempted outputs; dependency-blocked Nodes have no entry. `DAG.execute()` also
 stores the same dict as `dag.last_execution_report`.
 
+The optional `on_complete(report)` callback runs after all attempts while the
+node-store lock is still held. It is not called for dry runs or fail-fast
+errors. The CLI uses it to copy requested results and write execution summaries
+without exposing a gap in which GC could remove their canonical sources.
+
 Each successful rule call writes node-local runtime metadata to the rule-call
 metadata directory:
 
 ```text
-nodes/<rule>/<hash>/.rip/run.toml
+nodes/<rule>/<rule_hash>/<provenance_hash>/.rip/run.toml
 ```
 
 The file records the last successful execution of that cached node directory:
