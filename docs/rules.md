@@ -382,6 +382,33 @@ both filtered precursors and indexed". Use a union for alternatives:
 Mixed unions such as `NodeType | str` are rejected because node inputs and config
 inputs are different parts of the rule API.
 
+## Mutable NodeTypes
+
+Set `mutable = True` on a concrete `NodeType` for persistent state, such as a
+SQLite database, whose bytes may legitimately change in place without
+invalidating every consumer:
+
+```python
+class Database(NodeType):
+    filename = "state.sqlite3"
+    mutable = True
+```
+
+The inherited default is `False`, and Rule declaration rejects non-boolean
+values. Necroflow copies the resolved flag onto each concrete Node. Mutable
+Nodes remain ordinary parents for commands, graph traversal, scheduling,
+provenance, and fingerprints. Only the newer-parent content comparison is
+skipped. A missing, stale, compromised, forcibly invalidated, or
+`invalidator`-changed mutable parent still stales consumers. Changing the
+producer identity also changes downstream fingerprints.
+
+Mutable inputs may be modified by commands, but necroflow does not serialize
+writers, prevent external changes, or provide transactions. Rules sharing a
+mutable input may run concurrently unless the pipeline author creates explicit
+ordering or resource constraints. Use this escape hatch only when those races
+and the cache consequences are understood. Mutable outputs are never removed
+by autoclean.
+
 Unions are for inputs only. A rule output should be a concrete `NodeType`, not a
 union, because necroflow needs one exact artifact type to choose the filename,
 node identity, downstream type, and provenance shape. If two rules can produce

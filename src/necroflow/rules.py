@@ -304,6 +304,12 @@ class Rule(Generic[_ReturnT]):
                     f"Rule {name!r}: output {output_name!r} NodeType "
                     f"{output_type.__name__} must define filename"
                 )
+            if not isinstance(output_type.mutable, bool):
+                raise TypeError(
+                    f"Rule {name!r}: output {output_name!r} NodeType "
+                    f"{output_type.__name__}.mutable must be bool, "
+                    f"got {type(output_type.mutable).__name__}"
+                )
 
     def _validated_input_defaults(
         self,

@@ -115,9 +115,29 @@ Use this for external dependencies that should invalidate a cached node without 
 
 Invalidators are evaluated during the initial node classification at the start of `execute()`. After a job succeeds, necroflow recomputes and stores the token for that node's outputs, but it does not re-run all invalidators between tasks in the same execution. If an external dependency changes while a pipeline is already running, that change is detected on the next `execute()` invocation.
 
+### Mutable dependencies
+
+A concrete `NodeType` may set `mutable = True` when its contents are persistent
+state that legitimately changes in place. The parent remains part of the DAG,
+command inputs, scheduling gates, provenance, and downstream identity, but its
+mtime and content hash do not stale consumers. The default fingerprint records
+`mutable=True` on that edge; ordinary edges retain the existing v2 encoding.
+
+Mutability suppresses only content-change invalidation. Missing, stale,
+compromised, forcibly invalidated, or invalidator-changed parents still
+propagate staleness. For a database that may be replaced while its path remains
+present, define an `invalidator` token from a stable database generation UUID or
+schema identity—not from the complete mutable contents. A changed generation
+then replays consumers while ordinary row updates remain cache-neutral.
+
+Necroflow does not lock mutable inputs against sibling rules or external
+processes. Pipeline authors own writer ordering, idempotence, and transaction
+semantics. Autoclean never deletes a mutable output or a shared rule-call
+directory containing one.
+
 - Re-running with the same inputs is a no-op (cache hit).
 - Changing any upstream parameter, command, or declared type produces a new path — old results are never overwritten.
-- A parent whose mtime is newer than a child triggers a content-hash check: if the parent's bytes are unchanged, the child is **not** re-run. Only a genuine content change marks children STALE.
+- A parent whose mtime is newer than a child triggers a content-hash check: if the parent's bytes are unchanged, the child is **not** re-run. Only a genuine content change marks children STALE, unless the parent NodeType is mutable.
 - Each output folder contains a `.rip/` subdirectory with:
   - `dependencies.toml` — full accumulated config for provenance.
   - `{filename}.hash` — SHA-256 content hash, used for STALE detection on the next run.

@@ -123,6 +123,8 @@ class _GraphBase:
             suffix += f":{node.output_name}" if suffix else node.output_name
         if suffix:
             parts[0] += f"[{suffix}]"
+        if node.mutable:
+            parts.append("[mutable]")
         # needs human review: config omitted from label because long embedded
         # config values can otherwise make the ASCII DAG unreadable.
         if node.rule.constraints:

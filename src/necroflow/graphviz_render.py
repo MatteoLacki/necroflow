@@ -70,13 +70,14 @@ def render_png(
         g["outputs"].append(node.output_name or "")
         g["sections"].add(dag.section_for(node))
 
-    edges: set[tuple[str, str]] = set()
+    edges: dict[tuple[str, str], bool] = {}
     for node in dag.nodes:
         t = _group_key(node.relative_path.as_posix())
         for parent in node.parents:
             s = _group_key(parent.relative_path.as_posix())
             if s != t:
-                edges.add((s, t))
+                edge = (s, t)
+                edges[edge] = edges.get(edge, True) and parent.mutable
 
     G = nx.DiGraph()
     G.add_nodes_from(order)
@@ -161,7 +162,13 @@ def render_png(
         lines.append("")
 
     for s, t in sorted(edges):
-        lines.append(f"  {_dot_id(s)} -> {_dot_id(t)};")
+        if edges[(s, t)]:
+            lines.append(
+                f"  {_dot_id(s)} -> {_dot_id(t)} "
+                '[style="dashed", label="mutable", fontcolor="#66707c"];'
+            )
+        else:
+            lines.append(f"  {_dot_id(s)} -> {_dot_id(t)};")
     lines.append("}")
 
     dot_src = "\n".join(lines)

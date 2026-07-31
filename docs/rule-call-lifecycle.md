@@ -114,7 +114,9 @@ node_inputs = {
 ```
 
 `RuleCall.parents` flattens those values only for graph traversal, preserving
-declaration order and each tuple’s element order.
+declaration order and each tuple’s element order. Each parent has already copied
+its concrete output type's inherited `mutable` boolean when it was compiled;
+mutability is not supplied per Rule call or per input annotation.
 
 ## 5. A candidate RuleCall is fingerprinted
 
@@ -155,7 +157,11 @@ value explicitly produce the same fingerprint. Changing a default changes the
 fingerprint for calls that omit it, while calls with an explicit override retain
 the fingerprint associated with that explicit value.
 
-Parent Nodes contribute their full fingerprints. A variadic input remains one
+Parent Nodes contribute their full fingerprints. For a mutable parent, the
+default provider additionally records `mutable=True` on that parent entry. The
+false/default case retains the established v2 wire shape, so enabling this
+feature does not rename ordinary pipelines. A custom provider can inspect the
+concrete Nodes in `FingerprintArgs.inputs`. A variadic input remains one
 named tuple in `FingerprintArgs.inputs`; its group boundary and element order are
 therefore available to both the default and project fingerprint functions. Static commands contribute
 their strings. Supported Python callbacks contribute canonical AST plus Python
@@ -180,6 +186,7 @@ NodeTypes remain valid as input contracts, but there is no output-name fallback:
 ```python
 node.relative_path = call.relative_path / output_filename
 node.path = P.dag.nodes_dir / node.relative_path
+node.mutable = output_type.mutable
 ```
 
 For a multi-output call:
@@ -333,6 +340,12 @@ shell command, and verifies every declared co-output exists. The immutable
 state, dependency hashes, invalidator tokens, provenance, and run statistics
 under the rule-call's `.rip/` directory.
 
+Classification treats every parent as an ordering and failure dependency. For a
+mutable parent only the newer-mtime/content-hash comparison is skipped. Missing,
+stale, compromised, forced, and invalidator-changed state still propagates to
+consumers. Autoclean refuses to remove mutable paths or any shared rule-call
+directory containing one.
+
 Execution returns a plain dict mapping each cached or attempted Node's
 `relative_path.as_posix()` key to its `ExecutionEvent`. `DAG.execute()` stores
 and returns that same dict; a keep-going `ExceptionGroup` carries it as
@@ -367,6 +380,8 @@ P.name = node or P["name"] = node records local labels
 dag.require(P.sinks() or explicitly selected labels)
     ↓
 classify required canonical subgraphs
+    ├─ ordinary parent content changed → stale consumer
+    └─ mutable parent content changed → cached consumer
     ↓
 missing/stale only: CommandArgs → realize command
     ↓

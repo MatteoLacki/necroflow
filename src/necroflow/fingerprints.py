@@ -261,6 +261,7 @@ def default_fingerprint(args: FingerprintArgs) -> str:
                         {
                             "fingerprint": item.fingerprint,
                             "output": item.output_name or "",
+                            **({"mutable": True} if item.mutable else {}),
                         }
                         for item in parent
                     ],
@@ -272,6 +273,7 @@ def default_fingerprint(args: FingerprintArgs) -> str:
                     "name": name,
                     "fingerprint": parent.fingerprint,
                     "output": parent.output_name or "",
+                    **({"mutable": True} if parent.mutable else {}),
                 }
             )
     identity = {

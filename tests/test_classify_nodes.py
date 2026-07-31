@@ -205,3 +205,134 @@ def test_content_unchanged_parent_not_stale(tmp_path):
         n for n in dag.nodes if n.rule.__name__ == "align" and n.output_name == "bam"
     )
     assert align_bam.state == NodeState.UP_TO_DATE
+
+
+class MutableDatabase(NodeType):
+    filename = "state.sqlite3"
+    mutable = True
+
+
+class MutationReceipt(NodeType):
+    filename = "mutation.done"
+
+
+R_create_database = Rule(
+    "create_database",
+    Inputs(seed=str),
+    Outputs(database=MutableDatabase),
+    "echo {seed} > {database}",
+)
+R_mutate_database = Rule(
+    "mutate_database",
+    Inputs(database=MutableDatabase),
+    Outputs(receipt=MutationReceipt),
+    "echo mutation >> {database}; touch {receipt}",
+)
+
+
+def test_mutable_parent_content_change_does_not_stale_consumer(tmp_path):
+    """In-place changes to a mutable parent must not invalidate its consumer.
+
+    Stateful inputs such as SQLite databases may change after their producing
+    rule completes. Their identity and dependency edge remain significant, but
+    byte-level mutations are intentionally outside downstream cache validity.
+    """
+    dag = DAG(tmp_path)
+    pipeline = Pipeline(dag)
+    pipeline.database = R_create_database(pipeline, seed="initial")
+    pipeline.receipt = R_mutate_database(pipeline, pipeline.database)
+    dag.require([pipeline.receipt])
+    dag.execute()
+
+    time.sleep(0.05)
+    pipeline.database.path.write_text("externally changed\n")
+
+    classify_nodes(dag.nodes, dag.required_nodes)
+
+    assert pipeline.database.mutable is True
+    assert pipeline.receipt.state == NodeState.UP_TO_DATE
+
+
+def test_missing_mutable_parent_replays_consumer(tmp_path):
+    """Rebuilding a missing mutable parent must replay dependent mutations.
+
+    Mutability suppresses only content-based invalidation. Missing or otherwise
+    stale state still propagates so cached side effects can be reconstructed.
+    """
+    dag = DAG(tmp_path)
+    pipeline = Pipeline(dag)
+    pipeline.database = R_create_database(pipeline, seed="initial")
+    pipeline.receipt = R_mutate_database(pipeline, pipeline.database)
+    dag.require([pipeline.receipt])
+    dag.execute()
+    pipeline.database.path.unlink()
+
+    dag.execute()
+
+    assert pipeline.database.path.read_text() == "initial\nmutation\n"
+    assert pipeline.receipt.state == NodeState.UP_TO_DATE
+
+
+def _database_generation(node):
+    return Path(node.config["generation"]).read_text()
+
+
+class GenerationTrackedDatabase(NodeType):
+    filename = "tracked.sqlite3"
+    mutable = True
+    invalidator = _database_generation
+
+
+def test_mutable_parent_invalidator_still_propagates_stale(tmp_path):
+    """Mutable content does not disable explicit generation invalidators.
+
+    A stable token can distinguish an allowed row mutation from replacement of
+    the database generation, which must replay dependent mutation rules.
+    """
+    generation = tmp_path / "generation"
+    generation.write_text("one")
+    create = Rule(
+        "create_tracked_database",
+        Inputs(generation=str),
+        Outputs(database=GenerationTrackedDatabase),
+        "touch {database}",
+    )
+    consume = Rule(
+        "consume_tracked_database",
+        Inputs(database=GenerationTrackedDatabase),
+        Outputs(receipt=MutationReceipt),
+        "touch {receipt}",
+    )
+    dag = DAG(tmp_path / "nodes")
+    pipeline = Pipeline(dag)
+    pipeline.database = create(pipeline, generation=str(generation))
+    pipeline.receipt = consume(pipeline, pipeline.database)
+    dag.require([pipeline.receipt])
+    dag.execute()
+
+    generation.write_text("two")
+    classify_nodes(dag.nodes, dag.required_nodes)
+
+    assert pipeline.database.state == NodeState.STALE
+    assert pipeline.receipt.state == NodeState.STALE
+
+
+@pytest.mark.parametrize("trigger", ["forced", "compromised"])
+def test_mutable_parent_explicit_staleness_replays_consumer(tmp_path, trigger):
+    """Forced and compromised mutable parents must still stale consumers."""
+    dag = DAG(tmp_path)
+    pipeline = Pipeline(dag)
+    pipeline.database = R_create_database(pipeline, seed="initial")
+    pipeline.receipt = R_mutate_database(pipeline, pipeline.database)
+    dag.require([pipeline.receipt])
+    dag.execute()
+    before = pipeline.receipt.path.stat().st_mtime_ns
+    time.sleep(0.05)
+
+    if trigger == "forced":
+        dag.execute(forced_stale_keys={pipeline.database.relative_path})
+    else:
+        pipeline.database.state_file.write_text("running")
+        dag.execute()
+
+    assert pipeline.receipt.path.stat().st_mtime_ns > before

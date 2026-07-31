@@ -140,7 +140,7 @@ invocation even when intermediate cached folders were removed.
 
 ## Cleaning orphan outputs
 
-Outputs that existed from a previous run but are no longer in the required subgraph are classified as `ORPHAN`. Pass `autoclean=True` to delete them. Intermediate rule-call directories are removed as whole directories once all downstream work is complete, so side files written under `{workdir}` are cleaned together with the declared outputs:
+Outputs that existed from a previous run but are no longer in the required subgraph are classified as `ORPHAN`. Pass `autoclean=True` to delete them. Intermediate rule-call directories are removed as whole directories once all downstream work is complete, so side files written under `{workdir}` are cleaned together with the declared outputs. Mutable outputs (`NodeType.mutable = True`) and any shared rule-call directory containing one are always protected from intermediate and orphan cleanup:
 
 ```python
 dag.execute(autoclean=True)

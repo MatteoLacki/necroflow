@@ -821,6 +821,64 @@ def test_autoclean_preserves_intermediate_when_cooutput_is_final(tmp_path):
     assert pipeline.c.path.exists()
 
 
+def test_autoclean_preserves_mutable_intermediate(tmp_path):
+    """Autoclean must never discard persistent mutable state after consumption."""
+
+    class MutableStore(NodeType):
+        filename = "state.sqlite3"
+        mutable = True
+
+    create = Rule(
+        "create_store", Inputs(seed=str), Outputs(store=MutableStore), "touch {store}"
+    )
+    consume = Rule(
+        "consume_store", Inputs(store=MutableStore), Outputs(b=B), "touch {b}"
+    )
+    pipeline = Pipeline(DAG(tmp_path))
+    pipeline.store = create(pipeline, seed="x")
+    pipeline.result = consume(pipeline, pipeline.store)
+
+    execute_pipeline(pipeline, autoclean=True)
+
+    assert pipeline.store.path.exists()
+    assert pipeline.result.path.exists()
+
+
+def test_autoclean_preserves_orphaned_directory_with_mutable_cooutput(tmp_path):
+    """A mutable co-output protects its complete shared rule-call directory.
+
+    Orphan cleanup normally removes whole rule-call directories. Deleting such
+    a directory through an ordinary sibling must not erase mutable state.
+    """
+
+    class MutableStore(NodeType):
+        filename = "state.sqlite3"
+        mutable = True
+
+    class StoreLog(NodeType):
+        filename = "store.log"
+
+    create = Rule(
+        "create_store",
+        Inputs(seed=str),
+        Outputs(store=MutableStore, log=StoreLog),
+        "touch {store} {log}",
+    )
+    first = Pipeline(DAG(tmp_path))
+    first.store, first.log = create(first, seed="x")
+    first.dag.require([first.store])
+    first.dag.execute()
+
+    second = Pipeline(DAG(tmp_path))
+    second.store, second.log = create(second, seed="x")
+    second.a = R_make_a(second, x="independent")
+    second.dag.require([second.a])
+    second.dag.execute(autoclean=True)
+
+    assert second.store.path.exists()
+    assert second.log.path.exists()
+
+
 def test_autoclean_false_leaves_orphan(tmp_path):
     P1 = Pipeline(DAG(tmp_path))
     P1.a = R_make_a(P1, x="x")

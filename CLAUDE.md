@@ -110,6 +110,10 @@ These have been true since the June refactors and are load-bearing design decisi
 - **Filename-less NodeTypes are input-only.** A `NodeType` with `filename = None` may be
   used as a fixed, union, or variadic input contract, but every Rule output must resolve to an
   explicit filename. Rule declaration rejects filename-less outputs; output names are not fallbacks.
+- **Mutable NodeTypes ignore content changes only.** `NodeType.mutable` defaults to `False`
+  and is copied to each output Node. Mutable parents retain identity, ordering, provenance, and
+  failure propagation, but newer changed bytes do not stale consumers. Missing, stale, forced,
+  compromised, and invalidator-changed parents still propagate. Autoclean preserves mutable state.
 - **Variadic Node inputs retain groups.** `tuple[NodeType, ...]` accepts an ordered
   tuple, while `Annotated[tuple[NodeType, ...], Many(...)]` applies inclusive size
   bounds. RuleCall/fingerprint/command contexts retain named tuple groups;

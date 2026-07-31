@@ -247,6 +247,64 @@ def test_filename_less_nodetype_remains_a_valid_input_contract(tmp_path):
     assert consumed.parents == [dataset]
 
 
+def test_mutable_flag_propagates_from_output_type_to_node(tmp_path):
+    """Mutability is declared on NodeType and frozen onto each compiled Node."""
+
+    class MutableState(NodeType):
+        mutable = True
+
+    class Database(MutableState):
+        filename = "state.sqlite3"
+
+    pipeline = Pipeline(DAG(tmp_path))
+    database = Rule(
+        "database", Inputs(), Outputs(database=Database), "touch {database}"
+    )(pipeline)
+
+    assert database.mutable is True
+
+
+def test_rule_rejects_non_boolean_mutable_declaration():
+    """Invalid mutability declarations must fail while the rule is declared."""
+
+    class Database(NodeType):
+        filename = "state.sqlite3"
+        mutable = "yes"
+
+    with pytest.raises(TypeError, match=r"Database\.mutable must be bool, got str"):
+        Rule("database", Inputs(), Outputs(database=Database), "touch {database}")
+
+
+def test_mutability_changes_only_the_consumers_fingerprint(tmp_path):
+    """A mutable policy changes edge identity without renaming its producer.
+
+    The false case keeps the established v2 wire shape, while mutable parents
+    add an explicit identity bit to each consumer that depends on them.
+    """
+
+    class Database(NodeType):
+        filename = "state.sqlite3"
+
+    create = Rule("database", Inputs(), Outputs(database=Database), "touch {database}")
+    consume = Rule(
+        "consume", Inputs(database=Database), Outputs(txt=Txt), "touch {txt}"
+    )
+    ordinary_pipeline = Pipeline(DAG(tmp_path / "ordinary"))
+    ordinary_database = create(ordinary_pipeline)
+    ordinary_result = consume(ordinary_pipeline, ordinary_database)
+
+    Database.mutable = True
+    try:
+        mutable_pipeline = Pipeline(DAG(tmp_path / "mutable"))
+        mutable_database = create(mutable_pipeline)
+        mutable_result = consume(mutable_pipeline, mutable_database)
+    finally:
+        Database.mutable = False
+
+    assert mutable_database.fingerprint == ordinary_database.fingerprint
+    assert mutable_result.fingerprint != ordinary_result.fingerprint
+
+
 def test_rule_name_must_be_one_safe_relative_component(tmp_path):
     rule = Rule("../escape", Inputs(x=str), Outputs(out=Txt), "touch {out}")
 

@@ -316,6 +316,7 @@ def _node_json(node, *, nodes_dir: Path | None = None) -> dict:
         "output_name": node.output_name,
         "rule": node.rule.__name__ if node.rule else "unknown",
         "node_type": node.node_type.__name__ if node.node_type else None,
+        "mutable": node.mutable,
         "state": node.state.value if isinstance(node.state, NodeState) else node.state,
         "path": str(node.path) if node.path is not None else None,
         "resources": dict(getattr(node.rule, "resources", {})) if node.rule else {},
@@ -336,6 +337,7 @@ def _edge_json(nodes: list) -> list[dict]:
         {
             "from": parent.relative_path.as_posix(),
             "to": node.relative_path.as_posix(),
+            "mutable": parent.mutable,
         }
         for node in nodes
         for parent in node.parents
@@ -404,14 +406,50 @@ def _provenance_payload(path: Path) -> dict:
     }
 
 
+def _parent_content_changed(node, parent) -> bool:
+    """Return whether a newer parent differs from its stored successful hash."""
+
+    if node.path is None or parent.path is None or not parent.path.exists():
+        return False
+    if _output_mtime(parent.path) <= _output_mtime(node.path):
+        return False
+    hash_file = parent.path.parent / ".rip" / (parent.path.name + ".hash")
+    return not (
+        hash_file.exists()
+        and _content_hash(parent.path) == hash_file.read_text().strip()
+    )
+
+
 def _classification_reasons(node, forced_stale_keys: set[Path]) -> list[dict]:
     if node.state == NodeState.MISSING:
         return [{"kind": "output_missing", "path": str(node.path)}]
-    if node.state == NodeState.UP_TO_DATE:
-        return [{"kind": "up_to_date"}]
     if node.state == NodeState.FAILED:
         return [{"kind": "blocked_by_failed_parent"}]
-    reasons: list[dict] = []
+    if node.state == NodeState.UP_TO_DATE:
+        reasons: list[dict] = [{"kind": "up_to_date"}]
+        for parent in node.parents:
+            if not parent.mutable:
+                continue
+            try:
+                if _parent_content_changed(node, parent):
+                    reasons.append(
+                        {
+                            "kind": "mutable_parent_content_ignored",
+                            "parent_key": parent.relative_path.as_posix(),
+                            "parent_label": parent.rule_call.dag.label_for(parent),
+                        }
+                    )
+            except OSError as exc:
+                reasons.append(
+                    {
+                        "kind": "parent_check_error",
+                        "parent_key": parent.relative_path.as_posix(),
+                        "error": str(exc),
+                    }
+                )
+        return reasons
+
+    reasons = []
     if node.relative_path in forced_stale_keys:
         reasons.append({"kind": "forced_invalidation"})
     if node.is_compromised:
@@ -431,24 +469,16 @@ def _classification_reasons(node, forced_stale_keys: set[Path]) -> list[dict]:
                     "parent_state": parent.state.value if parent.state else None,
                 }
             )
-        elif node.path is not None and parent.path is not None and parent.path.exists():
+        elif not parent.mutable:
             try:
-                if _output_mtime(parent.path) > _output_mtime(node.path):
-                    hash_file = (
-                        parent.path.parent / ".rip" / (parent.path.name + ".hash")
+                if _parent_content_changed(node, parent):
+                    reasons.append(
+                        {
+                            "kind": "parent_content_changed",
+                            "parent_key": parent.relative_path.as_posix(),
+                            "parent_label": parent.rule_call.dag.label_for(parent),
+                        }
                     )
-                    content_changed = not (
-                        hash_file.exists()
-                        and _content_hash(parent.path) == hash_file.read_text().strip()
-                    )
-                    if content_changed:
-                        reasons.append(
-                            {
-                                "kind": "parent_content_changed",
-                                "parent_key": parent.relative_path.as_posix(),
-                                "parent_label": parent.rule_call.dag.label_for(parent),
-                            }
-                        )
             except OSError as exc:
                 reasons.append(
                     {

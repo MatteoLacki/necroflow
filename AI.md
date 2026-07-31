@@ -61,6 +61,15 @@ accept it and receive Nodes of concrete subclasses, but every declared output
 NodeType must resolve to a non-`None` filename. `Rule` construction rejects
 filename-less outputs immediately; output names are not filename fallbacks.
 
+## Mutable NodeTypes
+
+`NodeType.mutable` defaults to `False` and must be boolean on every concrete
+output type. The resolved flag is copied onto the Node. A mutable parent remains
+in the DAG and downstream fingerprint, but newer mtime/content does not stale
+consumers. Missing/stale/forced/compromised/invalidator-changed state still
+propagates. Mutable outputs and their shared rule-call directories are protected
+from autoclean. Writer ordering and transactions remain user responsibilities.
+
 ## NodeType invalidators
 
 `NodeType.invalidator` is optional and defaults to `None`. When set, it is a callable receiving the concrete `Node` and returning a stable `str` token. Necroflow stores the token at `.rip/{filename}.invalidation` after a successful run. During classification, an existing output with a missing or changed token is marked `STALE`; callback exceptions fail fast. The token does not participate in the node fingerprint.

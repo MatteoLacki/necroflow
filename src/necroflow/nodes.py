@@ -50,10 +50,13 @@ class NodeType(metaclass=NodeTypeMeta):
     class SortedBam(Bam): filename = "sorted.bam"
 
     Filename-less subclasses are input-only type contracts. Every Rule output
-    must use a NodeType whose filename resolves to a string.
+    must use a NodeType whose filename resolves to a string. Set
+    ``mutable = True`` for persistent state whose in-place content changes must
+    not stale consumers; missing or explicitly stale mutable Nodes still propagate.
     """
 
     filename: str | None = None
+    mutable: bool = False
     invalidator = None
 
 
@@ -61,6 +64,7 @@ class NodeType(metaclass=NodeTypeMeta):
 class Node:
     output_name: str
     node_type: type[NodeType]
+    mutable: bool
     parents: list[Node]
     config: dict[str, Any]
     rule: Any
@@ -77,6 +81,12 @@ class Node:
             doc = self.node_type.__doc__
             if doc:
                 self.info = doc.strip()
+
+    @property
+    def has_mutable_output(self) -> bool:
+        """Return whether this rule-call directory contains mutable state."""
+
+        return any(node.mutable for node in self.output_nodes.values())
 
     @property
     def fingerprint(self) -> str:
@@ -150,6 +160,7 @@ class Node:
                 Node(
                     output_name=oname,
                     node_type=otype,
+                    mutable=otype.mutable,
                     parents=call.parents,
                     config=config,
                     rule=rule,

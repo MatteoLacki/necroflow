@@ -297,7 +297,7 @@ def _acquire_lock(outdir: Path):
 
 def _remove_rule_output_dir(node) -> bool:
     """Remove the whole rule-call output directory for node, if it exists."""
-    if node.path is None:
+    if node.path is None or node.has_mutable_output:
         return False
     output_dir = node.path.parent
     if not output_dir.exists():
@@ -309,7 +309,7 @@ def _remove_rule_output_dir(node) -> bool:
 
 def _remove_output_path(node) -> bool:
     """Remove only node.path, leaving siblings and side files in the rule-call dir."""
-    if node.path is None or not node.path.exists():
+    if node.mutable or node.path is None or not node.path.exists():
         return False
     if node.path.is_dir():
         shutil.rmtree(node.path)
@@ -323,6 +323,8 @@ def _can_remove_parent_dir(
     parent, children: dict, final_keys: set, active_keys: set
 ) -> bool:
     """Return True when every active co-output in a rule-call is cleanable."""
+    if parent.has_mutable_output:
+        return False
     siblings = [
         n for n in parent.output_nodes.values() if n.relative_path in active_keys
     ]

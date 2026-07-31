@@ -87,7 +87,7 @@ necroflow graph --json job.toml
 necroflow graph --png graph.png job.toml
 ```
 
-`--png` requires the `dev` extra and Graphviz `dot`. When every displayed rule call has one unambiguous `P.section(...)` label, the PNG uses labelled section clusters; otherwise it groups nodes by dependency depth.
+`--png` requires the `dev` extra and Graphviz `dot`. When every displayed rule call has one unambiguous `P.section(...)` label, the PNG uses labelled section clusters; otherwise it groups nodes by dependency depth. Mutable Nodes are marked in the ASCII view, mutable Graphviz edges are dashed and labelled, and JSON Nodes and edges include a `mutable` boolean.
 
 List requested output paths without running jobs:
 
@@ -124,7 +124,7 @@ necroflow explain --json job.toml
 `explain` reports requested nodes and ancestors, predicted paths, state, command,
 resource constraints, whether each node would run, and best-effort reasons such
 as `output_missing`, `up_to_date`, `parent_not_up_to_date`,
-`parent_content_changed`, `forced_invalidation`, `invalidator_changed`, and
-`compromised_prior_state`.
+`parent_content_changed`, `mutable_parent_content_ignored`,
+`forced_invalidation`, `invalidator_changed`, and `compromised_prior_state`.
 
 [Previous: Where Outputs Live and Caching](caching.md) | [README](../README.md) | [Next: Job TOML and Parameter Grids](job-toml.md)

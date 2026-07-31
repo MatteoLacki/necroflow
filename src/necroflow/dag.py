@@ -198,6 +198,8 @@ def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
             for p in node.parents:
                 if p.path is None or not p.path.exists():
                     continue
+                if p.mutable:
+                    continue
                 if _output_mtime(p.path) <= node_mtime:
                     continue  # fast path: parent not newer
                 hash_file = p.path.parent / ".rip" / (p.path.name + ".hash")

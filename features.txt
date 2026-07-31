@@ -6,6 +6,7 @@ necroflow
 │   ├── NodeType typed file/artifact classes
 │   ├── NodeType subtype families for format contracts
 │   ├── NodeType union inputs for alternative type contracts
+│   ├── mutable NodeTypes with cache-neutral in-place content changes
 │   ├── Node objects with parents, config, command, output path, state
 │   ├── Module-level rule declarations
 │   │   ├── shell command API: @command(...)

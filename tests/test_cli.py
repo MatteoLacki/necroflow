@@ -12,7 +12,7 @@ import pytest
 import necroflow.cli as cli_core
 from necroflow._compat import ExceptionGroup
 from pathlib import Path
-from necroflow import NodeType, Pipeline, DAG, output
+from necroflow import NodeType, Pipeline, DAG, classify_nodes, output
 from necroflow.cli import (
     _create_link_outputs,
     _graph_payload,
@@ -29,8 +29,19 @@ class Log(NodeType):
     filename = "run.log"
 
 
+class MutableOut(NodeType):
+    filename = "mutable.txt"
+    mutable = True
+
+
 R_step1 = Rule("step1", Inputs(v=str), Outputs(out=Out), "echo {v} > {out}")
 R_step2 = Rule("step2", Inputs(out=Out), Outputs(log=Log), "cat {out} > {log}")
+R_mutable_step1 = Rule(
+    "mutable_step1", Inputs(v=str), Outputs(out=MutableOut), "echo {v} > {out}"
+)
+R_mutable_step2 = Rule(
+    "mutable_step2", Inputs(out=MutableOut), Outputs(log=Log), "touch {log}"
+)
 
 
 def _make_pipeline_with_outputs(tmp_path) -> tuple[Pipeline, Path]:
@@ -1475,6 +1486,26 @@ def test_graph_json_lists_nodes_and_edges(tmp_path, factory_file, capsys):
     assert payload["jobs"][0]["label"] == "job"
 
 
+def test_graph_inspection_marks_mutable_nodes_and_edges(tmp_path):
+    """All graph representations must make non-invalidating content edges visible."""
+    pipeline = Pipeline(DAG(tmp_path))
+    pipeline.mutable = R_mutable_step1(pipeline, v="hello")
+    pipeline.log = R_mutable_step2(pipeline, pipeline.mutable)
+    pipeline.dag.require([pipeline.log])
+
+    payload = _graph_payload(
+        pipeline.dag,
+        [("job", pipeline, _resolve_request(pipeline, ["log"]))],
+        nodes_dir=tmp_path,
+    )
+    nodes = {node["label"]: node for node in payload["nodes"]}
+
+    assert nodes["mutable"]["mutable"] is True
+    assert nodes["log"]["mutable"] is False
+    assert payload["edges"][0]["mutable"] is True
+    assert "[mutable]" in str(pipeline)
+
+
 def test_graph_json_includes_pipeline_sections(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.section("Preparation")
@@ -1505,6 +1536,29 @@ def test_graph_png_renders_file(tmp_path, factory_file, capsys):
 
     assert png_path.exists()
     assert png_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_graphviz_marks_mutable_edges(tmp_path, monkeypatch):
+    """Graphviz must distinguish mutable edges from content-sensitive ones."""
+    pytest.importorskip("networkx")
+    import necroflow.graphviz_render as graphviz_render
+
+    pipeline = Pipeline(DAG(tmp_path / "nodes"))
+    pipeline.mutable = R_mutable_step1(pipeline, v="hello")
+    pipeline.log = R_mutable_step2(pipeline, pipeline.mutable)
+    pipeline.dag.require([pipeline.log])
+    captured = {}
+
+    def fake_run(args, **kwargs):
+        captured["dot"] = kwargs["input"]
+        Path(args[-1]).write_bytes(b"png")
+
+    monkeypatch.setattr(graphviz_render.shutil, "which", lambda _name: "/usr/bin/dot")
+    monkeypatch.setattr(graphviz_render.subprocess, "run", fake_run)
+
+    graphviz_render.render_png(pipeline.dag, output_path=tmp_path / "dag.png")
+
+    assert 'style="dashed", label="mutable"' in captured["dot"]
 
 
 def test_graph_png_without_networkx_fails_clearly(tmp_path, factory_file, monkeypatch):
@@ -1830,6 +1884,23 @@ def test_explain_json_reports_stale_causes(tmp_path, factory_file, capsys):
     assert "parent_content_changed" in {
         reason["kind"] for reason in changed["b"]["reasons"]
     }
+
+
+def test_explain_reports_ignored_mutable_parent_content(tmp_path):
+    """Explain must name content changes intentionally ignored by mutability."""
+    pipeline = Pipeline(DAG(tmp_path))
+    pipeline.mutable = R_mutable_step1(pipeline, v="hello")
+    pipeline.log = R_mutable_step2(pipeline, pipeline.mutable)
+    pipeline.dag.require([pipeline.log])
+    pipeline.dag.execute()
+    time.sleep(0.05)
+    pipeline.mutable.path.write_text("changed")
+    classify_nodes(pipeline.dag.nodes, pipeline.dag.required_nodes)
+
+    reasons = cli_core._classification_reasons(pipeline.log, set())
+
+    assert pipeline.log.state.value == "up_to_date"
+    assert "mutable_parent_content_ignored" in {reason["kind"] for reason in reasons}
 
 
 def test_explain_json_reports_missing_and_up_to_date(tmp_path, factory_file, capsys):

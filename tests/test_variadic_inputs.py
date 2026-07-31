@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import shlex
+import time
 from typing import Annotated, Union
 
 import pytest
@@ -12,7 +13,9 @@ from necroflow import (
     DAG,
     Inputs,
     Many,
+    NodeState,
     NodeType,
+    classify_nodes,
     output,
     Outputs,
     Pipeline,
@@ -27,6 +30,11 @@ class Bam(NodeType):
 
 class OtherBam(NodeType):
     filename = "other.bam"
+
+
+class MutableBam(NodeType):
+    filename = "mutable.bam"
+    mutable = True
 
 
 class Reference(NodeType):
@@ -282,6 +290,33 @@ def test_variadic_union_accepts_each_declared_node_type(tmp_path):
     result = merge(pipeline, (bam, other))
 
     assert result.parents == [bam, other]
+
+
+def test_variadic_union_applies_mutability_per_concrete_parent(tmp_path):
+    """Mixed variadic groups ignore only their concrete mutable members."""
+    dag = DAG(tmp_path)
+    pipeline = Pipeline(dag)
+    ordinary = _source(pipeline, "ordinary")
+    mutable = _source(pipeline, "mutable", MutableBam)
+    merge = Rule(
+        "mutable_union_merge",
+        Inputs(bams=tuple[Bam | MutableBam, ...]),
+        Outputs(merged=Merged),
+        "touch {merged}",
+    )
+    result = merge(pipeline, (ordinary, mutable))
+    dag.require([result])
+    dag.execute()
+
+    time.sleep(0.05)
+    mutable.path.write_text("changed")
+    classify_nodes(dag.nodes, dag.required_nodes)
+    assert result.state == NodeState.UP_TO_DATE
+
+    time.sleep(0.05)
+    ordinary.path.write_text("changed")
+    classify_nodes(dag.nodes, dag.required_nodes)
+    assert result.state == NodeState.STALE
 
 
 def test_variadic_fingerprint_tracks_order_grouping_and_many_bounds(tmp_path):
