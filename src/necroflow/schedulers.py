@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -19,114 +20,132 @@ def fifo_scheduler(
     return ready
 
 
-class ConnectedComponentScheduler:
-    """Prioritise nodes from the smallest connected component of remaining work.
+@dataclass
+class _ConnectedComponentState:
+    """Incremental component index owned by one scheduler closure."""
 
-    Components are computed once on the first call, then updated incrementally:
-    when a node completes, only its component is re-BFS'd to detect splits.
-    All other components are untouched — their sizes are O(1) lookups.
-    """
+    adj: dict[Path, list[Path]] = field(default_factory=dict)
+    component_of: dict[Path, int] = field(default_factory=dict)
+    members: dict[int, set[Path]] = field(default_factory=dict)
+    sizes: dict[int, int] = field(default_factory=dict)
+    prev_keys: set[Path] | None = None
+    next_cid: int = 0
 
-    def __init__(self) -> None:
-        self._adj: dict[Path, list[Path]] = {}
-        self._component_of: dict[Path, int] = {}
-        self._members: dict[int, set[Path]] = {}
-        self._sizes: dict[int, int] = {}
-        self._prev_keys: set[Path] = set()
-        self._next_cid: int = 0
 
-    def _new_cid(self) -> int:
-        cid = self._next_cid
-        self._next_cid += 1
-        return cid
+def _new_component_id(state: _ConnectedComponentState) -> int:
+    cid = state.next_cid
+    state.next_cid += 1
+    return cid
 
-    def _build(self, nodes: list) -> None:
-        keys = {n.relative_path for n in nodes}
-        adj: dict[Path, list[Path]] = {n.relative_path: [] for n in nodes}
-        for n in nodes:
-            for p in n.parents:
-                if p.relative_path in keys:
-                    adj[n.relative_path].append(p.relative_path)
-                    adj[p.relative_path].append(n.relative_path)
-        self._adj = adj
 
-        visited: set[Path] = set()
-        for n in nodes:
-            if n.relative_path in visited:
+def _build_components(state: _ConnectedComponentState, nodes: list) -> None:
+    keys = {node.relative_path for node in nodes}
+    adj: dict[Path, list[Path]] = {node.relative_path: [] for node in nodes}
+    for node in nodes:
+        for parent in node.parents:
+            if parent.relative_path in keys:
+                adj[node.relative_path].append(parent.relative_path)
+                adj[parent.relative_path].append(node.relative_path)
+    state.adj = adj
+
+    visited: set[Path] = set()
+    for node in nodes:
+        if node.relative_path in visited:
+            continue
+        cid = _new_component_id(state)
+        members: set[Path] = set()
+        frontier = [node.relative_path]
+        while frontier:
+            key = frontier.pop()
+            if key in visited:
                 continue
-            cid = self._new_cid()
-            members: set[Path] = set()
-            frontier = [n.relative_path]
-            while frontier:
-                k = frontier.pop()
-                if k in visited:
-                    continue
-                visited.add(k)
-                members.add(k)
-                self._component_of[k] = cid
-                frontier.extend(nb for nb in self._adj[k] if nb not in visited)
-            self._members[cid] = members
-            self._sizes[cid] = len(members)
+            visited.add(key)
+            members.add(key)
+            state.component_of[key] = cid
+            frontier.extend(
+                neighbour for neighbour in state.adj[key] if neighbour not in visited
+            )
+        state.members[cid] = members
+        state.sizes[cid] = len(members)
 
-    def _remove(self, key: Path) -> None:
-        cid = self._component_of.pop(key, None)
-        if cid is None:
-            return
-        self._members[cid].discard(key)
-        remaining_in_c = self._members[cid]
-        if not remaining_in_c:
-            del self._members[cid]
-            del self._sizes[cid]
-            return
 
-        # Re-BFS within remaining_in_c to detect splits caused by removing key.
-        unvisited = set(remaining_in_c)
-        first = True
-        while unvisited:
-            start = next(iter(unvisited))
-            sub: set[Path] = set()
-            frontier = [start]
-            while frontier:
-                k = frontier.pop()
-                if k in sub:
-                    continue
-                sub.add(k)
-                unvisited.discard(k)
-                for nb in self._adj.get(k, []):
-                    if nb in remaining_in_c and nb not in sub:
-                        frontier.append(nb)
-            if first:
-                # Reuse the original component id for the first sub-component.
-                self._members[cid] = sub
-                self._sizes[cid] = len(sub)
-                for k in sub:
-                    self._component_of[k] = cid
-                first = False
-            else:
-                new_cid = self._new_cid()
-                self._members[new_cid] = sub
-                self._sizes[new_cid] = len(sub)
-                for k in sub:
-                    self._component_of[k] = new_cid
+def _remove_component_key(state: _ConnectedComponentState, key: Path) -> None:
+    cid = state.component_of.pop(key)
+    state.members[cid].remove(key)
+    remaining_in_component = state.members[cid]
+    if not remaining_in_component:
+        del state.members[cid]
+        del state.sizes[cid]
+        return
 
-    def __call__(
-        self, ready: list, remaining: list, available_resources: dict[str, int]
-    ) -> list:
-        if self._adj is None or (not self._component_of and remaining):
-            self._build(remaining)
-            self._prev_keys = {n.relative_path for n in remaining}
+    # Re-BFS only this component to detect splits caused by removing the key.
+    unvisited = set(remaining_in_component)
+    first = True
+    while unvisited:
+        start = next(iter(unvisited))
+        subcomponent: set[Path] = set()
+        frontier = [start]
+        while frontier:
+            candidate = frontier.pop()
+            if candidate in subcomponent:
+                continue
+            subcomponent.add(candidate)
+            unvisited.discard(candidate)
+            for neighbour in state.adj[candidate]:
+                if (
+                    neighbour in remaining_in_component
+                    and neighbour not in subcomponent
+                ):
+                    frontier.append(neighbour)
+        if first:
+            state.members[cid] = subcomponent
+            state.sizes[cid] = len(subcomponent)
+            for member in subcomponent:
+                state.component_of[member] = cid
+            first = False
         else:
-            current_keys = {n.relative_path for n in remaining}
-            for key in self._prev_keys - current_keys:
-                self._remove(key)
-            self._prev_keys = current_keys
+            new_cid = _new_component_id(state)
+            state.members[new_cid] = subcomponent
+            state.sizes[new_cid] = len(subcomponent)
+            for member in subcomponent:
+                state.component_of[member] = new_cid
 
-        return sorted(
-            ready,
-            key=lambda n: self._sizes.get(
-                self._component_of.get(n.relative_path, -1), 0
-            ),
+
+def _schedule_connected_components(
+    state: _ConnectedComponentState,
+    ready: list,
+    remaining: list,
+    available_resources: dict[str, int],
+) -> list:
+    current_keys = {node.relative_path for node in remaining}
+    if state.prev_keys is None:
+        _build_components(state, remaining)
+    else:
+        for key in state.prev_keys - current_keys:
+            _remove_component_key(state, key)
+    state.prev_keys = current_keys
+
+    return sorted(
+        ready,
+        key=lambda node: state.sizes[state.component_of[node.relative_path]],
+    )
+
+
+def make_connected_component_scheduler() -> Scheduler:
+    """Return an incremental smallest-component scheduler for one execution.
+
+    The returned function builds its component index on its first call. Later
+    calls re-BFS only components containing newly completed nodes. Create a new
+    scheduler for each ``execute()`` invocation so graph-specific state cannot
+    leak between runs.
+    """
+    state = _ConnectedComponentState()
+
+    def connected_component_scheduler(
+        ready: list, remaining: list, available_resources: dict[str, int]
+    ) -> list:
+        return _schedule_connected_components(
+            state, ready, remaining, available_resources
         )
 
-
-connected_component_scheduler = ConnectedComponentScheduler()
+    return connected_component_scheduler

@@ -47,8 +47,8 @@ from necroflow.dag import (
 from necroflow.pipeline import DAG, write_ancestor_graph
 from necroflow.schedulers import (
     Scheduler,
-    connected_component_scheduler,
     fifo_scheduler,
+    make_connected_component_scheduler,
 )
 from necroflow import logger as _logger
 
@@ -549,7 +549,7 @@ def _run_with_retries(node, log_path, runner) -> None:
 def execute(
     dag: DAG,
     resource_caps: dict[str, int] | None = None,
-    scheduler: Scheduler = connected_component_scheduler,
+    scheduler: Scheduler | None = None,
     keep_going: bool = False,
     autoclean: bool = False,
     dry_run: bool = False,
@@ -574,8 +574,10 @@ def execute(
     detected CPUs for ``threads``. Uncapped resource names are ignored. A job
     exceeding a cap may run alone so an undersized cap cannot deadlock it.
 
-    ``scheduler`` prioritises READY nodes; dependency gates, resource admission,
-    worker submission, and state transitions remain executor responsibilities.
+    ``scheduler`` prioritises READY nodes and defaults to a fresh incremental
+    connected-component scheduler for each invocation. Dependency gates,
+    resource admission, worker submission, and state transitions remain
+    executor responsibilities.
     ``keep_going=False`` re-raises the first attempted-job failure.
     ``keep_going=True`` continues independent branches and raises an
     ExceptionGroup containing all attempted-job failures at the end.
@@ -593,6 +595,8 @@ def execute(
     """
     if not isinstance(dag, DAG):
         raise TypeError(f"execute requires a DAG, got {type(dag).__name__}")
+    if scheduler is None:
+        scheduler = make_connected_component_scheduler()
     _validate_scheduler(scheduler)
     _run = node_runner if node_runner is not None else _run_node
     _logger.setup()

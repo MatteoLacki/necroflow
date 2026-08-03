@@ -40,7 +40,13 @@ from typing import Callable, TypeAlias
 
 import tomlkit
 
-from necroflow import DAG, Node, Pipeline, connected_component_scheduler, fifo_scheduler
+from necroflow import (
+    DAG,
+    Node,
+    Pipeline,
+    fifo_scheduler,
+    make_connected_component_scheduler,
+)
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import (
     NodeState,
@@ -77,8 +83,9 @@ def _load_validators(specs: list[str]) -> list[Callable]:
 
 
 def _load_scheduler(spec: str) -> Callable:
+    if spec == "connected-components":
+        return make_connected_component_scheduler()
     builtins = {
-        "connected-components": connected_component_scheduler,
         "fifo": fifo_scheduler,
     }
     if spec in builtins:

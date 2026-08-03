@@ -1,0 +1,448 @@
+# YAGNI review of necroflow
+
+**Scope:** `src/necroflow/*.py` only — 22 modules, 5975 lines. Tests and docs consulted only
+to measure blast radius.
+
+**Method:** read every module; verified each claim against the source; ran two probes where
+reading alone was not conclusive.
+
+**Bias declared up front:** prefer plain dicts, tuples and functions over classes; delete
+speculative generality; keep abstractions that carry real weight. Two findings below are
+explicit recommendations *not* to change something.
+
+---
+
+## Verdict
+
+The core is sound. Eager addressing, content-addressed identity, filesystem-as-state, one
+canonical `RuleCall` per invocation, framed canonical hashing — none of that needs
+rethinking, and most of it is better than average.
+
+The cost sits in the periphery: one stateful class that should be a function, several
+zero-behaviour wrappers, and duplicated state on `Node`.
+
+**Realistic saving is ~250 lines, not the ~600 I estimated in conversation.** That earlier
+figure was a guess; the itemised total below is the real one.
+
+---
+
+## Scoreboard
+
+| ID | Finding | Lines | Risk | Do it? |
+|---|---|---|---|---|
+| Y1 | Scheduler leaks state across `execute()` calls | −100 | low | **yes, first** |
+| Y2 | `_content_hash` reads whole files into memory | ~0 | low | **yes** |
+| Y3 | `Node` duplicates five `RuleCall` fields | −10 | med | **yes** |
+| Y4 | `RuleCall` is a two-phase constructor | −15 | low | **yes** |
+| Y5 | `keywords.py` is an empty frozenset | −5 | none | **yes** |
+| Y6 | `_compute_value_only_keys` is unreachable | −23 | none | **yes** |
+| Y7 | Dead local `import Path` | −1 | none | **yes** |
+| Y8 | `_GraphBase` is inheritance-as-code-sharing | −20 | low | yes |
+| Y9 | `__str__` renderer keys layout on `id()` | ~0 | low | yes |
+| Y10 | `grid.py` keys labels on `id()` | ~0 | med | yes |
+| Y11 | `gc.py` finds rules by bytecode introspection | ~0 | med | **yes** |
+| Y12 | `_accumulated_config` is exponential on diamonds | +2 | low | yes |
+| Y13 | Label assignment is O(n²) | +5 | low | later |
+| Y14 | `Pipeline.__setattr__` writes the label twice | −2 | med | yes |
+| Y15 | Four entry points for two built-in rules | −40 | med | later |
+| Y16 | `fingerprint` compatibility aliases | −10 | low | later |
+| Y17 | `_compat.py` for Python 3.10 | −9 | low | decide |
+| Y18 | `autoclean` threaded through `execute()` | −30 | med | later |
+| N1 | `NamedValues` → plain dict | −32 | high | **no** |
+| N2 | `Inputs`/`Outputs`/`Constraints` → dicts | −30 | high | **no** |
+
+---
+
+## Bugs
+
+### Y1 — the default scheduler leaks state between runs
+
+`schedulers.py:132`, reached via `executor.py:552`.
+
+Full analysis with a reproduction is in [`bugs/scheduler.md`](../bugs/scheduler.md). In brief:
+
+```python
+# src/necroflow/schedulers.py:115
+if self._adj is None or (not self._component_of and remaining):
+```
+
+`_adj` is initialised to `{}` and never set to `None`, so the first disjunct is dead. The
+rebuild therefore depends entirely on `_component_of` being empty — but it never is, because
+`executor.py:654` checks its `while` condition before calling the scheduler, so the final
+call always leaves keys behind. The next `execute()` treats a new graph as an incremental
+update of the old one.
+
+The chained defaults on the sort key are what make it silent:
+
+```python
+# src/necroflow/schedulers.py:124
+key=lambda n: self._sizes.get(self._component_of.get(n.relative_path, -1), 0)
+```
+
+Verified: identical input, two different orderings.
+
+```
+fresh instance        : [x, b, c, d]     singleton x first, as designed
+shared, after warmup  : [b, c, x, d]     wrong
+shared, unseen keys   : [p, q, r]        silently degrades to fifo
+```
+
+**Severity is lower than it first appears.** `cli.py:213` accumulates every job and grid
+variant into one `DAG`, and `_run` calls `dag.execute()` once (`cli.py:656`). `necroflow run`
+cannot trigger this today. It is a trap for library embedders and for any future change that
+executes more than one DAG per process.
+
+**Why this is a YAGNI finding, not just a bug.** The 110 lines of incremental re-BFS with
+component-id recycling exist to make a *sort key* cheaper. Nothing in the repo measures that
+it was needed. The executor loop already performs three O(active) scans per iteration
+(`executor.py:657-664`), and `nodes.py:218` already contains a correct stateless component
+walk. There are two connected-component implementations in this codebase; keep the one that
+cannot hold state.
+
+```python
+def connected_component_scheduler(ready, remaining, available_resources):
+    """Prioritise nodes from the smallest connected component of remaining work."""
+    size_of = {}
+    for component in iter_connected_components(remaining):
+        for node in component:
+            size_of[node.relative_path] = len(component)
+    return sorted(ready, key=lambda n: size_of[n.relative_path])
+```
+
+Plain `[]`, not `.get(..., 0)` — every node in `ready` is by definition in `remaining`, so a
+miss is a bug and should say so.
+
+### Y2 — `_content_hash` loads entire files into RAM
+
+```python
+# src/necroflow/dag.py:56
+def _content_hash(path: Path) -> str:
+    """SHA-256 of a file's bytes, or of all non-.rip files in a directory."""
+    h = hashlib.sha256()
+    if path.is_file():
+        h.update(path.read_bytes())
+```
+
+For a framework whose worked examples are BAMs and FASTQs this is an operational limit, not
+a style point. It runs on every staleness check that fails the mtime fast path, and again in
+`write_dependencies` after every successful job. Chunk it.
+
+### Y11 — `gc.py` discovers rules by walking bytecode names
+
+```python
+# src/necroflow/gc.py:43
+for name in factory.__code__.co_names:
+    value = factory.__globals__.get(name)
+    if isinstance(value, Rule):
+        rules.add(value)
+```
+
+This misses any rule reached through an attribute, a dict lookup, a closure, or a local
+alias. The consequence of missing one is that its `declared_rule_hash` is absent from
+`valid_rule_hashes`, `_incompatible_keys` marks its nodes obsolete, and `collect()` **deletes
+them**.
+
+A destructive operation should not rest on a reflective heuristic. Either require rules to be
+declared explicitly in the GC script, or refuse to delete when discovery looks incomplete.
+The current `raise ValueError` when *zero* rules are found only catches the total failure,
+not the partial one — and partial is the dangerous case.
+
+---
+
+## Delete now — zero risk
+
+### Y5 — `keywords.py`
+
+An entire module for:
+
+```python
+# src/necroflow/keywords.py:3
+RESERVED: frozenset[str] = frozenset()
+```
+
+plus a check on the hot assignment path (`pipeline.py:414`) that cannot fire. Textbook
+speculative generality. Delete both.
+
+### Y6 — `_compute_value_only_keys` is unreachable
+
+`grid.py:284`, ~23 lines. It returns `set()` immediately unless `short_names=True`:
+
+```python
+# src/necroflow/grid.py:288
+if not short_names:
+    return set()
+```
+
+The only caller of `iter_configs` is `config.py:145`, which passes neither `short_names` nor
+`equal_sign`. Confirmed by grep: no other call site exists in `src/`.
+
+### Y7 — dead local import
+
+```python
+# src/necroflow/pipeline.py:241
+from pathlib import Path
+```
+
+inside `_GraphBase.save`. `Path` is already imported at `pipeline.py:5`.
+
+---
+
+## Simplify
+
+### Y3 — `Node` duplicates its `RuleCall`
+
+`Node` stores `config`, `rule`, `command`, `parents` and `mutable` (`nodes.py:63-77`), copied
+in at construction:
+
+```python
+# src/necroflow/nodes.py:166
+Node(
+    output_name=oname,
+    node_type=otype,
+    mutable=otype.mutable,
+    parents=call.parents,
+    config=config,
+    rule=rule,
+    command=command,
+    ...
+)
+```
+
+Every one is already reachable: `rule_call.config`, `.rule`, `.command`, `.parents`, and
+`node_type.mutable`. Node genuinely needs `output_name`, `node_type`, `relative_path`,
+`path`, `rule_call`, `state`. Five redundant fields per node, and two places to keep in sync.
+
+**One caveat that stops this being a naive delegation.** `RuleCall.parents` is a *computed
+property* (`rule_call.py:41`) that rebuilds a list on every access, and `node.parents` is read
+in hot loops — `classify_nodes`, `_topo_sort`, `_promote_states`, `iter_connected_components`.
+Delegating `Node.parents` straight through would turn an attribute read into a rebuild.
+Compute it once in `RuleCall.__post_init__` and store it; then delegate.
+
+`node.output_nodes` (`nodes.py:181-184`) is likewise a second copy of `call.output_nodes`, and
+it makes every Node reference itself. Three sites then need `conode is not node` guards
+(`executor.py:229`, `:473`, and `_cleanup_parents`). Read through `node.rule_call.output_nodes`.
+
+### Y4 — `RuleCall` is a two-phase constructor
+
+```python
+# src/necroflow/rule_call.py:25
+_rule_hash: str | None = None
+_provenance_hash: str | None = None
+_relative_path: Path | None = None
+```
+
+assigned from outside the class five lines later:
+
+```python
+# src/necroflow/nodes.py:144
+call._rule_hash, call._provenance_hash = compute_hashes(call)
+rule_component = _safe_path_component(rule.__name__, kind="rule name")
+call._relative_path = (
+    Path(rule_component) / call.rule_hash / call.provenance_hash
+)
+```
+
+Three property getters exist solely to raise `RuntimeError("... was not compiled")` for a
+window that lasts those five lines. Everything needed is available at construction — compute
+in `__post_init__`, delete the `None` states and all three guards.
+
+`_command_realized: bool` alongside `_realized_command: str | None` is redundant: the callback
+contract already rejects empty strings (`dag.py:284`), so `None` unambiguously means "not
+realized".
+
+### Y14 — `Pipeline.__setattr__` writes the label twice
+
+```python
+# src/necroflow/pipeline.py:449
+if isinstance(value, Node):
+    if any(name in cls.__dict__ for cls in type(self).__mro__):
+        raise ValueError(...)
+    self._assign_node(name, value)
+object.__setattr__(self, name, value)
+```
+
+The label lands in `_state.node_names` *and* in this view object's instance `__dict__`. So
+`__getattr__` — the documented lookup path, which is the thing that applies the request
+prefix — is dead for any label read from the same object that assigned it. Lookup semantics
+now depend on which view object you happen to be holding.
+
+Drop the `object.__setattr__` for Node values. One dict, one path.
+
+### Y12 — `_accumulated_config` is exponential
+
+```python
+# src/necroflow/dag.py:69
+def _accumulated_config(node: Node) -> dict:
+    config = {}
+    for parent in node.parents:
+        config.update(_accumulated_config(parent))
+    config.update(node.config)
+    return config
+```
+
+No memo, so a DAG with *k* diamonds costs 2^k. It runs once per successful job inside
+`write_dependencies`. A `visited` dict fixes it in two lines.
+
+### Y13 — label assignment is O(n²)
+
+```python
+# src/necroflow/pipeline.py:423
+for existing_name, existing_node in self._state.node_names.items():
+    existing_path = PurePosixPath(existing_name) / existing_node.path.name
+    if _result_paths_conflict(result_path, existing_path):
+```
+
+Every assignment scans every prior label. A cohort of 1000 samples × 6 labels is ~18M
+comparisons. Two sets — one of result paths, one of all directory prefixes — give O(depth)
+per insert. Not urgent; flag it before someone runs a large cohort.
+
+### Y8 / Y9 — the ASCII renderer
+
+`_GraphBase` (`pipeline.py:107-243`) is inheritance used for code sharing, not polymorphism:
+`Pipeline`, `DAG` and `_AncestorView` share only `__str__` and `save`. A
+`render_ascii(nodes, header)` function called from three sites removes the base class and
+`_AncestorView` entirely.
+
+While in there: the renderer keys its whole layout on `id()`.
+
+```python
+# src/necroflow/pipeline.py:142
+id_to_node = {id(n): n for n in nodes}
+```
+
+This contradicts the project's own stated invariant — "Identity via `node.relative_path`,
+never `id()`". It works within one process, but it is exactly the pattern banned elsewhere,
+and the dummy-node insertion at `pipeline.py:179-192` then has to mint negative integers to
+share the same keyspace. Using `relative_path` and a separate dummy counter is no harder.
+
+### Y10 — `grid.py` keys generated filenames on `id()`
+
+```python
+# src/necroflow/grid.py:182
+return {id(v): sanitize_for_filename(v[key]) for v in vals}
+# src/necroflow/grid.py:237
+val_str = str(grid_indices[key][id(value)])
+```
+
+Same anti-pattern, but here it is load-bearing for user-visible output filenames. It only
+works because `grid_params` keeps the objects alive; any reparse or `copy.deepcopy` silently
+produces wrong labels. Worse, `iter_configs` mutates those very objects after indexing them:
+
+```python
+# src/necroflow/grid.py:341
+for vals in grid_params.values():
+    for v in vals:
+        if isinstance(v, dict) and "__label" in v:
+            del v["__label"]
+```
+
+Key by position in the `vals` list instead. `enumerate` already provides a stable index, and
+the code falls back to exactly that in two of the three branches.
+
+---
+
+## Structural
+
+### Y15 — four entry points for two behaviours
+
+`text_file`, `text_file_rule`, `symlink_file`, `symlink_file_rule`. `text_file` additionally
+supports both the bare and configured decorator forms, which costs two `@overload` stubs and
+a `# pyright: ignore[reportInconsistentOverload]` (`rules.py:822-836`). `symlink_file`
+supports only the bare form. The asymmetry is not motivated by anything in the source.
+
+Pick one shape for both. Moderate blast radius — public API.
+
+### Y18 — `autoclean` is woven through `execute()`
+
+`execute()` is 240 lines with 9 parameters. `autoclean` alone touches six places: conditional
+`children`/`final_keys` construction (`executor.py:640-648`), three `_cleanup_parents` calls,
+and `_prepare_active`. The `on_complete` hook already exists and is the natural home for a
+post-run sweep. The only thing lost is cleaning intermediates *during* a long run to save
+peak disk — which may well be the point, in which case keep it. Worth deciding deliberately
+rather than by inertia.
+
+### Y16 — `fingerprint` compatibility aliases
+
+```python
+# src/necroflow/nodes.py:92
+@property
+def fingerprint(self) -> str:
+    """Compatibility alias for :attr:`provenance_hash`."""
+```
+
+plus the twin at `rule_call.py:61`. Version is `0.0.4` — there is no released compatibility
+to preserve.
+
+**Correction to what I said in conversation:** these are not dead. `tests/test_dag_core.py`
+and `tests/test_variadic_inputs.py` use `.fingerprint` in ten assertions. Deleting the alias
+means renaming those first. Still worth doing — two names for one concept is a permanent tax
+— but it is a rename, not a deletion.
+
+### Y17 — `_compat.py`
+
+`requires-python = ">=3.10"` and `exceptiongroup>=1.0.0; python_version < '3.11'`, while
+`make venv` builds Python 3.14. If nothing actually tests 3.10, bump to `>=3.11`, delete the
+module and drop the dependency. If 3.10 support is real, keep it — it is correct as written.
+This is a decision to make, not a defect.
+
+---
+
+## Deliberately not recommended
+
+A YAGNI review that only ever says "delete it" is not worth much. These two look like
+obvious targets and should be left alone.
+
+### N1 — `NamedValues` should stay
+
+`contexts.py:12` — 32 lines with `__slots__`, `MappingProxyType`, `Generic[_T]` and
+`__getattr__`, where a dict would do. Its docstring concedes the sharp edge: "Mapping methods
+win when a declared name collides with the Mapping API", so an input named `items` is
+shadowed by the method.
+
+I was going to call that a footgun. It is not an accident — it is specified and tested:
+
+```python
+# tests/test_fingerprints.py:99
+values = NamedValues({"sample": "S1", "items": "declared"})
+...
+assert callable(values.items)
+assert values["items"] == "declared"
+```
+
+The collision has a defined resolution, bracket access always works, and the type is part of
+the public `CommandArgs` contract that user callbacks are written against. That is a design
+disagreement on my part, not a defect, and it is not worth breaking every Python command
+callback to win. Leave it.
+
+### N2 — `Inputs` / `Outputs` / `Constraints` should stay
+
+`rules.py:52-74` — three identical zero-behaviour classes wrapping `**kwargs` into
+`self.specs`, existing only so `command()` can `isinstance`-dispatch on positional
+`*declarations`. That dispatch is genuinely clumsy (`rules.py:685-714`: an arity check for
+`(2, 3)`, three `isinstance` guards, ordering assumptions, and a
+`constraints.pop("input_defaults")` hack).
+
+But: **317 occurrences across 13 files.** The classes are the declaration vocabulary of the
+whole test suite and the typing fixtures. The abstraction is thin, but it is load-bearing and
+it reads well at the call site. Churning 300+ sites to save ~30 lines is a bad trade.
+
+If the dispatch clumsiness ever needs fixing, add keyword parameters alongside the positional
+form rather than replacing it.
+
+---
+
+## Suggested sequence
+
+1. **Y1** — the only outright bug. Replacing the class with a function fixes it and removes
+   ~100 lines in the same change.
+2. **Y2** — operational limit on real data; independent of everything else.
+3. **Y11** — destructive failure mode; decide the policy before someone loses a node store.
+4. **Y5, Y6, Y7** — free deletions, no behaviour change, good warm-up commits.
+5. **Y4 then Y3** — do `RuleCall.__post_init__` first so `parents` is cached before `Node`
+   starts delegating to it.
+6. **Y14, Y12** — small, local, independent.
+7. **Y8/Y9, Y10** — the two `id()` sites; mechanical but touches rendering and filenames, so
+   they want their own commits.
+8. Everything else on the scoreboard is discretionary.
+
+Regression tests land in the same commit as each fix, per the project convention.

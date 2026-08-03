@@ -153,13 +153,13 @@ def my_scheduler(ready: list[Node], remaining: list[Node],
   `execute()` rejects invalid selections before submission.
 - Plain callables and callable objects both work; `execute()` rejects wrong-arity schedulers
   up front with a `TypeError` naming this protocol.
-- Built-ins in `src/necroflow/schedulers.py`: `connected_component_scheduler` (default;
-  incremental smallest-component-first) and `fifo_scheduler` (registration order).
+- Built-ins in `src/necroflow/schedulers.py`: `make_connected_component_scheduler()` creates the default
+  incremental smallest-component-first scheduler; `fifo_scheduler` uses registration order.
   CLI: `--scheduler connected-components | fifo | file.py:callable`.
 
 ## `execute()` — check the docstring for details
 
-`necroflow.executor.execute(dag, resource_caps=None, scheduler=..., keep_going=False,
+`necroflow.executor.execute(dag, resource_caps=None, scheduler=None, keep_going=False,
 autoclean=False, dry_run=False, node_runner=None, forced_stale_keys=None,
 on_complete=None)
 -> dict[str, ExecutionEvent]`
@@ -179,7 +179,7 @@ src/necroflow/
   fingerprints.py    — canonical v3 rule/provenance hashes and callable AST identity
   rules.py           — Rule internals plus command, text-file, and symlink-file declarations,
                        parse_resource with SI/binary suffixes
-  schedulers.py      — Scheduler protocol, fifo_scheduler, ConnectedComponentScheduler
+  schedulers.py      — Scheduler protocol, fifo_scheduler, incremental scheduler factory
   dag.py             — path-length checks, resolve_command, write_dependencies,
                        classify_nodes, content hashing
   pipeline.py        — _GraphBase, Pipeline (prefixed views, labels, finish), DAG, ASCII rendering

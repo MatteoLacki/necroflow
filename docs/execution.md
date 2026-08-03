@@ -65,6 +65,14 @@ use a shell and are not affected. All supported commands resolve to shell
 strings; argv-list commands were removed in fingerprint v3.
 
 By default the scheduler prioritises nodes from the **smallest connected component** of remaining work — this tends to finish whole samples before starting new ones, keeping memory pressure low.
+Library callers that explicitly select this policy should create a fresh scheduler for each execution:
+
+```python
+from necroflow import make_connected_component_scheduler
+
+dag.execute(scheduler=make_connected_component_scheduler())
+```
+
 The CLI accepts `--scheduler connected-components` (default), `--scheduler fifo`, or a local Python callable such as `--scheduler schedulers.py:my_scheduler`.
 
 ```python

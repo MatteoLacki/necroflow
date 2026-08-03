@@ -32,7 +32,7 @@ The regression: the original scheduler used `{id(n): ...}` dicts; deduplication 
 When a module grows a second conceptual domain, extract it:
 - `nodes.py` — Node, NodeType, NodeState, topo_sort, connected components
 - `rules.py` — Rule internals, command/text/symlink declarations, parse_resource
-- `schedulers.py` — Scheduler protocol, fifo_scheduler, ConnectedComponentScheduler
+- `schedulers.py` — Scheduler protocol, fifo_scheduler, incremental scheduler factory
 - `executor.py` — orchestration only; no state logic, no resource parsing
 
 ### Methods own their domain
@@ -41,10 +41,10 @@ State transitions belong on the object that owns the state.
 - `rule.resources` → on `Rule`
 - Free functions in `executor.py` that operated on node internals were moved to methods
 
-### Stateful class over stateless function when init cost matters
+### Execution-local state when initialization cost matters
 The connected-component scheduler was a stateless function recomputing all components on every call — O(n) per scheduler tick.
-Replaced with `ConnectedComponentScheduler`: computes once, then on each job completion only re-BFS's the affected component.
-Pattern: if a callable needs to remember work across calls within one `execute()` run, make it a class with `reset()` logic.
+Replaced with an incremental scheduler: it computes once, then on each job completion only re-BFSs the affected component.
+Pattern: bind mutable state into a fresh closure for each `execute()` run so initialization work is reused without leaking across runs.
 
 ### Context managers for paired operations
 `_acquire_lock()` is a `@contextmanager`, not a manual try/finally.

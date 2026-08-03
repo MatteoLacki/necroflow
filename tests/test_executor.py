@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 import tomlkit
 from necroflow import NodeState, NodeType, Pipeline, DAG, execute, output
-from necroflow import fifo_scheduler, connected_component_scheduler, output
-from necroflow.schedulers import ConnectedComponentScheduler
+import necroflow.schedulers as schedulers
+from necroflow import fifo_scheduler, make_connected_component_scheduler, output
 
 
 def execute_pipeline(pipeline, **kwargs):
@@ -550,7 +550,7 @@ def test_connected_component_scheduler(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
-    execute_pipeline(P, scheduler=connected_component_scheduler)
+    execute_pipeline(P, scheduler=make_connected_component_scheduler())
     assert P.b.path.exists()
 
 
@@ -590,8 +590,7 @@ def test_legacy_two_argument_scheduler_rejected_up_front(tmp_path):
 def test_scheduler_protocol_accepts_callable_objects(tmp_path):
     """Class-based schedulers with a 3-argument __call__ must pass validation.
 
-    Built-in connected_component_scheduler is a callable object, not a function;
-    the protocol check must inspect __call__ rather than assume a plain function.
+    The protocol check must accept user-defined callable objects.
     """
 
     class ObjectScheduler:
@@ -699,7 +698,7 @@ def test_scheduler_exhausts_smallest_chain_first(tmp_path):
     P.c4c = Rchain_c4_s3(P, P.c4b)
     P.c4d = Rchain_c4_s4(P, P.c4c)
 
-    fn, started = _recording(ConnectedComponentScheduler())
+    fn, started = _recording(make_connected_component_scheduler())
     execute_pipeline(P, scheduler=fn, resource_caps={"threads": 1})
 
     chain2 = {"c2_s1", "c2_s2"}
@@ -708,6 +707,73 @@ def test_scheduler_exhausts_smallest_chain_first(tmp_path):
     idx = {name: i for i, name in enumerate(started)}
     assert max(idx[n] for n in chain2) < min(idx[n] for n in chain3)
     assert max(idx[n] for n in chain3) < min(idx[n] for n in chain4)
+
+
+def test_connected_component_scheduler_builds_index_once(tmp_path, monkeypatch):
+    """Incremental scheduling must build the complete component index only once."""
+    build_calls = 0
+    original_build = schedulers._build_components
+
+    def recording_build(state, nodes):
+        nonlocal build_calls
+        build_calls += 1
+        original_build(state, nodes)
+
+    monkeypatch.setattr(schedulers, "_build_components", recording_build)
+    P = Pipeline(DAG(tmp_path))
+    P.a = R_make_a(P, x="x")
+    P.b = R_make_b(P, P.a)
+
+    execute_pipeline(
+        P,
+        scheduler=make_connected_component_scheduler(),
+        resource_caps={"threads": 1},
+    )
+
+    assert build_calls == 1
+
+
+def test_default_scheduler_has_fresh_state_for_each_execute(tmp_path):
+    """Repeated execute calls must not inherit connected-component state."""
+
+    def execute_once(nodes_dir):
+        P = Pipeline(DAG(nodes_dir))
+        P.c2a = Rchain_c2_s1(P, x="c2")
+        P.c2b = Rchain_c2_s2(P, P.c2a)
+        P.c3a = Rchain_c3_s1(P, x="c3")
+        P.c3b = Rchain_c3_s2(P, P.c3a)
+        P.c3c = Rchain_c3_s3(P, P.c3b)
+        P.c4a = Rchain_c4_s1(P, x="c4")
+        P.c4b = Rchain_c4_s2(P, P.c4a)
+        P.c4c = Rchain_c4_s3(P, P.c4b)
+        P.c4d = Rchain_c4_s4(P, P.c4c)
+        started = []
+
+        def recording_runner(node, log_path):
+            started.append(node.rule.__name__)
+            node.path.touch()
+
+        execute_pipeline(
+            P,
+            resource_caps={"threads": 1},
+            node_runner=recording_runner,
+        )
+        return started
+
+    expected = [
+        "c2_s1",
+        "c2_s2",
+        "c3_s1",
+        "c3_s2",
+        "c3_s3",
+        "c4_s1",
+        "c4_s2",
+        "c4_s3",
+        "c4_s4",
+    ]
+
+    assert execute_once(tmp_path / "first") == expected
+    assert execute_once(tmp_path / "second") == expected
 
 
 class FA(NodeType):
@@ -760,7 +826,7 @@ def test_scheduler_fork_prefers_smaller_branch(tmp_path):
     P.f = Rfork_rf(P, P.d)
     P.g = Rfork_rg(P, P.f)
 
-    fn, started = _recording(ConnectedComponentScheduler())
+    fn, started = _recording(make_connected_component_scheduler())
     execute_pipeline(P, scheduler=fn, resource_caps={"threads": 1})
 
     assert started == ["ra", "rb", "rc", "re", "rd", "rf", "rg"]
