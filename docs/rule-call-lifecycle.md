@@ -6,23 +6,84 @@ A factory compiles one configured view of a shared DAG. Rule calls calculate
 identity, paths, and canonicalize equivalent computations immediately. Command
 realization and filesystem materialization remain deferred until execution.
 
-The running example is:
+## Flow at a glance
+
+1. A root `Pipeline` and all of its prefixed subpipeline views compile into one
+   shared `DAG`.
+2. Each rule call validates its inputs, computes both hashes and its final paths,
+   and is immediately interned with any equivalent call already in that DAG.
+3. Assigning the returned Nodes records request/result labels. A subpipeline adds
+   its prefix to those labels only; it does not change computation identity.
+4. For each root Pipeline, `P.finish()` closes construction and the caller adds
+   that Pipeline's selected outputs to the shared DAG, commonly with
+   `dag.require(P.sinks())`. Requirements from all configured Pipelines
+   accumulate.
+5. After every Pipeline has contributed its requirements, execution classifies
+   the combined required subgraphs. Only missing or stale calls have their
+   commands realized and materialized; up-to-date calls remain cached.
+
+The running example compiles two root Pipelines into one DAG. The first is a
+cohort with shared reference data, one subpipeline per sample, and a nested
+quality-control subpipeline. The second is the simple sorting Pipeline:
 
 ```python
 from necroflow import DAG, Pipeline
 
-dag = DAG("nodes")
-P = Pipeline(dag)
+def qc_pipeline(Q: Pipeline, bam) -> None:
+    Q.metrics = collect_metrics(Q, bam)
+    Q.report = render_qc(Q, Q.metrics)
+
+
+def sample_pipeline(S: Pipeline, reference, annotation, sample: dict) -> None:
+    S.fastq = raw_fastq(S, path=sample["reads"])
+    S.bam, S.align_log = align(S, S.fastq, reference)
+    qc_pipeline(S.subpipeline("qc"), S.bam)
+    S.counts = count_reads(S, S.bam, annotation)
+
+
+def cohort_pipeline(P: Pipeline, config: dict) -> None:
+    P.reference = prepare_reference(P, path=config["reference"])
+    P.annotation = prepare_annotation(P, path=config["annotation"])
+
+    for sample in config["samples"]:
+        sample_pipeline(
+            P.subpipeline(f"samples/{sample['name']}"),
+            P.reference,
+            P.annotation,
+            sample,
+        )
+
 
 def sorting_pipeline(P: Pipeline, config: dict) -> None:
     P.source = source_text(P, path=config["input"])
     P.sorted = sort_text(P, P.source, reverse=config.get("reverse", False))
 
-sorting_pipeline(P, config)
+
+dag = DAG("nodes")
+
+# One root Pipeline compiles the cohort.
+P = Pipeline(dag)
+cohort_pipeline(P, cohort_config)
 P.finish()
 dag.require(P.sinks())
+
+# Another root Pipeline compiles an independent request namespace into the
+# same canonical DAG.
+T = Pipeline(dag)
+sorting_pipeline(T, sorting_config)
+T.finish()
+dag.require(T.sinks())
+
+# Requirements from both Pipelines execute together.
 dag.execute()
 ```
+
+For sample `A`, this creates labels such as `samples/A/bam`,
+`samples/A/counts`, and `samples/A/qc/report`. The walkthrough below focuses on
+that sample's multi-output `align(...)` call. `P` denotes the root Pipeline,
+`S` its `samples/A` view, and `Q` the nested `samples/A/qc` view. `T` is
+the independent sorting Pipeline. Both roots share `dag`, so their requirements
+accumulate and equivalent rule calls would still be interned together.
 
 ## 1. The Pipeline identifies the shared DAG
 
@@ -51,37 +112,41 @@ in the same run references the same DAG.
 For:
 
 ```python
-P.sorted = sort_text(P, P.source, reverse=False)
+S.bam, S.align_log = align(S, S.fastq, reference)
 ```
 
 `Rule.__call__` receives:
 
 ```python
-pipeline = P
-args = (P.source,)
-kwargs = {"reverse": False}
+pipeline = S
+args = (S.fastq, reference)
+kwargs = {}
 ```
 
 The Pipeline is positional-only and must be first. `Rule.__call__` first checks
 that Pipeline construction remains open, so calls after `finish()` fail before
-fingerprinting or interning. Every Node input must belong to `P.dag`. A
+fingerprinting or interning. A view uses the root's construction state, DAG, and
+shell policy. Every Node input must belong to `S.dag`. A
 canonical Node can be used from another Pipeline sharing that DAG, but a Node
-from a different DAG is rejected.
+from a different DAG is rejected. This is why reusable subpipeline factories
+receive external Nodes such as `reference` explicitly.
 
 ## 3. Parent Nodes already have canonical addresses
 
-`P.source` is an instantiated canonical Node. It already has:
+`S.fastq` and `reference` are instantiated canonical Nodes. For example,
+`S.fastq` already has:
 
 ```python
-P.source.rule_hash       # 64 lowercase hexadecimal characters
-P.source.provenance_hash # 64 lowercase hexadecimal characters
-P.source.relative_path   # Path("source_text/<rule_hash>/<provenance_hash>/input.txt")
-P.source.path          # P.dag.nodes_dir / P.source.relative_path
+S.fastq.rule_hash       # 64 lowercase hexadecimal characters
+S.fastq.provenance_hash # 64 lowercase hexadecimal characters
+S.fastq.relative_path   # Path("raw_fastq/<rule_hash>/<provenance_hash>/reads.fastq.gz")
+S.fastq.path            # S.dag.nodes_dir / S.fastq.relative_path
 ```
 
-Its output file may not exist yet. A known address and a materialized artifact
-are separate facts. External inputs such as `config["input"]` remain ordinary
-configuration values.
+Their output files may not exist yet. A known address and a materialized
+artifact are separate facts. External values such as `sample["reads"]` are
+ordinary configuration values on the `raw_fastq` call; by the time `align` is
+compiled, the resulting FASTQ is a parent Node.
 
 ## 4. Inputs and configuration are validated
 
@@ -129,12 +194,12 @@ One candidate `RuleCall` represents the invocation and all of its co-outputs:
 
 ```python
 call = RuleCall(
-    dag=P.dag,
-    rule=sort_text,
-    inputs=NamedValues({"source": P.source}),
-    config={"reverse": False},
-    command=sort_text.command,
-    shellpath=P.shellpath,
+    dag=S.dag,
+    rule=align,
+    inputs=NamedValues({"fastq": S.fastq, "reference": reference}),
+    config={},
+    command=align.command,
+    shellpath=S.shellpath,
 )
 ```
 
@@ -169,7 +234,7 @@ The rule-call identity and work directory are:
 
 ```python
 call.relative_path = Path(rule.__name__) / rule_hash / provenance_hash
-call.workdir = P.dag.nodes_dir / call.relative_path
+call.workdir = S.dag.nodes_dir / call.relative_path
 ```
 
 Each output receives its declared `NodeType.filename`. Rule construction has
@@ -178,15 +243,15 @@ NodeTypes remain valid as input contracts, but there is no output-name fallback:
 
 ```python
 node.relative_path = call.relative_path / output_filename
-node.path = P.dag.nodes_dir / node.relative_path
+node.path = S.dag.nodes_dir / node.relative_path
 node.mutable = output_type.mutable
 ```
 
 For a multi-output call:
 
 ```text
-run_sage/<64-hex-rule-hash>/<64-hex-provenance-hash>/results.json
-run_sage/<64-hex-rule-hash>/<64-hex-provenance-hash>/results.tsv
+align/<64-hex-rule-hash>/<64-hex-provenance-hash>/aligned.bam
+align/<64-hex-rule-hash>/<64-hex-provenance-hash>/align.log
 ```
 
 Rule names and output filenames must each be one safe relative path component.
@@ -209,18 +274,22 @@ If the key already exists, the DAG returns the existing RuleCall and its
 existing Node objects. Conflicting output declarations for one call path are a
 split-hash collision and raise an error.
 
-Consequently, equivalent calls in Pipelines sharing a DAG return identical
-objects during factory evaluation:
+Consequently, equivalent calls through differently prefixed views—or through
+different root Pipelines sharing a DAG—return identical objects during factory
+evaluation:
 
 ```python
-P1.source = source_text(P1, path="input.txt")
-P2.source = source_text(P2, path="input.txt")
+first = P.subpipeline("aliases/first")
+second = P.subpipeline("aliases/second")
+first.fastq = raw_fastq(first, path="shared.fastq.gz")
+second.fastq = raw_fastq(second, path="shared.fastq.gz")
 
-assert P1.source is P2.source
+assert first.fastq is second.fastq
 ```
 
 Both framework hashes are computed for each candidate because they are needed
-for lookup. The command callback does not run during lookup.
+for lookup. The two labels differ, but the prefixes never enter either hash.
+The command callback does not run during lookup.
 
 ## 8. The rule returns canonical Node values
 
@@ -245,8 +314,9 @@ are final.
 Attribute and item assignment share one namespace:
 
 ```python
-P.sorted = node
-assert P.sorted is P["sorted"]
+S.bam = node
+assert S.bam is S["bam"]
+assert S.bam is P["samples/A/bam"]
 ```
 
 Assignment records a qualified label in the root Pipeline. Labels are not
@@ -256,11 +326,15 @@ different Pipelines.
 Several labels in one Pipeline may alias the same canonical Node:
 
 ```python
-P.primary = make_result(P, value="same")
-P.alias = make_result(P, value="same")
+P["featured_qc"] = P["samples/A/qc/report"]
+P["exports/qc"] = P["samples/A/qc/report"]
 
-assert P.primary is P.alias
-assert P.labels_for(P.primary) == ("primary", "alias")
+assert P["featured_qc"] is P["exports/qc"]
+assert P.labels_for(P["featured_qc"]) == (
+    "samples/A/qc/report",
+    "featured_qc",
+    "exports/qc",
+)
 ```
 
 The Pipeline's `nodes` list contains that Node once. Labels cannot be
@@ -269,8 +343,9 @@ must refer to Nodes in the same DAG. Item labels may be canonical relative
 POSIX paths:
 
 ```python
-P["dataset/config"] = make_result(P, value="same")
-assert P["dataset/config"] is node
+cohort_summary = combine_counts(P, sample_counts)
+P["exports/cohort"] = cohort_summary
+assert P["exports/cohort"] is cohort_summary
 ```
 
 Each component must be non-empty, non-dot-prefixed, and neither `.` nor `..`;
@@ -283,12 +358,14 @@ These checks happen at assignment; labels remain outside both Node hashes.
 Subpipeline views apply the same operation after qualifying the local name:
 
 ```python
-sample = P.subpipeline("samples/A")
-sample.result = make_result(sample, value="same")
+S = P.subpipeline("samples/A")
+Q = S.subpipeline("qc")
+Q.report = render_qc(Q, Q.metrics)
 
-assert sample.result is P["samples/A/result"]
-assert sample.labels == P.labels
-assert sample.nodes == P.nodes
+assert Q.report is S["qc/report"]
+assert Q.report is P["samples/A/qc/report"]
+assert Q.labels == P.labels
+assert Q.nodes == P.nodes
 ```
 
 Nested subpipelines compose their canonical relative POSIX prefixes. Prefixes
@@ -333,10 +410,10 @@ Immediately before running a missing or stale canonical call,
 
 ```python
 CommandArgs(
-    inputs={"source": P.source.path},
-    config={"reverse": False},
-    outputs={"sorted": node.path},
-    constraints={"threads": 1},
+    inputs={"fastq": S.fastq.path, "reference": reference.path},
+    config={},
+    outputs={"bam": S.bam.path, "log": S.align_log.path},
+    constraints={"threads": 4},
     workdir=node.rule_call.workdir,
 )
 ```
@@ -367,46 +444,6 @@ Execution returns a plain dict mapping each cached or attempted Node's
 and returns that same dict; a keep-going `ExceptionGroup` carries it as
 `execution_report`. Nodes blocked by failed dependencies have no event because
 they were neither cache hits nor attempted.
-
-## Compact sequence
-
-```text
-create shared DAG
-    ↓
-create Pipeline(dag, shell policy)
-    ↓
-factory(P, config)
-    ├─ optional P.subpipeline(prefix) views share root state
-    └─ rule calls reject a finished root before interning
-    ↓
-rule(P, fixed Nodes and/or Node tuples, config...)
-    ↓
-overlay explicit config on declared scalar defaults
-    ↓
-validate types and shared DAG ownership
-    ↓
-candidate RuleCall → 64-hex rule hash + 64-hex provenance hash
-    ↓
-derive rule/rule-hash/provenance-hash/output relative paths
-    ↓
-DAG dictionary lookup
-    ├─ existing → return canonical RuleCall and Nodes
-    └─ absent   → register call and all outputs atomically
-    ↓
-P.name = node or P["name"] = node records qualified root labels
-    ↓
-P.finish() freezes the root and every prefixed view
-    ↓
-dag.require(P.sinks() or explicitly selected labels)
-    ↓
-classify required canonical subgraphs
-    ├─ ordinary parent content changed → stale consumer
-    └─ mutable parent content changed → cached consumer
-    ↓
-missing/stale only: CommandArgs → realize command
-    ↓
-execute each canonical RuleCall once and verify every output
-```
 
 Identity, paths, and deduplication are eager. Command realization and
 materialization are lazy.
