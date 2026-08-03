@@ -12,17 +12,43 @@ explicit recommendations *not* to change something.
 
 ---
 
+## Status update — 2026-08-03
+
+- **Y1 is complete** in commit `5e0bbea`. The fix gives every `execute()` call a fresh
+  scheduler closure while retaining the incremental component index and affected-component
+  re-BFS optimization. The historical analysis remains below, but the shared singleton and
+  `ConnectedComponentScheduler` no longer exist.
+- The original itemised estimate was **~250 removable lines, not ~600**. Because Y1 was
+  fixed without deleting the incremental algorithm, its projected −100-line saving was not
+  realised; the remaining deletion estimate is therefore closer to ~150 lines.
+- **Y16 is a rename, not a dead-code deletion.** The `fingerprint` aliases are used broadly
+  throughout the tests, so the blast radius is larger than the initial ten-assertion count.
+- **N1 remains “do not change.”** `NamedValues.items` collision behaviour is specified and
+  tested, with bracket access providing the declared value.
+- **N2 remains “do not change.”** `Inputs`, `Outputs`, and `Constraints` are thin but
+  load-bearing declaration vocabulary with hundreds of call sites.
+- **Y4 must precede Y3.** `RuleCall.parents` must become cached before removing the hot
+  `Node.parents` field.
+- The original top-three payoff order was **Y1, Y2, Y11**. Y1 and Y2 are complete; Y11
+  is now the highest-priority remaining item.
+- **Y6 needs reassessment.** Production config loading leaves `short_names=False`, but
+  `iter_configs(short_names=True)` is an explicitly tested API, so deleting
+  `_compute_value_only_keys` is not currently zero-risk.
+
+---
+
 ## Verdict
 
 The core is sound. Eager addressing, content-addressed identity, filesystem-as-state, one
 canonical `RuleCall` per invocation, framed canonical hashing — none of that needs
 rethinking, and most of it is better than average.
 
-The cost sits in the periphery: one stateful class that should be a function, several
-zero-behaviour wrappers, and duplicated state on `Node`.
+The remaining cost sits in the periphery: several zero-behaviour wrappers and duplicated
+state on `Node`.
 
-**Realistic saving is ~250 lines, not the ~600 I estimated in conversation.** That earlier
-figure was a guess; the itemised total below is the real one.
+**The original realistic estimate was ~250 lines, not the ~600 estimated in conversation.**
+After resolving Y1 without deleting its incremental algorithm, the remaining estimate is
+closer to ~150 lines.
 
 ---
 
@@ -30,12 +56,12 @@ figure was a guess; the itemised total below is the real one.
 
 | ID | Finding | Lines | Risk | Do it? |
 |---|---|---|---|---|
-| Y1 | Scheduler leaks state across `execute()` calls | −100 | low | **yes, first** |
-| Y2 | `_content_hash` reads whole files into memory | ~0 | low | **yes** |
+| Y1 | Scheduler leaks state across `execute()` calls | n/a | low | **done — `5e0bbea`** |
+| Y2 | `_content_hash` reads whole files into memory | ~0 | low | **done** |
 | Y3 | `Node` duplicates five `RuleCall` fields | −10 | med | **yes** |
 | Y4 | `RuleCall` is a two-phase constructor | −15 | low | **yes** |
 | Y5 | `keywords.py` is an empty frozenset | −5 | none | **yes** |
-| Y6 | `_compute_value_only_keys` is unreachable | −23 | none | **yes** |
+| Y6 | `_compute_value_only_keys` is production-unused but API-tested | −23 | low | reassess |
 | Y7 | Dead local `import Path` | −1 | none | **yes** |
 | Y8 | `_GraphBase` is inheritance-as-code-sharing | −20 | low | yes |
 | Y9 | `__str__` renderer keys layout on `id()` | ~0 | low | yes |
@@ -56,6 +82,9 @@ figure was a guess; the itemised total below is the real one.
 ## Bugs
 
 ### Y1 — the default scheduler leaks state between runs
+
+**Status: resolved in `5e0bbea`.** The analysis below describes the pre-fix implementation.
+The resolution kept incremental re-BFS and isolated its state in a fresh closure per execution.
 
 `schedulers.py:132`, reached via `executor.py:552`.
 
@@ -114,8 +143,11 @@ miss is a bug and should say so.
 
 ### Y2 — `_content_hash` loads entire files into RAM
 
+**Status: complete.** Files are streamed through SHA-256 in bounded
+1 MiB chunks.
+
 ```python
-# src/necroflow/dag.py:56
+# Pre-fix implementation
 def _content_hash(path: Path) -> str:
     """SHA-256 of a file's bytes, or of all non-.rip files in a directory."""
     h = hashlib.sha256()
@@ -126,6 +158,13 @@ def _content_hash(path: Path) -> str:
 For a framework whose worked examples are BAMs and FASTQs this is an operational limit, not
 a style point. It runs on every staleness check that fails the mtime fast path, and again in
 `write_dependencies` after every successful job. Chunk it.
+
+**Deferred optimization path:** if profiling later shows repeated cross-invocation hashing is
+material, separate a current parent-digest cache from the digest each child consumed. Validate
+the cache against an inode, size, `mtime_ns`, and `ctime_ns` snapshot; stat before and after
+hashing; publish updates with temporary-file-plus-atomic-rename. The existing node-store
+`flock` serializes necroflow executions, while external writers require snapshot validation
+rather than a `.rip` lock. This is deliberately deferred; Y2 implements chunking only.
 
 ### Y11 — `gc.py` discovers rules by walking bytecode names
 
@@ -374,9 +413,10 @@ plus the twin at `rule_call.py:61`. Version is `0.0.4` — there is no released 
 to preserve.
 
 **Correction to what I said in conversation:** these are not dead. `tests/test_dag_core.py`
-and `tests/test_variadic_inputs.py` use `.fingerprint` in ten assertions. Deleting the alias
-means renaming those first. Still worth doing — two names for one concept is a permanent tax
-— but it is a rename, not a deletion.
+and `tests/test_variadic_inputs.py` contain the originally counted assertions, but a current
+repository audit finds `.fingerprint` used across several additional test modules. Renaming
+it is still worth considering because two names impose a permanent tax, but this is a broad
+rename, not a deletion.
 
 ### Y17 — `_compat.py`
 
@@ -433,16 +473,18 @@ form rather than replacing it.
 
 ## Suggested sequence
 
-1. **Y1** — the only outright bug. Replacing the class with a function fixes it and removes
-   ~100 lines in the same change.
-2. **Y2** — operational limit on real data; independent of everything else.
-3. **Y11** — destructive failure mode; decide the policy before someone loses a node store.
-4. **Y5, Y6, Y7** — free deletions, no behaviour change, good warm-up commits.
-5. **Y4 then Y3** — do `RuleCall.__post_init__` first so `parents` is cached before `Node`
+1. **Y1 — completed in `5e0bbea`.** Fresh per-execution closures fix the leak while retaining
+   the incremental optimization.
+2. **Y2 — completed.** SHA-256 now streams files in 1 MiB chunks.
+3. **Y11 — next priority.** Decide the destructive rule-discovery policy before someone
+   loses a node store.
+4. **Y5, Y7** — small cleanup commits after checking documentation blast radius.
+5. **Y6** — reassess whether the tested `short_names` API should remain before deleting it.
+6. **Y4 then Y3** — do `RuleCall.__post_init__` first so `parents` is cached before `Node`
    starts delegating to it.
-6. **Y14, Y12** — small, local, independent.
-7. **Y8/Y9, Y10** — the two `id()` sites; mechanical but touches rendering and filenames, so
+7. **Y14, Y12** — small, local, independent.
+8. **Y8/Y9, Y10** — the two `id()` sites; mechanical but touches rendering and filenames, so
    they want their own commits.
-8. Everything else on the scoreboard is discretionary.
+9. Everything else on the scoreboard is discretionary.
 
 Regression tests land in the same commit as each fix, per the project convention.

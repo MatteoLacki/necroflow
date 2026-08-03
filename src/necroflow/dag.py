@@ -18,6 +18,8 @@ from necroflow.nodes import (
 from necroflow.fingerprints import command_ast, python_identity
 from necroflow.rules import parse_resource
 
+_HASH_CHUNK_SIZE = 1024 * 1024
+
 
 def _filesystem_limits(path: Path) -> tuple[int | None, int | None]:
     """Return (NAME_MAX, PATH_MAX) for the nearest existing parent of path."""
@@ -53,16 +55,22 @@ def _check_path_limits(path: Path) -> None:
             raise ValueError(f"path too long ({length} > PATH_MAX {path_max}): {path}")
 
 
+def _update_hash_from_file(digest, path: Path) -> None:
+    with path.open("rb") as stream:
+        while chunk := stream.read(_HASH_CHUNK_SIZE):
+            digest.update(chunk)
+
+
 def _content_hash(path: Path) -> str:
     """SHA-256 of a file's bytes, or of all non-.rip files in a directory."""
     h = hashlib.sha256()
     if path.is_file():
-        h.update(path.read_bytes())
+        _update_hash_from_file(h, path)
     else:
         for f in sorted(path.rglob("*")):
             if f.is_file() and ".rip" not in f.parts:
                 h.update(str(f.relative_to(path)).encode())
-                h.update(f.read_bytes())
+                _update_hash_from_file(h, f)
     return h.hexdigest()
 
 
