@@ -607,6 +607,36 @@ def test_missing_config_input_raises():
         )  # word config omitted
 
 
+def test_explicit_rule_rejects_unexpected_config_before_interning(tmp_path):
+    """Undeclared config must not silently enter identity or create a DAG call."""
+    dag = DAG(tmp_path)
+    pipeline = Pipeline(dag)
+
+    with pytest.raises(TypeError, match="unexpected inputs.*extra"):
+        R_make_txt(pipeline, word="hi", extra=True)
+
+    assert dag.calls == {}
+    assert dag.nodes == []
+
+
+def test_decorated_rule_rejects_unexpected_config_before_interning(tmp_path):
+    """Decorator sugar and explicit Rules must enforce the same call schema."""
+
+    @command("echo {word} > {txt}")
+    def make_txt(word: str):
+        txt = output(Txt)
+        return txt
+
+    dag = DAG(tmp_path)
+    pipeline = Pipeline(dag)
+
+    with pytest.raises(TypeError, match="unexpected inputs.*extra"):
+        make_txt(pipeline, word="hi", extra=True)
+
+    assert dag.calls == {}
+    assert dag.nodes == []
+
+
 def test_extra_positional_input_raises():
     """Rule calls must reject undeclared positional node inputs.
 
@@ -1188,11 +1218,33 @@ def test_registry_construction_api_is_not_exported():
     assert hasattr(necroflow, "Constraints")
 
 
-def test_command_unannotated_input_raises():
-    """Unannotated input is invisible to the decorator → unknown placeholder → ValueError."""
-    with pytest.raises(ValueError, match="unknown placeholders"):
+def test_command_decorator_rejects_unannotated_input_without_placeholder():
+    """Every signature parameter must be typed even when the command omits it."""
+    with pytest.raises(TypeError, match="missing type annotations.*word"):
 
-        @command("echo {word} > {txt}")
-        def make_txt(word):  # missing annotation — word absent from inputs_specs
+        @command("touch {txt}")
+        def make_txt(word):
+            txt = output(Txt)
+            return txt
+
+
+def test_command_decorator_rejects_unannotated_default():
+    """A Python default must not hide an input omitted from the rule schema."""
+    with pytest.raises(TypeError, match="missing type annotations.*mode"):
+
+        @command("touch {txt}")
+        def make_txt(mode="fast"):
+            txt = output(Txt)
+            return txt
+
+
+def test_command_decorator_reports_all_unannotated_inputs():
+    """One declaration error should identify every parameter requiring a type."""
+    with pytest.raises(
+        TypeError, match=r"missing type annotations.*\['word', 'mode'\]"
+    ):
+
+        @command("touch {txt}")
+        def make_txt(word, mode="fast"):
             txt = output(Txt)
             return txt

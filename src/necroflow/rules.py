@@ -412,6 +412,9 @@ class Rule(Generic[_ReturnT]):
                 f"{name}: too many positional inputs: "
                 f"expected {len(self._pos_inputs)}, got {len(args)}"
             )
+        unexpected_kw = [kname for kname in kwargs if kname not in self._kw_inputs]
+        if unexpected_kw:
+            raise TypeError(f"{name}: unexpected inputs: {unexpected_kw!r}")
         missing_kw = [kname for kname in self._kw_inputs if kname not in kwargs]
         if missing_kw:
             raise TypeError(f"{name}: missing required inputs: {missing_kw!r}")
@@ -523,6 +526,16 @@ def _parse_rule_fn(fn) -> tuple:
     namespace.update(inspect.getclosurevars(fn).nonlocals)
     rule_name = fn.__name__
     info = fn.__doc__.strip() if fn.__doc__ else None
+    missing_annotations = [
+        name
+        for name, parameter in inspect.signature(fn).parameters.items()
+        if parameter.annotation is inspect.Parameter.empty
+    ]
+    if missing_annotations:
+        raise TypeError(
+            f"rule {rule_name!r}: inputs missing type annotations: "
+            f"{missing_annotations!r}"
+        )
 
     raw_anns = fn.__annotations__
     inputs_specs = {}

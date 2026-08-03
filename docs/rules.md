@@ -17,6 +17,15 @@ run_sage = command(
 
 The decorator form below remains supported as syntactic sugar.
 
+For a decorated rule, the function signature is the complete input schema.
+Every parameter must have a type annotation: Node dependencies use a
+`NodeType` contract, while scalar/config inputs use ordinary Python types.
+Necroflow rejects an unannotated parameter when the decorator constructs the
+Rule, even if the command does not reference that parameter. Calls likewise
+reject keyword inputs absent from the declared schema before fingerprinting or
+DAG interning. The function's return annotation is optional and ignored;
+outputs are declared only with `output(ConcreteNodeType)`.
+
 ## Command input defaults
 
 Scalar/config inputs on decorated command rules may use ordinary Python

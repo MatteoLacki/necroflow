@@ -155,10 +155,15 @@ config values against their declared Python types. Decorated command rules
 derive scalar/config defaults from their Python signature; explicit Rule and
 factory construction use ``input_defaults``. Rule construction rejects unknown
 defaults, wrongly typed defaults, and defaults on fixed or variadic Node inputs.
+Every decorated-rule parameter must have a type annotation; an unannotated
+parameter fails while the decorator constructs the Rule, even when no command
+placeholder references it. Return annotations remain optional and do not
+declare outputs.
 
 At call time, explicit keyword values overlay a fresh copy of the defaults.
 This effective config is then used for presence/type validation and output
-compilation. The caller's ``kwargs`` mapping is not mutated.
+compilation. Keywords outside the declared scalar/config inputs fail before
+fingerprinting or DAG interning. The caller's ``kwargs`` mapping is not mutated.
 
 `Rule.__call__` coordinates the phases through focused methods:
 
