@@ -38,13 +38,14 @@ from typing import TYPE_CHECKING
 import tomlkit
 
 from necroflow._compat import ExceptionGroup
+from necroflow.ascii_render import write_ancestor_graph
 from necroflow.dag import (
+    DAG,
     NodeState,
     classify_nodes,
     resolve_command,
     write_dependencies,
 )
-from necroflow.pipeline import DAG, write_ancestor_graph
 from necroflow.schedulers import (
     Scheduler,
     fifo_scheduler,

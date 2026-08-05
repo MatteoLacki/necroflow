@@ -1,6 +1,7 @@
 __version__ = "0.0.4"
 
 from necroflow.dag import (
+    DAG,
     Node,
     NodeState,
     NodeType,
@@ -20,7 +21,7 @@ from necroflow.rules import (
     text_file,
     text_file_rule,
 )
-from necroflow.pipeline import Pipeline, DAG
+from necroflow.pipeline import Pipeline
 from necroflow.executor import execute
 from necroflow.schedulers import (
     fifo_scheduler,

@@ -181,8 +181,9 @@ src/necroflow/
                        parse_resource with SI/binary suffixes
   schedulers.py      — Scheduler protocol, fifo_scheduler, incremental scheduler factory
   dag.py             — path-length checks, resolve_command, write_dependencies,
-                       classify_nodes, content hashing
-  pipeline.py        — Pipeline (prefixed views, labels, finish), DAG, render_ascii
+                       classify_nodes, content hashing, the DAG registry/executor class
+  pipeline.py        — Pipeline (prefixed views, labels, finish)
+  ascii_render.py    — render_ascii, _node_label, write_ancestor_graph
   executor.py        — execute(), resource caps, lock, ExecutionEvent, autoclean, keep_going
   logger.py          — thread-safe job logging
   config.py          — job TOML loading and grid expansion (iter_job_configs, JobConfig)
@@ -191,7 +192,6 @@ src/necroflow/
   cli.py             — CLI argument parsing and command adapters, split nodes-dir/results-dir
                        layout, manifests, copied result trees
   graphviz_render.py — optional PNG rendering (dev extra)
-  keywords.py        — reserved pipeline label names
   _compat.py         — ExceptionGroup backport
   templates/         — `necroflow init` project template (canonical pipeline + schema)
   tools/             — config_set.py: config-file transformation helper
