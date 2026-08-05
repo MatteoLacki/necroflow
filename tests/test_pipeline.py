@@ -1,6 +1,5 @@
 """Tests for Pipeline and DAG."""
 
-import necroflow.keywords as pipeline_keywords
 from necroflow.rules import Constraints, Inputs, Outputs, Rule
 
 import pytest
@@ -366,21 +365,6 @@ def test_pipeline_attribute_labels_reject_reserved_names_without_partial_assignm
     with pytest.raises(ValueError, match="reserved"):
         P.nodes = R_make_a(P, x="x")
     assert len(P.nodes) == 0
-
-
-def test_pipeline_rejects_labels_declared_in_keywords(monkeypatch):
-    """Every keywords.py entry must be unusable through either label syntax."""
-    monkeypatch.setattr(pipeline_keywords, "RESERVED", frozenset({"reserved_keyword"}))
-    P = Pipeline(DAG(TEST_NODES_DIR))
-    node = R_make_a(P, x="x")
-
-    with pytest.raises(ValueError, match="'reserved_keyword' is reserved"):
-        P.reserved_keyword = node
-    with pytest.raises(ValueError, match="'reserved_keyword' is reserved"):
-        P["reserved_keyword"] = node
-
-    assert P.labels == ()
-    assert P.nodes == []
 
 
 def test_rule_call_compiles_path_and_fingerprint_immediately(tmp_path):

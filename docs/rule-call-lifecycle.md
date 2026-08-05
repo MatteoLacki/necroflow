@@ -343,9 +343,8 @@ assert P.labels_for(P["featured_qc"]) == (
 ```
 
 The Pipeline's `nodes` list contains that Node once. Labels cannot be
-overwritten, cannot match a name declared in `necroflow.keywords.RESERVED`, and
-must refer to Nodes in the same DAG. Item labels may be canonical relative
-POSIX paths:
+overwritten and must refer to Nodes in the same DAG. Item labels may be
+canonical relative POSIX paths:
 
 ```python
 cohort_summary = combine_counts(P, sample_counts)

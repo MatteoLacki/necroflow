@@ -4,7 +4,6 @@ from collections.abc import Callable
 import os
 from pathlib import Path, PurePosixPath
 
-from necroflow import keywords as pipeline_keywords
 from necroflow.nodes import Node
 from necroflow.rule_call import RuleCall
 
@@ -238,8 +237,6 @@ class _GraphBase:
 
     def save(self, path) -> None:
         """Write the ASCII DAG render to a file."""
-        from pathlib import Path
-
         Path(path).write_text(str(self) + "\n", encoding="utf-8")
 
 
@@ -411,8 +408,6 @@ class Pipeline(_GraphBase):
         self._assert_open()
         qualified_name = self._qualified_label(name)
         label_path = _validate_pipeline_label(qualified_name, value.path.name)
-        if name in pipeline_keywords.RESERVED:
-            raise ValueError(f"Pipeline label {name!r} is reserved")
         if qualified_name in self._state.node_names:
             raise ValueError(f"Pipeline label {qualified_name!r} already assigned")
         if value.rule_call.dag is not self._state.dag:
