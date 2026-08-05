@@ -45,8 +45,21 @@ rendering moved to a new `ascii_render.py` to avoid a `dag.py`/`pipeline.py` imp
 **Y6 resolved differently than either scoreboard option.** Rather than delete
 `_compute_value_only_keys` or leave it dead, `short_names=True` became the CLI's default
 (`--long-names` opts back into the old long-form labels), so the function is now exercised on
-every real job. Remaining open items are Y13, Y15, Y16, Y17, Y18 — all explicitly "later" or
-"decide" in the original review, not zero-risk auto-fixes.
+every real job.
+
+**Y17 resolved by dropping 3.10, not by keeping it.** CI actively tested 3.10 (full matrix plus a
+dedicated `typecheck` job pinned to it), so it was not speculative — the decision was made anyway
+to raise the floor to `>=3.11` and delete `_compat.py`.
+
+**Y15 resolved by simplifying `text_file`, not by extending `symlink_file`.** Checked two real
+downstream pipelines (`ionmaiden/pipelines`, `massimo_pipeline`): one uses `@text_file` at 12
+call sites, all bare form, none using `@text_file(encoding=...)`; the other uses neither built-in
+at all. `symlink_file`'s decorator stayed a plain one-argument function; `text_file`'s two
+`@overload`s and `# pyright: ignore[reportInconsistentOverload]` were deleted, leaving
+`text_file_rule(..., encoding=...)` as the only way to select a non-default encoding.
+
+Remaining open items are Y13, Y16, Y18 — all explicitly "later" or "decide" in the original
+review, not zero-risk auto-fixes.
 
 ---
 
@@ -83,7 +96,7 @@ closer to ~150 lines.
 | Y12 | `_accumulated_config` is exponential on diamonds | +2 | low | **done — `5f80809`** |
 | Y13 | Label assignment is O(n²) | +5 | low | later |
 | Y14 | `Pipeline.__setattr__` writes the label twice | −2 | med | **done — `c488c78`** |
-| Y15 | Four entry points for two built-in rules | −40 | med | later |
+| Y15 | Four entry points for two built-in rules | −40 | med | **done — `text_file` simplified to match `symlink_file`** |
 | Y16 | `fingerprint` compatibility aliases | −10 | low | later |
 | Y17 | `_compat.py` for Python 3.10 | −9 | low | **done — 3.10 support dropped** |
 | Y18 | `autoclean` threaded through `execute()` | −30 | med | later |
@@ -414,12 +427,15 @@ the code falls back to exactly that in two of the three branches.
 
 ### Y15 — four entry points for two behaviours
 
-`text_file`, `text_file_rule`, `symlink_file`, `symlink_file_rule`. `text_file` additionally
-supports both the bare and configured decorator forms, which costs two `@overload` stubs and
-a `# pyright: ignore[reportInconsistentOverload]` (`rules.py:822-836`). `symlink_file`
-supports only the bare form. The asymmetry is not motivated by anything in the source.
+**Status: resolved.** `text_file` no longer accepts `@text_file(encoding=...)`; it is now a
+plain bare decorator, the same shape as `symlink_file`. `text_file_rule(..., encoding=...)`
+remains the only way to select a non-default encoding.
 
-Pick one shape for both. Moderate blast radius — public API.
+Original analysis: `text_file`, `text_file_rule`, `symlink_file`, `symlink_file_rule`.
+`text_file` additionally supported both the bare and configured decorator forms, which cost
+two `@overload` stubs and a `# pyright: ignore[reportInconsistentOverload]`
+(`rules.py:822-836`). `symlink_file` supported only the bare form. The asymmetry was not
+motivated by anything in the source.
 
 ### Y18 — `autoclean` is woven through `execute()`
 

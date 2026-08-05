@@ -71,6 +71,7 @@ def sage_config(text: str):
     return sage_config
 ```
 
-Use `symlink_file_rule(...)` or `text_file_rule(...)` for explicit names. The text
-decorator also supports `@text_file(encoding="utf-16")`. Text content participates in
-normal config hashing; neither built-in requires a user-authored shell command.
+Use `symlink_file_rule(...)` or `text_file_rule(...)` for explicit names or a non-default
+encoding (`text_file_rule(name, output, encoding="utf-16")`) — both `@symlink_file` and
+`@text_file` are bare-decorator-only. Text content participates in normal config hashing;
+neither built-in requires a user-authored shell command.

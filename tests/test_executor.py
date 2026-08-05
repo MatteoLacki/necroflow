@@ -1254,14 +1254,14 @@ def test_text_file_decorator_matches_factory_fingerprint():
     assert write_config.info == "Write the configuration."
 
 
-def test_text_file_decorator_accepts_encoding(tmp_path):
+def test_text_file_rule_accepts_encoding(tmp_path):
+    """text_file_rule(..., encoding=...) is the only way to select a non-default
+    encoding now that @text_file is bare-only, matching @symlink_file's shape."""
+
     class ConfigFile(NodeType):
         filename = "config.txt"
 
-    @text_file(encoding="utf-16-le")
-    def write_config(text: str):
-        config_file = output(ConfigFile)
-        return config_file
+    write_config = text_file_rule("write_config", ConfigFile, encoding="utf-16-le")
 
     P = Pipeline(DAG(tmp_path))
     P.config = write_config(P, text="hello")

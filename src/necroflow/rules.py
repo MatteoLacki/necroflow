@@ -15,7 +15,6 @@ from typing import (
     cast,
     get_args,
     get_origin,
-    overload,
 )
 
 from necroflow.contexts import NamedValues
@@ -819,40 +818,22 @@ def text_file_rule(
     )
 
 
-@overload
 def text_file(fn: Callable[..., _ReturnT], /) -> Rule[_ReturnT]:
-    """Type signature for direct ``@text_file`` decorator use."""
-    ...
-
-
-@overload
-def text_file(
-    *, encoding: str = "utf-8"
-) -> Callable[[Callable[..., _ReturnT]], Rule[_ReturnT]]:
-    """Type signature for configured ``@text_file(...)`` decorator use."""
-    ...
-
-
-def text_file(  # pyright: ignore[reportInconsistentOverload]
-    fn: Callable | None = None, *, encoding: str = "utf-8"
-):
-    """Declare a built-in text-file rule, optionally selecting its encoding."""
-
-    def decorator(declaration: Callable) -> Rule:
-        """Convert one validated text-file declaration into a Rule."""
-        name, input_name, output_name, output, info = _validate_builtin_declaration(
-            declaration, "text_file"
-        )
-        return _make_text_file_rule(
+    """Declare a built-in text-file rule. Use text_file_rule(...) for a non-default encoding."""
+    name, input_name, output_name, output, info = _validate_builtin_declaration(
+        fn, "text_file"
+    )
+    return cast(
+        Rule[_ReturnT],
+        _make_text_file_rule(
             name,
             output,
             input_name=input_name,
-            encoding=encoding,
+            encoding="utf-8",
             output_name=output_name,
             info=info,
-        )
-
-    return decorator(fn) if fn is not None else decorator
+        ),
+    )
 
 
 def _make_symlink_file_rule(
