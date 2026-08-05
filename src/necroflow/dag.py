@@ -74,11 +74,22 @@ def _content_hash(path: Path) -> str:
     return h.hexdigest()
 
 
-def _accumulated_config(node: Node) -> dict:
+def _accumulated_config(node: Node, _visited: dict[Path, dict] | None = None) -> dict:
+    """Merge node.config over every ancestor's, nearest wins.
+
+    ``_visited`` memoizes by relative_path so a diamond ancestor is walked
+    once per call instead of once per path reaching it.
+    """
+    if _visited is None:
+        _visited = {}
+    cached = _visited.get(node.relative_path)
+    if cached is not None:
+        return cached
     config = {}
     for parent in node.parents:
-        config.update(_accumulated_config(parent))
+        config.update(_accumulated_config(parent, _visited))
     config.update(node.config)
+    _visited[node.relative_path] = config
     return config
 
 

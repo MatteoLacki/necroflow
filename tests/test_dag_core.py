@@ -35,6 +35,10 @@ class SortedTxt(Txt):
     filename = "sorted.txt"
 
 
+class Joined(NodeType):
+    filename = "joined.txt"
+
+
 R_make_txt = Rule("make_txt", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}")
 R_make_sorted_txt = Rule(
     "make_sorted_txt",
@@ -53,6 +57,12 @@ R_sort_txt = Rule(
     Inputs(txt=SortedTxt),
     Outputs(sorted_txt=SortedTxt),
     "sort {txt} > {sorted_txt}",
+)
+R_join_upper = Rule(
+    "join_upper",
+    Inputs(a=Upper, b=Upper),
+    Outputs(joined=Joined),
+    "cat {a} {b} > {joined}",
 )
 P = Pipeline(DAG("/tmp/necroflow-test-dag-core"))
 
@@ -625,6 +635,17 @@ def test_accumulated_config_multi_hop():
     cfg = _accumulated_config(upper)
     assert cfg["word"] == "hello"
     assert cfg["n"] == 5
+
+
+def test_accumulated_config_diamond_visits_shared_ancestor_once():
+    """Two branches sharing one ancestor must still merge that ancestor's config."""
+    root = R_make_txt(P, word="hello")
+    branch_a, _ = R_to_upper(P, root, n=2)
+    branch_b, _ = R_to_upper(P, root, n=3)
+    joined = R_join_upper(P, branch_a, branch_b)
+    cfg = _accumulated_config(joined)
+    assert cfg["word"] == "hello"
+    assert cfg["n"] == 3
 
 
 # ── provenance ────────────────────────────────────────────────────────────────
