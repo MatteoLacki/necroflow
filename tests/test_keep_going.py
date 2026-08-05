@@ -1,7 +1,6 @@
 from necroflow.rules import Constraints, Inputs, Outputs, Rule
 import pytest
 
-from necroflow._compat import ExceptionGroup
 from necroflow import Pipeline, DAG, NodeType, NodeState
 
 

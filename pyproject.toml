@@ -11,9 +11,8 @@ readme="README.md"
 authors=[
     {name="MatteoLacki",email="matteo.lacki@gmail.com"},
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-    "exceptiongroup>=1.0.0; python_version < '3.11'",
     "tomlkit",
 ]
 
@@ -42,7 +41,7 @@ homepage="https://github.com/MatteoLacki/necroflow.git"
 repository="https://github.com/MatteoLacki/necroflow.git"
 
 [tool.black]
-target-version = ["py310"]
+target-version = ["py311"]
 
 [tool.pyright]
 typeCheckingMode = "basic"

@@ -10,7 +10,6 @@ import tomlkit
 import pytest
 
 import necroflow.cli as cli_core
-from necroflow._compat import ExceptionGroup
 from pathlib import Path
 from necroflow import NodeType, Pipeline, DAG, classify_nodes, output
 from necroflow.cli import (

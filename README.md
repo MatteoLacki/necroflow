@@ -1,9 +1,9 @@
 [![CI](https://github.com/MatteoLacki/necroflow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MatteoLacki/necroflow/actions/workflows/ci.yml)
 [![CI platforms](https://img.shields.io/badge/CI-Linux%20%7C%20macOS-blue)](https://github.com/MatteoLacki/necroflow/actions/workflows/ci.yml)
-[![CI Python](https://img.shields.io/badge/CI%20Python-3.10--3.15-blue)](https://github.com/MatteoLacki/necroflow/actions/workflows/ci.yml)
+[![CI Python](https://img.shields.io/badge/CI%20Python-3.11--3.15-blue)](https://github.com/MatteoLacki/necroflow/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/necroflow)](https://pypi.org/project/necroflow/)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21371562.svg)](https://doi.org/10.5281/zenodo.21371562)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 # necroflow

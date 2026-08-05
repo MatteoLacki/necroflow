@@ -55,7 +55,7 @@ def test_file_map_covers_all_modules():
     pkg = REPO / "src" / "necroflow"
     missing = []
     for path in sorted(pkg.iterdir()):
-        if path.name.startswith("_"):  # __init__.py, _compat.py — internal
+        if path.name.startswith("_"):  # __init__.py and other internal modules
             continue
         if path.is_file() and path.suffix == ".py":
             if path.name not in CLAUDE_MD:

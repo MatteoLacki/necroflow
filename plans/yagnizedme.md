@@ -85,7 +85,7 @@ closer to ~150 lines.
 | Y14 | `Pipeline.__setattr__` writes the label twice | −2 | med | **done — `c488c78`** |
 | Y15 | Four entry points for two built-in rules | −40 | med | later |
 | Y16 | `fingerprint` compatibility aliases | −10 | low | later |
-| Y17 | `_compat.py` for Python 3.10 | −9 | low | decide |
+| Y17 | `_compat.py` for Python 3.10 | −9 | low | **done — 3.10 support dropped** |
 | Y18 | `autoclean` threaded through `execute()` | −30 | med | later |
 | N1 | `NamedValues` → plain dict | −32 | high | **no** |
 | N2 | `Inputs`/`Outputs`/`Constraints` → dicts | −30 | high | **no** |
@@ -450,10 +450,16 @@ rename, not a deletion.
 
 ### Y17 — `_compat.py`
 
-`requires-python = ">=3.10"` and `exceptiongroup>=1.0.0; python_version < '3.11'`, while
-`make venv` builds Python 3.14. If nothing actually tests 3.10, bump to `>=3.11`, delete the
-module and drop the dependency. If 3.10 support is real, keep it — it is correct as written.
-This is a decision to make, not a defect.
+**Status: resolved — 3.10 support dropped.** CI's test matrix and its dedicated
+`typecheck` job both actively verified 3.10, so it was not dead/speculative support — but the
+decision was made anyway to drop it. `requires-python` is now `>=3.11`, the `exceptiongroup`
+conditional dependency and `_compat.py` are both gone, and `executor.py`/tests reference the
+`ExceptionGroup` builtin directly.
+
+Original analysis: `requires-python = ">=3.10"` and `exceptiongroup>=1.0.0; python_version <
+'3.11'`, while `make venv` builds Python 3.14. If nothing actually tests 3.10, bump to `>=3.11`,
+delete the module and drop the dependency. If 3.10 support is real, keep it — it is correct as
+written. This is a decision to make, not a defect.
 
 ---
 

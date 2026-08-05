@@ -13,7 +13,9 @@
    - Run `black --check src tests examples` with Python 3.15.
 
 3. [x] Resolve lower-version support coverage.
-   - CI covers Python 3.10 through 3.15, matching `requires-python = ">=3.10"`.
+   - CI covers Python 3.11 through 3.15, matching `requires-python = ">=3.11"`.
+     (3.10 support was dropped along with the `exceptiongroup` backport once
+     `ExceptionGroup` became available as a plain builtin on the supported range.)
 
 4. [ ] Add a coverage regression threshold.
    - Start with `--cov-fail-under=80`; current coverage is approximately 84%.

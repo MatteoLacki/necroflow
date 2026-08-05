@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING
 
 import tomlkit
 
-from necroflow._compat import ExceptionGroup
 from necroflow.ascii_render import write_ancestor_graph
 from necroflow.dag import (
     DAG,

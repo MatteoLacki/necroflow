@@ -192,7 +192,6 @@ src/necroflow/
   cli.py             — CLI argument parsing and command adapters, split nodes-dir/results-dir
                        layout, manifests, copied result trees
   graphviz_render.py — optional PNG rendering (dev extra)
-  _compat.py         — ExceptionGroup backport
   templates/         — `necroflow init` project template (canonical pipeline + schema)
   tools/             — config_set.py: config-file transformation helper
 ```
