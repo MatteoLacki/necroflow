@@ -351,6 +351,24 @@ def test_pipeline_labels_reject_result_file_directory_conflicts():
         P["dataset/a.txt"] = R_make_a(P, x="second")
 
 
+def test_pipeline_labels_reject_result_file_directory_conflicts_reverse_order():
+    """A shallow label assigned after a deeper one under it must also be rejected."""
+    P = Pipeline(DAG(TEST_NODES_DIR))
+    P["dataset/a.txt"] = R_make_a(P, x="first")
+
+    with pytest.raises(ValueError, match="conflicts"):
+        P["dataset"] = R_make_a(P, x="second")
+
+
+def test_pipeline_labels_allow_sibling_paths_under_shared_directory():
+    """Two labels nested under the same directory prefix must not conflict."""
+    P = Pipeline(DAG(TEST_NODES_DIR))
+    P["group/one"] = R_make_a(P, x="first")
+    P["group/two"] = R_make_a(P, x="second")
+
+    assert P.labels == ("group/one", "group/two")
+
+
 def test_pipeline_item_labels_can_use_reserved_attribute_names():
     P = Pipeline(DAG(TEST_NODES_DIR))
     P["nodes"] = R_make_a(P, x="x")

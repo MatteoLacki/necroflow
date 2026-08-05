@@ -53,11 +53,6 @@ def _validate_pipeline_label(name: str, output_filename: str) -> PurePosixPath:
     return label_path
 
 
-def _result_paths_conflict(left: PurePosixPath, right: PurePosixPath) -> bool:
-    """Return whether either result path must be a directory for the other."""
-    return left == right or left in right.parents or right in left.parents
-
-
 class _PipelineState:
     """Mutable construction state shared by one root Pipeline and all its views."""
 
@@ -67,6 +62,18 @@ class _PipelineState:
         self.nodes_list: list[Node] = []
         self.node_paths: set[Path] = set()
         self.node_names: dict[str, Node] = {}
+        # Incrementally maintained so a new label's conflict check costs
+        # O(path depth) instead of rescanning every prior label (O(n) per
+        # insert, O(n^2) overall). result_path_owner holds every assigned
+        # result path exactly; prefix_dir_owner holds the union of their
+        # ancestor directories. A new path conflicts if it exactly matches
+        # an existing one, if it is itself a registered ancestor directory
+        # (some existing path already treats it as a container), or if any
+        # of its own ancestors is an existing exact path (it would treat an
+        # existing file as a container). Both dicts map path -> owning
+        # label, kept only for error messages.
+        self.result_path_owner: dict[PurePosixPath, str] = {}
+        self.prefix_dir_owner: dict[PurePosixPath, str] = {}
         self.finished = False
 
 
@@ -202,15 +209,28 @@ class Pipeline:
                 f"Node assigned as {qualified_name!r} belongs to a different DAG"
             )
         result_path = label_path / value.path.name
-        for existing_name, existing_node in self._state.node_names.items():
-            existing_path = PurePosixPath(existing_name) / existing_node.path.name
-            if _result_paths_conflict(result_path, existing_path):
-                raise ValueError(
-                    f"Pipeline result path {result_path!s} for label "
-                    f"{qualified_name!r} "
-                    f"conflicts with {existing_path!s} for label "
-                    f"{existing_name!r}"
-                )
+        conflicting_label = self._state.result_path_owner.get(
+            result_path
+        ) or self._state.prefix_dir_owner.get(result_path)
+        if conflicting_label is None:
+            for ancestor in result_path.parents:
+                conflicting_label = self._state.result_path_owner.get(ancestor)
+                if conflicting_label is not None:
+                    break
+        if conflicting_label is not None:
+            conflicting_node = self._state.node_names[conflicting_label]
+            conflicting_path = (
+                PurePosixPath(conflicting_label) / conflicting_node.path.name
+            )
+            raise ValueError(
+                f"Pipeline result path {result_path!s} for label "
+                f"{qualified_name!r} "
+                f"conflicts with {conflicting_path!s} for label "
+                f"{conflicting_label!r}"
+            )
+        self._state.result_path_owner[result_path] = qualified_name
+        for ancestor in result_path.parents:
+            self._state.prefix_dir_owner.setdefault(ancestor, qualified_name)
         if value.relative_path not in self._state.node_paths:
             self._state.nodes_list.append(value)
             self._state.node_paths.add(value.relative_path)

@@ -58,7 +58,13 @@ at all. `symlink_file`'s decorator stayed a plain one-argument function; `text_f
 `@overload`s and `# pyright: ignore[reportInconsistentOverload]` were deleted, leaving
 `text_file_rule(..., encoding=...)` as the only way to select a non-default encoding.
 
-Remaining open items are Y13, Y16, Y18 — all explicitly "later" or "decide" in the original
+**Y13 done.** `_assign_node`'s O(n) rescan-every-prior-label loop was replaced with two
+incrementally maintained `path -> owning label` dicts on `_PipelineState` (exact result paths,
+and the union of their ancestor directories), so each insert costs O(path depth) instead of
+O(n). `_result_paths_conflict` is gone; conflict detection is now three O(1)-ish dict lookups
+per ancestor instead of a full walk of every existing label.
+
+Remaining open items are Y16, Y18 — both explicitly "later" or "decide" in the original
 review, not zero-risk auto-fixes.
 
 ---
@@ -94,7 +100,7 @@ closer to ~150 lines.
 | Y10 | `grid.py` keys labels on `id()` | ~0 | med | **done — `b0b08bc`** |
 | Y11 | `gc.py` finds rules by bytecode introspection | ~0 | med | **done — `2986855`** |
 | Y12 | `_accumulated_config` is exponential on diamonds | +2 | low | **done — `5f80809`** |
-| Y13 | Label assignment is O(n²) | +5 | low | later |
+| Y13 | Label assignment is O(n²) | +5 | low | **done — two incremental path dicts** |
 | Y14 | `Pipeline.__setattr__` writes the label twice | −2 | med | **done — `c488c78`** |
 | Y15 | Four entry points for two built-in rules | −40 | med | **done — `text_file` simplified to match `symlink_file`** |
 | Y16 | `fingerprint` compatibility aliases | −10 | low | later |
@@ -367,6 +373,17 @@ No memo, so a DAG with *k* diamonds costs 2^k. It runs once per successful job i
 
 ### Y13 — label assignment is O(n²)
 
+**Status: resolved.** `_PipelineState` now keeps `result_path_owner` (exact assigned result
+paths) and `prefix_dir_owner` (the union of their ancestor directories), both `path -> label`
+dicts updated on every successful insert. A conflict check is now: is the new path an existing
+exact path, is it a registered ancestor directory of some existing path, or is any of its own
+ancestors an existing exact path — three O(1) dict lookups plus an O(depth) walk over the new
+path's own ancestors, not a scan of every prior label. `_result_paths_conflict` is deleted.
+4000 flat labels assign in well under a second; the old O(n²) scan made that cohort size
+noticeably slow.
+
+Original analysis:
+
 ```python
 # src/necroflow/pipeline.py:423
 for existing_name, existing_node in self._state.node_names.items():
@@ -375,8 +392,7 @@ for existing_name, existing_node in self._state.node_names.items():
 ```
 
 Every assignment scans every prior label. A cohort of 1000 samples × 6 labels is ~18M
-comparisons. Two sets — one of result paths, one of all directory prefixes — give O(depth)
-per insert. Not urgent; flag it before someone runs a large cohort.
+comparisons.
 
 ### Y8 / Y9 — the ASCII renderer
 
