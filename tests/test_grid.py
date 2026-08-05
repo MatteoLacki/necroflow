@@ -185,6 +185,47 @@ def test_table_grids_receive_stable_human_readable_labels(source, expected_label
     assert all("__label" not in config["model"] for _, config in results)
 
 
+def test_table_grid_labels_track_their_values_across_axes():
+    """A label names a slot in the grid, so it must follow that slot's value.
+
+    Labels are indexed by position rather than by the identity of the table
+    occupying it, which is only correct if every combination in the cartesian
+    product pairs a label with the table it was derived from.
+    """
+    doc = parse(
+        "depth__grid = [1, 2]\n"
+        "[[model__grid]]\n"
+        '__label = "small"\n'
+        'weights = "s.pt"\n'
+        "[[model__grid]]\n"
+        '__label = "large"\n'
+        'weights = "l.pt"\n'
+    )
+
+    results = list(iter_configs(doc, base_stem="job"))
+
+    assert len(results) == 4
+    expected = {"small": "s.pt", "large": "l.pt"}
+    for label, config in results:
+        assert config["model"]["weights"] == expected[label.rsplit("model+", 1)[1]]
+
+
+def test_partially_labelled_table_grid_falls_back_to_position():
+    """An unlabelled variant among labelled ones keeps its positional label."""
+    doc = parse(
+        "[[model__grid]]\n"
+        '__label = "small"\n'
+        "width = 64\n"
+        "[[model__grid]]\n"
+        "width = 128\n"
+    )
+
+    results = list(iter_configs(doc, base_stem="job"))
+
+    assert [label for label, _ in results] == ["job__model+small", "job__model+1"]
+    assert all("__label" not in config["model"] for _, config in results)
+
+
 def test_custom_grid_suffix_and_label_options_are_honored():
     """Callers can select a suffix and compact nested parameter labels."""
     doc = parse("[model]\nwidth__choice = [64, 128]\n")

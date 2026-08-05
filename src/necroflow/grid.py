@@ -171,6 +171,7 @@ def sanitize_for_filename(s):
 
 
 def _find_auto_label(vals):
+    """Return one label per value from the first column that tells them apart."""
     common_keys = set(vals[0].keys())
     for v in vals[1:]:
         common_keys &= set(v.keys())
@@ -179,7 +180,7 @@ def _find_auto_label(vals):
         if all(isinstance(val, str) for val in values) and len(set(values)) == len(
             vals
         ):
-            return {id(v): sanitize_for_filename(v[key]) for v in vals}
+            return [sanitize_for_filename(val) for val in values]
     return None
 
 
@@ -227,14 +228,15 @@ def make_config_name(
     base_values,
     short_names=False,
     equal_sign="=",
-    grid_indices=None,
+    grid_labels=None,
     value_only_keys=None,
 ):
+    """Build one config filename. ``grid_labels`` maps a parameter to its label."""
     parts = []
     for key, value in params.items():
         name = shorten_param_name(key) if short_names else key.replace(".", "_")
-        if grid_indices and key in grid_indices:
-            val_str = str(grid_indices[key][id(value)])
+        if grid_labels and key in grid_labels:
+            val_str = grid_labels[key]
         else:
             base_value = base_values.get(key)
             val_str = value_to_string(value, base_value)
@@ -257,39 +259,52 @@ def make_config_name(
 # ── grid index helpers ────────────────────────────────────────────────────────
 
 
-def _build_grid_indices(grid_params):
-    result = {}
+def _without_label(value):
+    """Return a copy of a grid table with its ``__label`` marker removed."""
+    if not isinstance(value, dict) or "__label" not in value:
+        return value
+    stripped = _aot_elem_to_plain_table(value)
+    del stripped["__label"]
+    return stripped
+
+
+def _split_grid_labels(grid_params):
+    """Return per-parameter labels alongside label-free grid values.
+
+    Reading ``__label`` and removing it happen here together on purpose. When
+    they were separate steps, running the removal first left every table
+    unlabelled, so labels silently fell back to an auto-detected column and
+    every generated config filename changed without an error.
+
+    Labels are positional: ``labels[name][i]`` describes ``values[name][i]``.
+    """
+    labels: dict[str, list[str]] = {}
+    values: dict[str, list] = {}
     for name, vals in grid_params.items():
         if not (vals and isinstance(vals[0], dict)):
+            values[name] = vals
             continue
         if any("__label" in v for v in vals):
-            result[name] = {
-                id(v): sanitize_for_filename(str(v["__label"]))
-                for v in vals
-                if "__label" in v
-            }
-            for i, v in enumerate(vals):
-                if id(v) not in result[name]:
-                    result[name][id(v)] = str(i)
+            labels[name] = [
+                sanitize_for_filename(str(v["__label"])) if "__label" in v else str(i)
+                for i, v in enumerate(vals)
+            ]
         else:
             auto = _find_auto_label(vals)
-            result[name] = (
-                auto
-                if auto is not None
-                else {id(v): str(i) for i, v in enumerate(vals)}
+            labels[name] = (
+                auto if auto is not None else [str(i) for i in range(len(vals))]
             )
-    return result
+        values[name] = [_without_label(v) for v in vals]
+    return labels, values
 
 
-def _compute_value_only_keys(
-    grid_params, grid_indices, base_scalar_values, short_names
-):
+def _compute_value_only_keys(grid_params, grid_labels, base_scalar_values, short_names):
     if not short_names:
         return set()
     candidate_label_sets = {}
     for name, vals in grid_params.items():
-        if name in grid_indices:
-            labels = set(grid_indices[name].values())
+        if name in grid_labels:
+            labels = set(grid_labels[name])
             if not all(s.isdigit() for s in labels):
                 candidate_label_sets[name] = labels
         elif vals and all(isinstance(v, str) for v in vals):
@@ -333,29 +348,35 @@ def iter_configs(
     base_scalar_values = {
         name: get_nested_value(result_doc, name) for name in grid_params
     }
-    grid_indices = _build_grid_indices(grid_params)
+    grid_labels, grid_params = _split_grid_labels(grid_params)
     value_only_keys = _compute_value_only_keys(
-        grid_params, grid_indices, base_scalar_values, short_names
+        grid_params, grid_labels, base_scalar_values, short_names
     )
 
-    for vals in grid_params.values():
-        for v in vals:
-            if isinstance(v, dict) and "__label" in v:
-                del v["__label"]
-
     param_names = list(grid_params)
-    param_values = [grid_params[n] for n in param_names]
+    param_values = [grid_params[name] for name in param_names]
 
-    for combo in product(*param_values):
+    # Walk positions rather than values: a label belongs to a slot in the grid,
+    # so index it by that slot instead of by the identity of the table sitting
+    # in it.
+    for positions in product(*(range(len(values)) for values in param_values)):
         variant = tomlkit.parse(tomlkit.dumps(result_doc))
-        params = dict(zip(param_names, combo))
+        params = {
+            name: param_values[axis][position]
+            for axis, (name, position) in enumerate(zip(param_names, positions))
+        }
         for k, v in params.items():
             set_nested_value(variant, k, v)
+        combo_labels = {
+            name: grid_labels[name][positions[axis]]
+            for axis, name in enumerate(param_names)
+            if name in grid_labels
+        }
         filename = make_config_name(
             params,
             base_stem,
             base_scalar_values,
-            grid_indices=grid_indices,
+            grid_labels=combo_labels,
             value_only_keys=value_only_keys,
             short_names=short_names,
             equal_sign=equal_sign,
