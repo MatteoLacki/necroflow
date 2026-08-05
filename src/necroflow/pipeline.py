@@ -103,156 +103,134 @@ def _render_connector(edges: list[tuple[int, int]]) -> list[str]:
     return ["".join(row1), "".join(row2), "".join(row3)]
 
 
-class _GraphBase:
-    """Shared rendering logic for Pipeline and DAG."""
+def _node_label(node: Node) -> str:
+    parts = [node.rule.__name__]
+    suffix = node.node_type.__name__
+    if node.output_name and node.output_name != suffix:
+        suffix += f":{node.output_name}" if suffix else node.output_name
+    if suffix:
+        parts[0] += f"[{suffix}]"
+    if node.mutable:
+        parts.append("[mutable]")
+    # needs human review: config omitted from label because long embedded
+    # config values can otherwise make the ASCII DAG unreadable.
+    if node.rule.constraints:
+        resources = ", ".join(
+            f"{key}={value}" for key, value in node.rule.constraints.items()
+        )
+        parts.append(f"[{resources}]")
+    return " ".join(parts)
 
-    @property
-    def nodes(self) -> list:
-        raise NotImplementedError
 
-    def _header(self) -> str:
-        raise NotImplementedError
+def render_ascii(
+    nodes: list[Node],
+    header: str,
+    *,
+    label: Callable[[Node], str] = _node_label,
+) -> str:
+    """Render a topologically layered ASCII box-and-arrow diagram of nodes."""
+    from collections import defaultdict, deque
 
-    def _node_label(self, node: Node) -> str:
-        parts = [node.rule.__name__]
-        suffix = node.node_type.__name__
-        if node.output_name and node.output_name != suffix:
-            suffix += f":{node.output_name}" if suffix else node.output_name
-        if suffix:
-            parts[0] += f"[{suffix}]"
-        if node.mutable:
-            parts.append("[mutable]")
-        # needs human review: config omitted from label because long embedded
-        # config values can otherwise make the ASCII DAG unreadable.
-        if node.rule.constraints:
-            resources = ", ".join(
-                f"{key}={value}" for key, value in node.rule.constraints.items()
-            )
-            parts.append(f"[{resources}]")
-        return " ".join(parts)
+    nodes_by_key = {n.relative_path: n for n in nodes}
+    node_keys = set(nodes_by_key)
 
-    def __repr__(self) -> str:
-        return str(self)
+    # build forward edges and compute depth via Kahn's topo sort
+    children: dict[object, list[object]] = {key: [] for key in node_keys}
+    in_degree: dict[object, int] = {key: 0 for key in node_keys}
+    for n in nodes:
+        for p in n.parents:
+            if p.relative_path in node_keys:
+                children[p.relative_path].append(n.relative_path)
+                in_degree[n.relative_path] += 1
 
-    def __str__(self) -> str:
-        from collections import defaultdict, deque
+    depth: dict[object, int] = {}
+    queue: deque[object] = deque(key for key in node_keys if in_degree[key] == 0)
+    for key in queue:
+        depth[key] = 0
+    while queue:
+        key = queue.popleft()
+        for ckey in children[key]:
+            depth[ckey] = max(depth.get(ckey, -1), depth[key] + 1)
+            in_degree[ckey] -= 1
+            if in_degree[ckey] == 0:
+                queue.append(ckey)
 
-        nodes = list(self.nodes)
-        id_to_node = {id(n): n for n in nodes}
-        node_ids = set(id_to_node)
+    layers: dict[int, list[object]] = defaultdict(list)
+    for key, d in depth.items():
+        layers[d].append(key)
 
-        # build forward edges and compute depth via Kahn's topo sort
-        children: dict[int, list[int]] = {nid: [] for nid in node_ids}
-        in_degree: dict[int, int] = {nid: 0 for nid in node_ids}
-        for n in nodes:
-            for p in n.parents:
-                if id(p) in node_ids:
-                    children[id(p)].append(id(n))
-                    in_degree[id(n)] += 1
+    labels = {key: label(nodes_by_key[key]) for key in node_keys}
+    raw_edges = [
+        (p.relative_path, n.relative_path)
+        for n in nodes
+        for p in n.parents
+        if p.relative_path in node_keys
+    ]
 
-        depth: dict[int, int] = {}
-        queue: deque[int] = deque(nid for nid in node_ids if in_degree[nid] == 0)
-        for nid in queue:
-            depth[nid] = 0
-        while queue:
-            nid = queue.popleft()
-            for cid in children[nid]:
-                depth[cid] = max(depth.get(cid, -1), depth[nid] + 1)
-                in_degree[cid] -= 1
-                if in_degree[cid] == 0:
-                    queue.append(cid)
+    # Insert dummy pass-through nodes for long-range edges (span > 1 layer).
+    # Each dummy key is a fresh sentinel object, distinct from every
+    # relative_path by type, so it needs no reserved numbering scheme to
+    # avoid colliding with a real node's key.
+    dummy_keys: set[object] = set()
+    routing_edges: list[tuple[object, object]] = []
+    for u, v in raw_edges:
+        if depth[v] - depth[u] <= 1:
+            routing_edges.append((u, v))
+        else:
+            prev = u
+            for d in range(depth[u] + 1, depth[v]):
+                dkey = object()
+                dummy_keys.add(dkey)
+                layers[d].append(dkey)
+                depth[dkey] = d
+                routing_edges.append((prev, dkey))
+                prev = dkey
+            routing_edges.append((prev, v))
 
-        layers: dict[int, list[int]] = defaultdict(list)
-        for nid, d in depth.items():
-            layers[d].append(nid)
+    GAP = 3
+    lines: list[str] = [header + "\n"]
+    centre_x: dict[object, int] = {}
+    layer_rows: list[tuple[str, str, str]] = []
 
-        labels = {nid: self._node_label(id_to_node[nid]) for nid in node_ids}
-        raw_edges = [
-            (id(p), id(n)) for n in nodes for p in n.parents if id(p) in node_ids
-        ]
-
-        # Insert dummy pass-through nodes for long-range edges (span > 1 layer)
-        dummy_ids: set[int] = set()
-        routing_edges: list[tuple[int, int]] = []
-        dummy_counter = 0
-        for u, v in raw_edges:
-            if depth[v] - depth[u] <= 1:
-                routing_edges.append((u, v))
+    for d in sorted(layers):
+        keys = layers[d]
+        tops, mids, bots = [], [], []
+        x = 0
+        for key in keys:
+            if key in dummy_keys:
+                tops.append(" ")
+                mids.append("│")
+                bots.append(" ")
+                centre_x[key] = x
+                x += 1 + GAP
             else:
-                prev = u
-                for d in range(depth[u] + 1, depth[v]):
-                    did = -(dummy_counter + 1)
-                    dummy_counter += 1
-                    dummy_ids.add(did)
-                    layers[d].append(did)
-                    depth[did] = d
-                    routing_edges.append((prev, did))
-                    prev = did
-                routing_edges.append((prev, v))
+                lbl = labels[key]
+                w = len(lbl) + 2
+                tops.append("┌" + "─" * w + "┐")
+                mids.append("│ " + lbl + " │")
+                bots.append("└" + "─" * w + "┘")
+                centre_x[key] = x + (w + 2) // 2
+                x += w + 2 + GAP
+        layer_rows.append(("   ".join(tops), "   ".join(mids), "   ".join(bots)))
 
-        GAP = 3
-        lines: list[str] = [self._header() + "\n"]
-        centre_x: dict[int, int] = {}
-        layer_rows: list[tuple[str, str, str]] = []
+    for li, (top, mid, bot) in enumerate(layer_rows):
+        lines.extend([top, mid, bot])
+        d = li
+        if d + 1 not in layers:
+            continue
+        cur_keys = set(layers[d])
+        nxt_keys = set(layers[d + 1])
+        col_edges = [
+            (centre_x[u], centre_x[v])
+            for u, v in routing_edges
+            if u in cur_keys and v in nxt_keys
+        ]
+        if not col_edges:
+            lines.append("")
+            continue
+        lines.extend(_render_connector(col_edges))
 
-        for d in sorted(layers):
-            nids = layers[d]
-            tops, mids, bots = [], [], []
-            x = 0
-            for nid in nids:
-                if nid in dummy_ids:
-                    tops.append(" ")
-                    mids.append("│")
-                    bots.append(" ")
-                    centre_x[nid] = x
-                    x += 1 + GAP
-                else:
-                    lbl = labels[nid]
-                    w = len(lbl) + 2
-                    tops.append("┌" + "─" * w + "┐")
-                    mids.append("│ " + lbl + " │")
-                    bots.append("└" + "─" * w + "┘")
-                    centre_x[nid] = x + (w + 2) // 2
-                    x += w + 2 + GAP
-            layer_rows.append(("   ".join(tops), "   ".join(mids), "   ".join(bots)))
-
-        for li, (top, mid, bot) in enumerate(layer_rows):
-            lines.extend([top, mid, bot])
-            d = li
-            if d + 1 not in layers:
-                continue
-            cur_nids = set(layers[d])
-            nxt_nids = set(layers[d + 1])
-            col_edges = [
-                (centre_x[u], centre_x[v])
-                for u, v in routing_edges
-                if u in cur_nids and v in nxt_nids
-            ]
-            if not col_edges:
-                lines.append("")
-                continue
-            lines.extend(_render_connector(col_edges))
-
-        return "\n".join(lines)
-
-    def save(self, path) -> None:
-        """Write the ASCII DAG render to a file."""
-        Path(path).write_text(str(self) + "\n", encoding="utf-8")
-
-
-class _AncestorView(_GraphBase):
-    """Read-only view of a node and all its ancestors, for provenance rendering."""
-
-    def __init__(self, nodes: list) -> None:
-        self._nodes = nodes
-
-    @property
-    def nodes(self) -> list:
-        return self._nodes
-
-    def _header(self) -> str:
-        n = len(self._nodes)
-        return f"Provenance  {n} node{'s' if n != 1 else ''}"
+    return "\n".join(lines)
 
 
 def write_ancestor_graph(node) -> None:
@@ -265,10 +243,14 @@ def write_ancestor_graph(node) -> None:
             continue
         seen[n.relative_path] = n
         frontier.extend(n.parents)
-    view = _AncestorView(list(seen.values()))
+    ancestors = list(seen.values())
+    n = len(ancestors)
+    header = f"Provenance  {n} node{'s' if n != 1 else ''}"
     rip = node.path.parent / ".rip"
     rip.mkdir(parents=True, exist_ok=True)
-    (rip / "graph.txt").write_text(str(view) + "\n", encoding="utf-8")
+    (rip / "graph.txt").write_text(
+        render_ascii(ancestors, header) + "\n", encoding="utf-8"
+    )
 
 
 class _PipelineState:
@@ -283,7 +265,7 @@ class _PipelineState:
         self.finished = False
 
 
-class Pipeline(_GraphBase):
+class Pipeline:
     """One compiled request namespace over a shared canonical DAG."""
 
     def __init__(
@@ -455,11 +437,18 @@ class Pipeline(_GraphBase):
             return
         object.__setattr__(self, name, value)
 
-    def _header(self) -> str:
-        return f"Pipeline  {len(self.nodes)} nodes"
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return render_ascii(self.nodes, f"Pipeline  {len(self.nodes)} nodes")
+
+    def save(self, path) -> None:
+        """Write the ASCII DAG render to a file."""
+        Path(path).write_text(str(self) + "\n", encoding="utf-8")
 
 
-class DAG(_GraphBase):
+class DAG:
     """Shared registry and executor for canonical content-addressed rule calls."""
 
     def __init__(self, outdir):
@@ -547,14 +536,23 @@ class DAG(_GraphBase):
     def required_nodes(self) -> list:
         return [n for path, n in self._nodes.items() if path in self._required]
 
-    def _header(self) -> str:
-        return f"DAG  {len(self._nodes)} nodes  ({len(self._required)} required)"
+    def __repr__(self) -> str:
+        return str(self)
 
-    def _node_label(self, node: Node) -> str:
+    def __str__(self) -> str:
         required_paths = {n.relative_path for n in self.required_nodes}
-        return super()._node_label(node) + (
-            " ★" if node.relative_path in required_paths else ""
-        )
+
+        def label(node: Node) -> str:
+            return _node_label(node) + (
+                " ★" if node.relative_path in required_paths else ""
+            )
+
+        header = f"DAG  {len(self._nodes)} nodes  ({len(self._required)} required)"
+        return render_ascii(self.nodes, header, label=label)
+
+    def save(self, path) -> None:
+        """Write the ASCII DAG render to a file."""
+        Path(path).write_text(str(self) + "\n", encoding="utf-8")
 
     def execute(self, **kwargs):
         from necroflow.executor import execute

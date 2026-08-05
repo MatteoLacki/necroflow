@@ -182,7 +182,7 @@ src/necroflow/
   schedulers.py      — Scheduler protocol, fifo_scheduler, incremental scheduler factory
   dag.py             — path-length checks, resolve_command, write_dependencies,
                        classify_nodes, content hashing
-  pipeline.py        — _GraphBase, Pipeline (prefixed views, labels, finish), DAG, ASCII rendering
+  pipeline.py        — Pipeline (prefixed views, labels, finish), DAG, render_ascii
   executor.py        — execute(), resource caps, lock, ExecutionEvent, autoclean, keep_going
   logger.py          — thread-safe job logging
   config.py          — job TOML loading and grid expansion (iter_job_configs, JobConfig)
