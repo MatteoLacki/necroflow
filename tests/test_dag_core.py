@@ -432,11 +432,12 @@ def test_resolve_command_output_substitution(tmp_path):
     assert str(log.path) in cmd
 
 
+R_no_command = Rule("no_command", Inputs(word=str), Outputs(txt=Txt), None)
+
+
 def test_resolve_command_none_for_no_command(tmp_path):
     P = Pipeline(DAG(tmp_path))
-    # node with no command returns None
-    txt = R_make_txt(P, word="hi")
-    txt.command = None
+    txt = R_no_command(P, word="hi")
     assert resolve_command(txt) is None
 
 

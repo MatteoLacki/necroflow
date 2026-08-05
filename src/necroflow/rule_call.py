@@ -30,12 +30,20 @@ class RuleCall:
     command: str | Callable | None
     shellpath: str | None = None
     output_nodes: dict[str, Node] = field(default_factory=dict)
+    parents: list[Node] = field(init=False)
     rule_hash: str = field(init=False)
     provenance_hash: str = field(init=False)
     relative_path: Path = field(init=False)
     _realized_command: str | None = None
 
     def __post_init__(self) -> None:
+        # Cached once: read in hot loops (topo sort, connected components) via
+        # Node.parents, so this must not become a rebuild-per-access property.
+        self.parents = [
+            item
+            for value in self.inputs.values()
+            for item in (value if isinstance(value, tuple) else (value,))
+        ]
         self.rule_hash, self.provenance_hash = compute_hashes(self)
         rule_component = _safe_path_component(self.rule.__name__, kind="rule name")
         self.relative_path = (
@@ -50,14 +58,6 @@ class RuleCall:
         }
         values.update(self.rule.constraints)
         return values
-
-    @property
-    def parents(self) -> list[Node]:
-        """Return all input Nodes in declaration and tuple-element order."""
-        result: list[Node] = []
-        for value in self.inputs.values():
-            result.extend(value if isinstance(value, tuple) else (value,))
-        return result
 
     @property
     def fingerprint(self) -> str:

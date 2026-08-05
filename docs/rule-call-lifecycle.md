@@ -253,8 +253,13 @@ NodeTypes remain valid as input contracts, but there is no output-name fallback:
 ```python
 node.relative_path = call.relative_path / output_filename
 node.path = S.dag.nodes_dir / node.relative_path
-node.mutable = output_type.mutable
 ```
+
+`Node` stores only `output_name`, `node_type`, `relative_path`, `path`, `rule_call`, `state`,
+and `info`. `config`, `rule`, `command`, `parents`, `mutable`, and `output_nodes` are not
+copied onto the Node — they are properties that read through `node.rule_call` (`mutable`
+reads `node.node_type.mutable` instead, since it is fixed by the output type, not the call).
+One `RuleCall` per invocation stays the single place those values live.
 
 For a multi-output call:
 

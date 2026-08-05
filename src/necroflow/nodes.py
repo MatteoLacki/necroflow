@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
@@ -56,15 +56,9 @@ class NodeType(metaclass=NodeTypeMeta):
 class Node:
     output_name: str
     node_type: type[NodeType]
-    mutable: bool
-    parents: list[Node]
-    config: dict[str, Any]
-    rule: Any
-    command: str | Callable | None
     relative_path: Path
     path: Path
     rule_call: RuleCall
-    output_nodes: dict[str, Node] = field(default_factory=dict)
     state: NodeState | None = None
     info: str | None = None
 
@@ -73,6 +67,30 @@ class Node:
             doc = self.node_type.__doc__
             if doc:
                 self.info = doc.strip()
+
+    @property
+    def mutable(self) -> bool:
+        return self.node_type.mutable
+
+    @property
+    def parents(self) -> list[Node]:
+        return self.rule_call.parents
+
+    @property
+    def config(self) -> dict[str, Any]:
+        return self.rule_call.config
+
+    @property
+    def rule(self) -> Any:
+        return self.rule_call.rule
+
+    @property
+    def command(self) -> str | Callable | None:
+        return self.rule_call.command
+
+    @property
+    def output_nodes(self) -> dict[str, Node]:
+        return self.rule_call.output_nodes
 
     @property
     def has_mutable_output(self) -> bool:
@@ -153,11 +171,6 @@ class Node:
                 Node(
                     output_name=oname,
                     node_type=otype,
-                    mutable=otype.mutable,
-                    parents=call.parents,
-                    config=config,
-                    rule=rule,
-                    command=command,
                     relative_path=relative_path,
                     path=workdir / filename,
                     rule_call=call,
@@ -166,8 +179,6 @@ class Node:
         for node in nodes:
             _check_path_limits(node.path)
         all_outputs: dict[str, Node] = {n.output_name: n for n in nodes}
-        for n in nodes:
-            n.output_nodes = all_outputs
         call.output_nodes = all_outputs
         canonical = pipeline.dag.intern(call)
         return [canonical.output_nodes[name] for name in outputs_specs]
