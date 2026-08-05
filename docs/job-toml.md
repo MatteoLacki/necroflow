@@ -39,8 +39,18 @@ ref__grid     = ["hg38", "mm10"]
 aligner__grid = ["bwa", "bowtie2"]
 ```
 
-This produces four pipelines: `experiment__ref+hg38__aligner+bwa`,
-`experiment__ref+hg38__aligner+bowtie2`, etc. Grid expansion also applies to
-`pipeline` itself, so a single job TOML can fan out across different factory functions.
+By default this produces four pipelines with short, deduplicated labels:
+`experiment__hg38__bwa`, `experiment__hg38__bowtie2`, `experiment__mm10__bwa`,
+`experiment__mm10__bowtie2`. A parameter's value is written bare, without its
+key, whenever that value set cannot be confused with any other grid parameter's;
+otherwise the shortened key name is kept as a `key=value` prefix to disambiguate.
+Two nested parameter paths that shorten to the same trailing key name (e.g.
+`model.width__grid` and `optim.width__grid`) are rejected rather than silently
+colliding.
+
+Pass `--long-names` to use full nested parameter paths instead:
+`experiment__ref+hg38__aligner+bwa`, `experiment__ref+hg38__aligner+bowtie2`, etc.
+Grid expansion also applies to `pipeline` itself, so a single job TOML can fan
+out across different factory functions.
 
 [Previous: Command-Line Interface](cli.md) | [README](../README.md) | [Next: Config Validation](config-validation.md)

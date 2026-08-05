@@ -11,12 +11,16 @@ nodes/
   {rule}/{rule_hash}/{provenance_hash}/{file}  ← canonical node outputs
 
 results/
-  experiment__ref+hg38__aligner+bwa/
+  experiment__hg38__bwa/
     {node_name}/{file}             ← copies of requested node outputs only
     manifest.toml                  ← paths, origin node keys, and content hashes
-  experiment__ref+hg38__aligner+bowtie2/
+  experiment__hg38__bowtie2/
     ...
 ```
+
+Grid combo labels default to a short, deduplicated form (`--long-names` restores
+full nested parameter paths like `experiment__ref+hg38__aligner+bwa`); see
+[Job TOML and Parameter Grids](job-toml.md).
 
 Only the **requested** outputs (defaults to pipeline sinks) are copied —
 intermediate ancestors are excluded. On Linux, Necroflow uses GNU
@@ -26,7 +30,7 @@ unavailable. Archive mode preserves an intentionally symlink-valued output as
 a symlink instead of dereferencing it.
 
 ```text
-results/experiment__ref+hg38__aligner+bwa/counts/counts.txt
+results/experiment__hg38__bwa/counts/counts.txt
 ```
 
 `manifest.toml` identifies every owned result and its canonical source:

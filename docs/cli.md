@@ -19,6 +19,7 @@ necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \
           [--constraint KEY=VALUE ...] [--keep-going] [--autoclean] [--dry-run] \
           [--invalidate LABEL ...] [--reap NAME ...] [--reap-file PATH] \
           [--validation PATH.py:FUNCTION ...] [--scheduler NAME|PATH.py:FUNCTION] [--shellpath PATH] \
+          [--long-names] \
           JOB.toml [JOB2.toml ...]
 ```
 
@@ -38,6 +39,7 @@ necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \
 | `--validation PATH.py:FUNCTION` | Validate each expanded job config with a Python callable. Repeatable. |
 | `--scheduler NAME|PATH.py:FUNCTION` | Run-only scheduler: `connected-components` (default), `fifo`, or a local three-argument callable. |
 | `--shellpath PATH` | Executable shell for string commands, e.g. `/bin/bash`. Defaults to Python's system shell behavior. |
+| `--long-names` | Use full nested parameter paths in generated job/result labels (`job__ref+hg38`) instead of the default short, deduplicated form (`job__hg38`). See [Job TOML and Parameter Grids](job-toml.md). |
 
 ```bash
 necroflow --invalidate counts job.toml

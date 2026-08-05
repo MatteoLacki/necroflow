@@ -1109,6 +1109,24 @@ def test_main_grid_expansion(tmp_path, factory_file):
     assert len(a_real) == 2
 
 
+def test_main_grid_expansion_uses_short_names_by_default(tmp_path, factory_file):
+    """Job result labels default to short form; --long-names restores the full form."""
+    job = tmp_path / "job.toml"
+    job.write_text(
+        f'".pipeline" = "{factory_file}:factory"\nv__grid = ["hello", "world"]\n'
+    )
+
+    short_dir = tmp_path / "short"
+    main(["--outdir", str(short_dir), str(job)])
+    assert (short_dir / "job__hello").is_dir()
+    assert (short_dir / "job__world").is_dir()
+
+    long_dir = tmp_path / "long"
+    main(["--outdir", str(long_dir), "--long-names", str(job)])
+    assert (long_dir / "job__v+hello").is_dir()
+    assert (long_dir / "job__v+world").is_dir()
+
+
 def test_main_missing_pipeline_key_errors(tmp_path):
     """A job TOML without a '.pipeline' key must raise SystemExit."""
     job = tmp_path / "job.toml"

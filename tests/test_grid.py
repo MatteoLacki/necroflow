@@ -243,6 +243,20 @@ def test_custom_grid_suffix_and_label_options_are_honored():
     assert [label for label, _ in results] == ["job__width=64", "job__width=128"]
 
 
+def test_short_names_omits_key_for_unambiguous_string_values():
+    """A single string-valued grid dimension gets a bare value, no key= prefix."""
+    doc = parse('word__grid = ["alpha", "beta"]\n')
+    results = list(iter_configs(doc, base_stem="exp", short_names=True))
+    assert [label for label, _ in results] == ["exp__alpha", "exp__beta"]
+
+
+def test_short_names_rejects_colliding_leaf_names():
+    """Distinct nested parameters that shorten to the same leaf name must not silently collide."""
+    doc = parse("[model]\nwidth__grid = [64, 128]\n\n[optim]\nwidth__grid = [1, 2]\n")
+    with pytest.raises(ValueError, match="short_names=True"):
+        list(iter_configs(doc, base_stem="exp", short_names=True))
+
+
 def test_grid_expansion_does_not_mutate_the_parsed_job_document():
     """One parsed job document can be expanded repeatedly with identical results."""
     doc = parse('word__grid = ["first", "second"]\n')

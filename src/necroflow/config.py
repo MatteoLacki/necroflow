@@ -136,13 +136,16 @@ def iter_job_configs(
     path: str | Path,
     *,
     require_pipeline: bool = False,
+    short_names: bool = False,
 ) -> Iterator[JobConfig]:
     """Yield metadata-stripped job configs after TOML grid expansion."""
     job_path = Path(path)
     if not job_path.exists():
         raise FileNotFoundError(f"job file not found: {job_path}")
     doc = tomlkit.parse(job_path.read_text(encoding="utf-8"))
-    for label, config_dict in iter_configs(doc, base_stem=job_path.stem):
+    for label, config_dict in iter_configs(
+        doc, base_stem=job_path.stem, short_names=short_names
+    ):
         config_dict = _resolve_extends(config_dict)
         pipeline_spec = config_dict.get(".pipeline")
         if ".fingerprint" in config_dict:

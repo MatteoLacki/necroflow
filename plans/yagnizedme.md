@@ -35,6 +35,19 @@ explicit recommendations *not* to change something.
   `iter_configs(short_names=True)` is an explicitly tested API, so deleting
   `_compute_value_only_keys` is not currently zero-risk.
 
+## Status update — 2026-08-05
+
+Y3, Y4, Y5, Y7, Y8, Y9, Y10, Y11, Y12, Y14 are all complete (see the scoreboard for commit
+hashes). `class DAG` also moved from `pipeline.py` into `dag.py` as a follow-up once Y8 removed
+the shared `_GraphBase` base class that was the only reason the two lived together; ASCII
+rendering moved to a new `ascii_render.py` to avoid a `dag.py`/`pipeline.py` import cycle.
+
+**Y6 resolved differently than either scoreboard option.** Rather than delete
+`_compute_value_only_keys` or leave it dead, `short_names=True` became the CLI's default
+(`--long-names` opts back into the old long-form labels), so the function is now exercised on
+every real job. Remaining open items are Y13, Y15, Y16, Y17, Y18 — all explicitly "later" or
+"decide" in the original review, not zero-risk auto-fixes.
+
 ---
 
 ## Verdict
@@ -57,19 +70,19 @@ closer to ~150 lines.
 | ID | Finding | Lines | Risk | Do it? |
 |---|---|---|---|---|
 | Y1 | Scheduler leaks state across `execute()` calls | n/a | low | **done — `5e0bbea`** |
-| Y2 | `_content_hash` reads whole files into memory | ~0 | low | **done** |
-| Y3 | `Node` duplicates five `RuleCall` fields | −10 | med | **yes** |
-| Y4 | `RuleCall` is a two-phase constructor | −15 | low | **yes** |
-| Y5 | `keywords.py` is an empty frozenset | −5 | none | **yes** |
-| Y6 | `_compute_value_only_keys` is production-unused but API-tested | −23 | low | reassess |
-| Y7 | Dead local `import Path` | −1 | none | **yes** |
-| Y8 | `_GraphBase` is inheritance-as-code-sharing | −20 | low | yes |
-| Y9 | `__str__` renderer keys layout on `id()` | ~0 | low | yes |
-| Y10 | `grid.py` keys labels on `id()` | ~0 | med | yes |
-| Y11 | `gc.py` finds rules by bytecode introspection | ~0 | med | **yes** |
-| Y12 | `_accumulated_config` is exponential on diamonds | +2 | low | yes |
+| Y2 | `_content_hash` reads whole files into memory | ~0 | low | **done — `f9b22c4`** |
+| Y3 | `Node` duplicates five `RuleCall` fields | −10 | med | **done — `9640e8a`** |
+| Y4 | `RuleCall` is a two-phase constructor | −15 | low | **done — `7e21bd7`** |
+| Y5 | `keywords.py` is an empty frozenset | −5 | none | **done — `7f074c2`** |
+| Y6 | `_compute_value_only_keys` is production-unused but API-tested | −23 | low | **made live, not deleted — see below** |
+| Y7 | Dead local `import Path` | −1 | none | **done — `7f074c2`** |
+| Y8 | `_GraphBase` is inheritance-as-code-sharing | −20 | low | **done — `2533a97`** |
+| Y9 | `__str__` renderer keys layout on `id()` | ~0 | low | **done — `2533a97`** |
+| Y10 | `grid.py` keys labels on `id()` | ~0 | med | **done — `b0b08bc`** |
+| Y11 | `gc.py` finds rules by bytecode introspection | ~0 | med | **done — `2986855`** |
+| Y12 | `_accumulated_config` is exponential on diamonds | +2 | low | **done — `5f80809`** |
 | Y13 | Label assignment is O(n²) | +5 | low | later |
-| Y14 | `Pipeline.__setattr__` writes the label twice | −2 | med | yes |
+| Y14 | `Pipeline.__setattr__` writes the label twice | −2 | med | **done — `c488c78`** |
 | Y15 | Four entry points for two built-in rules | −40 | med | later |
 | Y16 | `fingerprint` compatibility aliases | −10 | low | later |
 | Y17 | `_compat.py` for Python 3.10 | −9 | low | decide |
@@ -204,6 +217,23 @@ speculative generality. Delete both.
 
 ### Y6 — `_compute_value_only_keys` is unreachable
 
+**Status: resolved by making it live, not by deleting it.** `config.py:145` (`iter_job_configs`)
+now accepts a `short_names` passthrough, and the CLI (`cli.py`, shared by `run`/`graph`/`outputs`/
+`doctor`/`explain` via `_add_run_options`) defaults to `short_names=True`, with a new
+`--long-names` flag to opt back into the old long-form labels. `_compute_value_only_keys` now runs
+on every real job by default instead of being gated behind a flag nobody set.
+
+While wiring this up: the one existing test for `short_names=True` used only int-valued grid
+dimensions, which never reach `_compute_value_only_keys`'s bare-value branch — so the function's
+actual disambiguation logic had zero test coverage even though its early-return guard did.
+Added `test_short_names_omits_key_for_unambiguous_string_values` to close that gap, plus
+`test_short_names_rejects_colliding_leaf_names` for a real but previously-unguarded risk:
+`shorten_param_name` takes only the trailing dotted component (`model.width` -> `width`), so two
+different nested parameters could shorten to the same key and silently collide in the generated
+label. `iter_configs` now raises `ValueError` up front when that happens.
+
+Original analysis, still accurate about why nothing in production used to reach this code:
+
 `grid.py:284`, ~23 lines. It returns `set()` immediately unless `short_names=True`:
 
 ```python
@@ -212,8 +242,8 @@ if not short_names:
     return set()
 ```
 
-The only caller of `iter_configs` is `config.py:145`, which passes neither `short_names` nor
-`equal_sign`. Confirmed by grep: no other call site exists in `src/`.
+The only caller of `iter_configs` was `config.py:145`, which passed neither `short_names` nor
+`equal_sign`.
 
 ### Y7 — dead local import
 

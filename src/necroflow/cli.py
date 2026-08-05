@@ -225,7 +225,11 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
     for job_path_str in args.jobs:
         job_path = Path(job_path_str)
         try:
-            job_configs = iter_job_configs(job_path, require_pipeline=True)
+            job_configs = iter_job_configs(
+                job_path,
+                require_pipeline=True,
+                short_names=not getattr(args, "long_names", False),
+            )
             for job_config in job_configs:
                 if not job_config.pipeline_spec:
                     raise SystemExit(
@@ -1044,6 +1048,12 @@ def _add_run_options(parser) -> None:
         default=None,
         metavar="PATH",
         help="Executable shell path for string commands, e.g. /bin/bash. Defaults to Python's system shell behavior.",
+    )
+    parser.add_argument(
+        "--long-names",
+        action="store_true",
+        help="Use full nested parameter names in generated job/result labels "
+        "instead of the default shortened, deduplicated form.",
     )
 
 

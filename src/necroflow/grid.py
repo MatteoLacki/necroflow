@@ -354,6 +354,21 @@ def iter_configs(
     )
 
     param_names = list(grid_params)
+    if short_names:
+        by_short_name: dict[str, list[str]] = {}
+        for name in param_names:
+            by_short_name.setdefault(shorten_param_name(name), []).append(name)
+        colliding = {
+            short: names for short, names in by_short_name.items() if len(names) > 1
+        }
+        if colliding:
+            detail = "; ".join(
+                f"{short!r} <- {names}" for short, names in sorted(colliding.items())
+            )
+            raise ValueError(
+                f"short_names=True: distinct grid parameters shorten to the same "
+                f"name ({detail}); pass short_names=False or rename one"
+            )
     param_values = [grid_params[name] for name in param_names]
 
     # Walk positions rather than values: a label belongs to a slot in the grid,
