@@ -122,13 +122,13 @@ def test_rule_call_rejects_total_path_over_path_max(tmp_path, monkeypatch):
 def test_fingerprint_stable():
     txt1 = R_make_txt(P, word="hi")
     txt2 = R_make_txt(P, word="hi")
-    assert txt1.fingerprint == txt2.fingerprint
+    assert txt1.provenance_hash == txt2.provenance_hash
 
 
 def test_fingerprint_differs_on_config():
     txt_a = R_make_txt(P, word="hello")
     txt_b = R_make_txt(P, word="world")
-    assert txt_a.fingerprint != txt_b.fingerprint
+    assert txt_a.provenance_hash != txt_b.provenance_hash
 
 
 def test_fingerprint_differs_on_parent():
@@ -136,7 +136,7 @@ def test_fingerprint_differs_on_parent():
     txt_b = R_make_txt(P, word="world")
     upper_a, _ = R_to_upper(P, txt_a, n=1)
     upper_b, _ = R_to_upper(P, txt_b, n=1)
-    assert upper_a.fingerprint != upper_b.fingerprint
+    assert upper_a.provenance_hash != upper_b.provenance_hash
 
 
 def test_fingerprint_changes_on_inputs_type_change():
@@ -159,7 +159,7 @@ def test_fingerprint_changes_on_inputs_type_change():
 
     bam_a = Ra_align(P, Ra_raw(P, path="/d/s.fq"), ref="hg38")
     bam_b = Rb_align(P, Rb_raw(P, path="/d/s.fq"), ref="hg38")
-    assert bam_a.fingerprint != bam_b.fingerprint
+    assert bam_a.provenance_hash != bam_b.provenance_hash
 
 
 def test_fingerprint_changes_on_outputs_type_change():
@@ -176,7 +176,7 @@ def test_fingerprint_changes_on_outputs_type_change():
 
     bam_a = Ra_align(P, path="/d/s.fq")
     bam_b = Rb_align(P, path="/d/s.fq")
-    assert bam_a.fingerprint != bam_b.fingerprint
+    assert bam_a.provenance_hash != bam_b.provenance_hash
 
 
 def test_node_key_unique_for_cooutputs():
@@ -382,7 +382,7 @@ def test_runtime_uncheckable_config_annotation_remains_fingerprintable(tmp_path)
 
     node = rule(Pipeline(DAG(tmp_path)), mode="strict")
 
-    assert len(node.fingerprint) == 64
+    assert len(node.provenance_hash) == 64
 
 
 def test_resolve_command_input_substitution(tmp_path):
@@ -817,7 +817,10 @@ def test_fingerprint_changes_for_nodetype_union_contract():
     )
     txt = R_make_txt(P, word="hi")
 
-    assert r_single_consume(P, txt).fingerprint != r_union_consume(P, txt).fingerprint
+    assert (
+        r_single_consume(P, txt).provenance_hash
+        != r_union_consume(P, txt).provenance_hash
+    )
 
 
 def test_nodetype_union_fingerprint_order_is_stable():
@@ -829,7 +832,7 @@ def test_nodetype_union_fingerprint_order_is_stable():
     )
     txt = R_make_txt(P, word="hi")
 
-    assert r_ab_consume(P, txt).fingerprint == r_ba_consume(P, txt).fingerprint
+    assert r_ab_consume(P, txt).provenance_hash == r_ba_consume(P, txt).provenance_hash
 
 
 # ── Pipeline labels ──────────────────────────────────────────────────────────
@@ -931,7 +934,9 @@ def test_repeat_does_not_affect_fingerprint():
     r2_make = Rule(
         "make", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=3
     )
-    assert r1_make(P, word="hi").fingerprint == r2_make(P, word="hi").fingerprint
+    assert (
+        r1_make(P, word="hi").provenance_hash == r2_make(P, word="hi").provenance_hash
+    )
 
 
 # ── body return style ─────────────────────────────────────────────────────────
@@ -993,7 +998,7 @@ def test_command_decorator_applies_config_defaults_before_fingerprinting(tmp_pat
         "plugin": None,
         "word": "value",
     }
-    assert overridden.fingerprint != omitted.fingerprint
+    assert overridden.provenance_hash != omitted.provenance_hash
 
 
 def test_declared_default_affects_only_omitted_effective_config(tmp_path):
@@ -1017,12 +1022,12 @@ def test_declared_default_affects_only_omitted_effective_config(tmp_path):
     higher_pipeline = Pipeline(DAG(tmp_path / "higher"))
 
     assert (
-        lower_default(lower_pipeline).fingerprint
-        != higher_default(higher_pipeline).fingerprint
+        lower_default(lower_pipeline).provenance_hash
+        != higher_default(higher_pipeline).provenance_hash
     )
     assert (
-        lower_default(lower_pipeline, threshold=0.20).fingerprint
-        == higher_default(higher_pipeline, threshold=0.20).fingerprint
+        lower_default(lower_pipeline, threshold=0.20).provenance_hash
+        == higher_default(higher_pipeline, threshold=0.20).provenance_hash
     )
 
 
@@ -1204,7 +1209,10 @@ def test_command_decorator_preserves_runtime_shape_and_fingerprint():
         Outputs(txt=Txt),
         "echo {word} > {txt}",
     )
-    assert make_txt(P, word="same").fingerprint == explicit(P, word="same").fingerprint
+    assert (
+        make_txt(P, word="same").provenance_hash
+        == explicit(P, word="same").provenance_hash
+    )
 
     @command("tr a-z A-Z < {txt} | tee {log} > {upper}")
     def to_upper(txt: Txt):

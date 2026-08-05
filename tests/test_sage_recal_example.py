@@ -50,7 +50,7 @@ def test_run_sage_calls_get_distinct_lineage_and_caching():
     # gives each call its own fingerprint/cache directory -- the reuse property this
     # example exists to demonstrate.
     assert pipeline.recal_tsv.rule is pipeline.tsv.rule
-    assert pipeline.recal_tsv.fingerprint != pipeline.tsv.fingerprint
+    assert pipeline.recal_tsv.provenance_hash != pipeline.tsv.provenance_hash
     assert pipeline.recal_tsv.path != pipeline.tsv.path
 
     # The second call's inputs really are the recalibrated ones, not the originals --

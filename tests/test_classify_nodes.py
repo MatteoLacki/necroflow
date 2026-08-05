@@ -49,7 +49,7 @@ def test_cooutputs_distinct_node_keys():
 
 def test_cooutputs_share_fingerprint():
     P = make_pipeline()
-    assert P.bam.fingerprint == P.log.fingerprint
+    assert P.bam.provenance_hash == P.log.provenance_hash
 
 
 def test_command_change_changes_fingerprint():
@@ -70,7 +70,7 @@ def test_command_change_changes_fingerprint():
     P2.bam = R2_align(P2, P2.fastq, ref="hg38")
     P2.sorted = R2_sort_bam(P2, P2.bam)
 
-    assert P1.bam.fingerprint != P2.bam.fingerprint
+    assert P1.bam.provenance_hash != P2.bam.provenance_hash
 
 
 def test_dag_contains_all_cooutputs(tmp_path):

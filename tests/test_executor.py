@@ -1179,8 +1179,8 @@ def test_text_file_fingerprint_changes_with_text():
 
     P = Pipeline(DAG("/tmp/necroflow-test-text-fingerprint"))
     assert (
-        r_write_config(P, text="a").fingerprint
-        != r_write_config(P, text="b").fingerprint
+        r_write_config(P, text="a").provenance_hash
+        != r_write_config(P, text="b").provenance_hash
     )
 
 
@@ -1198,8 +1198,8 @@ def test_text_file_recipe_distinguishes_from_shell_rule():
 
     P = Pipeline(DAG("/tmp/necroflow-test-text-recipe"))
     assert (
-        text_rules_write_config(P, text="same").fingerprint
-        != shell_rules_write_config(P, text="same").fingerprint
+        text_rules_write_config(P, text="same").provenance_hash
+        != shell_rules_write_config(P, text="same").provenance_hash
     )
 
 
@@ -1249,7 +1249,8 @@ def test_text_file_decorator_matches_factory_fingerprint():
 
     P = Pipeline(DAG("/tmp/necroflow-test-text-decorator"))
     assert (
-        write_config(P, text="same").fingerprint == explicit(P, text="same").fingerprint
+        write_config(P, text="same").provenance_hash
+        == explicit(P, text="same").provenance_hash
     )
     assert write_config.info == "Write the configuration."
 
@@ -1319,8 +1320,8 @@ def test_symlink_file_decorator_matches_factory_and_links(tmp_path):
     )
     fingerprint_pipeline = Pipeline(DAG(tmp_path / "fingerprint"))
     assert (
-        ingest_raw(fingerprint_pipeline, path="source").fingerprint
-        == explicit(fingerprint_pipeline, path="source").fingerprint
+        ingest_raw(fingerprint_pipeline, path="source").provenance_hash
+        == explicit(fingerprint_pipeline, path="source").provenance_hash
     )
     assert ingest_raw.info == "Ingest raw data."
 

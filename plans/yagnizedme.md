@@ -64,8 +64,14 @@ and the union of their ancestor directories), so each insert costs O(path depth)
 O(n). `_result_paths_conflict` is gone; conflict detection is now three O(1)-ish dict lookups
 per ancestor instead of a full walk of every existing label.
 
-Remaining open items are Y16, Y18 — both explicitly "later" or "decide" in the original
-review, not zero-risk auto-fixes.
+**Y16 done.** Checked actual usage before picking a direction: `.fingerprint` (46 hits, mostly
+tests) outnumbered `.provenance_hash` (19 hits), the opposite of what a "dead compatibility
+shim" would look like — but with no released compatibility to protect (0.0.4, pre-1.0), the
+duplicate name was still pure tax. Deleted `Node.fingerprint` and `RuleCall.fingerprint`;
+standardized every call site (6 test files) on `.provenance_hash`. The unrelated rejected
+`.fingerprint` job-TOML metadata key (`config.py`) is untouched — different thing, same word.
+
+Remaining open item is Y18 — "decide" in the original review, not a zero-risk auto-fix.
 
 ---
 
@@ -103,7 +109,7 @@ closer to ~150 lines.
 | Y13 | Label assignment is O(n²) | +5 | low | **done — two incremental path dicts** |
 | Y14 | `Pipeline.__setattr__` writes the label twice | −2 | med | **done — `c488c78`** |
 | Y15 | Four entry points for two built-in rules | −40 | med | **done — `text_file` simplified to match `symlink_file`** |
-| Y16 | `fingerprint` compatibility aliases | −10 | low | later |
+| Y16 | `fingerprint` compatibility aliases | −10 | low | **done — deleted, standardized on `provenance_hash`** |
 | Y17 | `_compat.py` for Python 3.10 | −9 | low | **done — 3.10 support dropped** |
 | Y18 | `autoclean` threaded through `execute()` | −30 | med | later |
 | N1 | `NamedValues` → plain dict | −32 | high | **no** |
@@ -464,6 +470,15 @@ rather than by inertia.
 
 ### Y16 — `fingerprint` compatibility aliases
 
+**Status: resolved — deleted, standardized on `provenance_hash`.** Actual usage at the time of
+the decision: `.fingerprint` outnumbered `.provenance_hash` 46 hits to 19, spread across
+`test_fingerprints.py`, `test_dag_core.py`, `test_executor.py`, `test_variadic_inputs.py`,
+`test_classify_nodes.py`, `test_sage_recal_example.py`, and documented in `docs/caching.md`.
+Despite the alias being the more commonly *used* name, `provenance_hash` was kept as the
+canonical one (it was always the intended name post-v3-split, and `fingerprint`'s popularity
+was inherited test-writing habit, not a deliberate choice) — with no released compatibility to
+protect at 0.0.4, the duplicate was pure ongoing tax either way.
+
 ```python
 # src/necroflow/nodes.py:92
 @property
@@ -474,11 +489,11 @@ def fingerprint(self) -> str:
 plus the twin at `rule_call.py:61`. Version is `0.0.4` — there is no released compatibility
 to preserve.
 
-**Correction to what I said in conversation:** these are not dead. `tests/test_dag_core.py`
-and `tests/test_variadic_inputs.py` contain the originally counted assertions, but a current
-repository audit finds `.fingerprint` used across several additional test modules. Renaming
-it is still worth considering because two names impose a permanent tax, but this is a broad
-rename, not a deletion.
+**Correction to what I said in conversation:** these were not dead. `tests/test_dag_core.py`
+and `tests/test_variadic_inputs.py` contained the originally counted assertions, but a current
+repository audit found `.fingerprint` used across several additional test modules. Renaming
+was still worth doing because two names impose a permanent tax, but it was a broad rename, not
+a deletion of dead code.
 
 ### Y17 — `_compat.py`
 

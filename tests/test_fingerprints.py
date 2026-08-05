@@ -257,13 +257,13 @@ def test_semantic_ast_change_and_python_version_change_fingerprint(monkeypatch):
         semantic_command_b,
     )(pipeline, label="x")
 
-    assert first.fingerprint != second.fingerprint
-    assert len(first.fingerprint) == 64
-    assert first.path.parent.name == first.fingerprint
+    assert first.provenance_hash != second.provenance_hash
+    assert len(first.provenance_hash) == 64
+    assert first.path.parent.name == first.provenance_hash
     tree, source = command_ast(semantic_command_a)
     assert "FunctionDef" in tree
     assert source == Path(__file__).resolve()
-    original = first.fingerprint
+    original = first.provenance_hash
     monkeypatch.setattr(
         "necroflow.fingerprints.python_identity", lambda: python_identity() + "-other"
     )
@@ -273,7 +273,7 @@ def test_semantic_ast_change_and_python_version_change_fingerprint(monkeypatch):
         Outputs(result=Result),
         semantic_command_a,
     )(pipeline, label="x")
-    assert changed.fingerprint != original
+    assert changed.provenance_hash != original
 
 
 def test_framed_canonical_values_preserve_boundaries_and_order():
@@ -418,7 +418,7 @@ def test_ast_formatting_and_comments_do_not_change_identity(tmp_path):
         second_callback,
     )(pipeline, label="x")
 
-    assert first.fingerprint == second.fingerprint
+    assert first.provenance_hash == second.provenance_hash
 
 
 def test_framework_hashing_rejects_custom_config_values(tmp_path):
@@ -468,7 +468,7 @@ def test_constraints_and_repeat_remain_outside_framework_hashes(tmp_path):
         repeat=4,
     )(pipeline, label="x")
 
-    assert first.fingerprint == second.fingerprint
+    assert first.provenance_hash == second.provenance_hash
 
 
 def test_explicit_shellpath_changes_callable_fingerprint(tmp_path):
@@ -482,9 +482,9 @@ def test_explicit_shellpath_changes_callable_fingerprint(tmp_path):
     explicit_pipeline = Pipeline(DAG(tmp_path / "explicit"), shellpath="/bin/bash")
     default_result = rule(default_pipeline, label="x")
     explicit_result = rule(explicit_pipeline, label="x")
-    default_digest = default_result.fingerprint
+    default_digest = default_result.provenance_hash
 
-    assert explicit_result.fingerprint != default_digest
+    assert explicit_result.provenance_hash != default_digest
     expected_shell = str(Path("/bin/bash").resolve())
     assert explicit_result.rule_call.shellpath == expected_shell
 
@@ -497,8 +497,8 @@ def test_explicit_shellpath_does_not_change_builtin_materializer_fingerprint(tmp
     explicit = Pipeline(DAG(tmp_path / "explicit"), shellpath="/bin/sh")
 
     assert (
-        write_text(default, text="same").fingerprint
-        == write_text(explicit, text="same").fingerprint
+        write_text(default, text="same").provenance_hash
+        == write_text(explicit, text="same").provenance_hash
     )
 
 

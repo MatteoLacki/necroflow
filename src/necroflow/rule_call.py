@@ -60,12 +60,6 @@ class RuleCall:
         return values
 
     @property
-    def fingerprint(self) -> str:
-        """Compatibility alias for the invocation-specific provenance hash."""
-
-        return self.provenance_hash
-
-    @property
     def workdir(self) -> Path:
         return self.dag.nodes_dir / self.relative_path
 

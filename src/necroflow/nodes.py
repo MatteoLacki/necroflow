@@ -99,12 +99,6 @@ class Node:
         return any(node.mutable for node in self.output_nodes.values())
 
     @property
-    def fingerprint(self) -> str:
-        """Compatibility alias for :attr:`provenance_hash`."""
-
-        return self.provenance_hash
-
-    @property
     def rule_hash(self) -> str:
         return self.rule_call.rule_hash
 

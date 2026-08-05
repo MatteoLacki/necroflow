@@ -356,15 +356,18 @@ def test_variadic_fingerprint_tracks_order_grouping_and_many_bounds(tmp_path):
     reverse = plain(pipeline, (second, first))
 
     assert duplicate is forward
-    assert reverse.fingerprint != forward.fingerprint
-    assert at_least_one(pipeline, (first, second)).fingerprint != forward.fingerprint
+    assert reverse.provenance_hash != forward.provenance_hash
     assert (
-        at_least_two(pipeline, (first, second)).fingerprint
-        != at_least_one(pipeline, (first, second)).fingerprint
+        at_least_one(pipeline, (first, second)).provenance_hash
+        != forward.provenance_hash
     )
     assert (
-        grouped(pipeline, (first,), (second, third)).fingerprint
-        != grouped(pipeline, (first, second), (third,)).fingerprint
+        at_least_two(pipeline, (first, second)).provenance_hash
+        != at_least_one(pipeline, (first, second)).provenance_hash
+    )
+    assert (
+        grouped(pipeline, (first,), (second, third)).provenance_hash
+        != grouped(pipeline, (first, second), (third,)).provenance_hash
     )
 
 

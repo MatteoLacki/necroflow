@@ -62,8 +62,7 @@ Each output lives at
 `nodes/{rule}/{rule_hash}/{provenance_hash}/{filename}`. The canonical
 rule-call key omits the filename; the canonical node key includes it.
 `node.rule_hash`, `node.provenance_hash`, and `node.relative_path` expose these
-values. `node.fingerprint` remains a compatibility alias for
-`node.provenance_hash`. Constraints and `repeat` remain excluded.
+values. Constraints and `repeat` remain excluded.
 
 V3 paths intentionally break compatibility with v2. Old cache directories are
 not probed, migrated, reused, or deleted automatically.
