@@ -71,7 +71,20 @@ duplicate name was still pure tax. Deleted `Node.fingerprint` and `RuleCall.fing
 standardized every call site (6 test files) on `.provenance_hash`. The unrelated rejected
 `.fingerprint` job-TOML metadata key (`config.py`) is untouched — different thing, same word.
 
-Remaining open item is Y18 — "decide" in the original review, not a zero-risk auto-fix.
+**Y18 done, via the narrower of two options.** `autoclean` turned out to do two genuinely
+different things: a one-shot orphan sweep before any job runs (`_prepare_active`), and
+incremental during-run cleanup after each job completes, which deletes an intermediate the
+moment its last consumer finishes rather than waiting for the whole run to end — that second
+part exists specifically to bound peak disk during a long run, which matters for this
+project's stated domain (BAM/FASTQ-scale pipelines). Moving autoclean into the `on_complete`
+hook (which only fires once, after every job is done) would have silently dropped that
+during-run bound, so that direction was rejected. Instead, the `children`/`final_keys`
+plumbing that `_cleanup_parents`/`_can_remove_parent_dir`/`_on_job_done` each took as separate
+parameters is now bundled into one `_AutocleanPlan` dataclass built once per `execute()` call
+(`_build_autoclean_plan`) and passed as a single object — same behavior, fewer parameters
+threaded through the call chain.
+
+All open items from the original scoreboard are now resolved.
 
 ---
 
@@ -111,7 +124,7 @@ closer to ~150 lines.
 | Y15 | Four entry points for two built-in rules | −40 | med | **done — `text_file` simplified to match `symlink_file`** |
 | Y16 | `fingerprint` compatibility aliases | −10 | low | **done — deleted, standardized on `provenance_hash`** |
 | Y17 | `_compat.py` for Python 3.10 | −9 | low | **done — 3.10 support dropped** |
-| Y18 | `autoclean` threaded through `execute()` | −30 | med | later |
+| Y18 | `autoclean` threaded through `execute()` | −30 | med | **done — bundled into `_AutocleanPlan`, during-run cleanup kept** |
 | N1 | `NamedValues` → plain dict | −32 | high | **no** |
 | N2 | `Inputs`/`Outputs`/`Constraints` → dicts | −30 | high | **no** |
 
@@ -461,12 +474,24 @@ motivated by anything in the source.
 
 ### Y18 — `autoclean` is woven through `execute()`
 
-`execute()` is 240 lines with 9 parameters. `autoclean` alone touches six places: conditional
-`children`/`final_keys` construction (`executor.py:640-648`), three `_cleanup_parents` calls,
-and `_prepare_active`. The `on_complete` hook already exists and is the natural home for a
-post-run sweep. The only thing lost is cleaning intermediates *during* a long run to save
-peak disk — which may well be the point, in which case keep it. Worth deciding deliberately
-rather than by inertia.
+**Status: resolved — bundled, not moved to `on_complete`.** `autoclean` turned out to cover two
+different behaviors: a one-shot orphan sweep before any job runs (`_prepare_active`), and
+incremental during-run cleanup after each job completes, deleting an intermediate the moment
+its last consumer finishes rather than waiting for the whole run to end. `on_complete` only
+fires once, after every job is done, so routing autoclean through it would have silently
+dropped the during-run peak-disk bound — a real capability loss for this project's stated
+domain (BAM/FASTQ-scale pipelines), not a safe refactor. Instead, the `children`/`final_keys`
+state that `_cleanup_parents`/`_can_remove_parent_dir`/`_on_job_done` each took as separate
+parameters is now one `_AutocleanPlan` dataclass, built once per `execute()` call via
+`_build_autoclean_plan` and threaded through as a single object. Same behavior, fewer
+parameters per call site.
+
+Original analysis: `execute()` is 240 lines with 9 parameters. `autoclean` alone touches six
+places: conditional `children`/`final_keys` construction (`executor.py:640-648`), three
+`_cleanup_parents` calls, and `_prepare_active`. The `on_complete` hook already exists and is
+the natural home for a post-run sweep. The only thing lost is cleaning intermediates *during*
+a long run to save peak disk — which may well be the point, in which case keep it. Worth
+deciding deliberately rather than by inertia.
 
 ### Y16 — `fingerprint` compatibility aliases
 

@@ -28,7 +28,7 @@ import os
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -320,9 +320,43 @@ def _remove_output_path(node) -> bool:
     return True
 
 
-def _can_remove_parent_dir(
-    parent, children: dict, final_keys: set, active_keys: set
-) -> bool:
+@dataclass
+class _AutocleanPlan:
+    """Reverse-edge bookkeeping for deleting finished intermediates during a run.
+
+    Bundles the state that autoclean's during-run cleanup needs so callers pass
+    one object instead of a bool plus two separate collections at every site.
+    ``enabled`` mirrors ``execute()``'s ``autoclean`` flag directly; ``children``
+    and ``final_keys`` stay empty when disabled so downstream code needs no
+    separate None/False check to skip cleanup.
+    """
+
+    enabled: bool
+    children: dict[Path, list] = field(default_factory=dict)
+    final_keys: set[Path] = field(default_factory=set)
+
+
+def _build_autoclean_plan(
+    autoclean: bool, active: list, active_keys: set
+) -> _AutocleanPlan:
+    """Return the reverse-edge index autoclean needs to know when a rule call is done.
+
+    A node's ``children`` are its active dependents; a ``final_keys`` entry has
+    none, so its rule-call directory is a final output and never a cleanup
+    candidate.
+    """
+    if not autoclean:
+        return _AutocleanPlan(enabled=False)
+    children: dict[Path, list] = {n.relative_path: [] for n in active}
+    for n in active:
+        for p in n.parents:
+            if p.relative_path in active_keys:
+                children[p.relative_path].append(n)
+    final_keys = {k for k, kids in children.items() if not kids}
+    return _AutocleanPlan(enabled=True, children=children, final_keys=final_keys)
+
+
+def _can_remove_parent_dir(parent, plan: _AutocleanPlan, active_keys: set) -> bool:
     """Return True when every active co-output in a rule-call is cleanable."""
     if parent.has_mutable_output:
         return False
@@ -331,29 +365,29 @@ def _can_remove_parent_dir(
     ]
     if not siblings:
         return False
-    if any(s.relative_path in final_keys for s in siblings):
+    if any(s.relative_path in plan.final_keys for s in siblings):
         return False
     return all(
-        all(c.state == NodeState.UP_TO_DATE for c in children[s.relative_path])
+        all(c.state == NodeState.UP_TO_DATE for c in plan.children[s.relative_path])
         for s in siblings
     )
 
 
-def _cleanup_parents(node, children: dict, final_keys: set, active_keys: set) -> int:
+def _cleanup_parents(node, plan: _AutocleanPlan, active_keys: set) -> int:
     """Delete each finished intermediate parent's whole rule-call output directory."""
     n_cleaned = 0
     seen_dirs: set[Path] = set()
     for parent in node.parents:
         if (
             parent.relative_path not in active_keys
-            or parent.relative_path in final_keys
+            or parent.relative_path in plan.final_keys
             or parent.path is None
         ):
             continue
         output_dir = parent.path.parent
         if output_dir in seen_dirs:
             continue
-        if _can_remove_parent_dir(parent, children, final_keys, active_keys):
+        if _can_remove_parent_dir(parent, plan, active_keys):
             seen_dirs.add(output_dir)
             if _remove_rule_output_dir(parent):
                 n_cleaned += 1
@@ -444,9 +478,7 @@ def _on_job_done(
     node,
     active_keys: set,
     needs_run: set,
-    autoclean: bool,
-    children: dict,
-    final_keys: set,
+    autoclean_plan: _AutocleanPlan,
     report: dict[str, ExecutionEvent],
     started_at: str,
     finished_at: str,
@@ -476,12 +508,12 @@ def _on_job_done(
         ):
             conode.mark_done("up_to_date")
             conode.state = NodeState.UP_TO_DATE
-            if autoclean:
-                n_cleaned += _cleanup_parents(conode, children, final_keys, active_keys)
+            if autoclean_plan.enabled:
+                n_cleaned += _cleanup_parents(conode, autoclean_plan, active_keys)
     node.mark_done("up_to_date")
     node.state = NodeState.UP_TO_DATE
-    if autoclean:
-        n_cleaned += _cleanup_parents(node, children, final_keys, active_keys)
+    if autoclean_plan.enabled:
+        n_cleaned += _cleanup_parents(node, autoclean_plan, active_keys)
     return n_cleaned
 
 
@@ -641,15 +673,7 @@ def execute(
 
         # Autoclean needs reverse edges to know when every consumer of an
         # intermediate and every co-output sharing its directory is finished.
-        if autoclean:
-            children: dict[Path, list] = {n.relative_path: [] for n in active}
-            for n in active:
-                for p in n.parents:
-                    if p.relative_path in active_keys:
-                        children[p.relative_path].append(n)
-            final_keys = {k for k, kids in children.items() if not kids}
-        else:
-            children, final_keys = {}, set()
+        autoclean_plan = _build_autoclean_plan(autoclean, active, active_keys)
 
         try:
             with concurrent.futures.ThreadPoolExecutor(
@@ -721,9 +745,7 @@ def execute(
                                 node,
                                 active_keys,
                                 needs_run,
-                                autoclean,
-                                children,
-                                final_keys,
+                                autoclean_plan,
                                 report,
                                 start_wall,
                                 finished_wall,
