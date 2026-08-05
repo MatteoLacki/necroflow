@@ -10,9 +10,10 @@ import platform
 import sys
 import textwrap
 from types import UnionType
-from typing import Annotated, Any, Callable, get_args, get_origin, Union
+from typing import TYPE_CHECKING, Annotated, Any, Callable, get_args, get_origin, Union
 
-from necroflow.rule_call import RuleCall
+if TYPE_CHECKING:
+    from necroflow.rule_call import RuleCall
 
 # Stamped into .rip/dependencies.toml by write_dependencies and required back by
 # any reader of stored provenance, and carried in both hash domains so a format

@@ -208,10 +208,13 @@ call = RuleCall(
 )
 ```
 
-Necroflow first hashes the configuration-independent local recipe into
-`rule_hash`. That payload contains the rule name, command or built-in recipe
-identity, declared input types, and each output's type, filename, and mutability.
-`declared_rule_hash(rule)` can therefore compute it without a job config or DAG.
+`RuleCall.__post_init__` computes both hashes and the relative path immediately,
+before the constructor call above returns; there is no separate compilation step
+and no window where they are unset. It first hashes the configuration-independent
+local recipe into `rule_hash`. That payload contains the rule name, command or
+built-in recipe identity, declared input types, and each output's type, filename,
+and mutability. `declared_rule_hash(rule)` can therefore compute it without a job
+config or DAG.
 
 It then hashes one configured invocation into `provenance_hash` from the local
 `rule_hash`, effective config, selected shell, and ordered parent identities.
@@ -235,7 +238,8 @@ fingerprint provider.
 
 ## 6. Relative and absolute paths are derived
 
-The rule-call identity and work directory are:
+`__post_init__` derives the rule-call identity and work directory right after
+the hashes above:
 
 ```python
 call.relative_path = Path(rule.__name__) / rule_hash / provenance_hash

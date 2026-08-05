@@ -7,16 +7,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
-from necroflow.fingerprints import compute_hashes
 from necroflow.contexts import NamedValues
-from necroflow.rule_call import RuleCall
-
-
-def _safe_path_component(value: str, *, kind: str) -> str:
-    path = Path(value)
-    if not value or path.is_absolute() or len(path.parts) != 1 or value in {".", ".."}:
-        raise ValueError(f"{kind} must be one relative path component: {value!r}")
-    return value
+from necroflow.rule_call import RuleCall, _safe_path_component
 
 
 class NodeState(Enum):
@@ -140,11 +132,6 @@ class Node:
             config=config,
             command=command,
             shellpath=shellpath,
-        )
-        call._rule_hash, call._provenance_hash = compute_hashes(call)
-        rule_component = _safe_path_component(rule.__name__, kind="rule name")
-        call._relative_path = (
-            Path(rule_component) / call.rule_hash / call.provenance_hash
         )
         workdir = call.workdir
         nodes: list[Node] = []

@@ -6,9 +6,17 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from necroflow.contexts import CommandArgs, NamedValues
+from necroflow.fingerprints import compute_hashes
 
 if TYPE_CHECKING:
     from necroflow.nodes import Node
+
+
+def _safe_path_component(value: str, *, kind: str) -> str:
+    path = Path(value)
+    if not value or path.is_absolute() or len(path.parts) != 1 or value in {".", ".."}:
+        raise ValueError(f"{kind} must be one relative path component: {value!r}")
+    return value
 
 
 @dataclass
@@ -22,11 +30,17 @@ class RuleCall:
     command: str | Callable | None
     shellpath: str | None = None
     output_nodes: dict[str, Node] = field(default_factory=dict)
-    _rule_hash: str | None = None
-    _provenance_hash: str | None = None
-    _relative_path: Path | None = None
+    rule_hash: str = field(init=False)
+    provenance_hash: str = field(init=False)
+    relative_path: Path = field(init=False)
     _realized_command: str | None = None
-    _command_realized: bool = False
+
+    def __post_init__(self) -> None:
+        self.rule_hash, self.provenance_hash = compute_hashes(self)
+        rule_component = _safe_path_component(self.rule.__name__, kind="rule name")
+        self.relative_path = (
+            Path(rule_component) / self.rule_hash / self.provenance_hash
+        )
 
     def _constraints(self) -> dict[str, Any]:
         values = {
@@ -46,28 +60,10 @@ class RuleCall:
         return result
 
     @property
-    def rule_hash(self) -> str:
-        if self._rule_hash is None:
-            raise RuntimeError("RuleCall rule hash was not compiled")
-        return self._rule_hash
-
-    @property
-    def provenance_hash(self) -> str:
-        if self._provenance_hash is None:
-            raise RuntimeError("RuleCall provenance hash was not compiled")
-        return self._provenance_hash
-
-    @property
     def fingerprint(self) -> str:
         """Compatibility alias for the invocation-specific provenance hash."""
 
         return self.provenance_hash
-
-    @property
-    def relative_path(self) -> Path:
-        if self._relative_path is None:
-            raise RuntimeError("RuleCall path was not compiled")
-        return self._relative_path
 
     @property
     def workdir(self) -> Path:

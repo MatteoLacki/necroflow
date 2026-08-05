@@ -283,7 +283,7 @@ def resolve_command(node: Node) -> str | None:
     if node.command is None:
         return None
     call = node.rule_call
-    if call._command_realized:
+    if call._realized_command is not None:
         return call._realized_command
     if callable(node.command):
         if call is None:
@@ -295,7 +295,6 @@ def resolve_command(node: Node) -> str | None:
                 f"a non-empty shell string, got {result!r}"
             )
         call._realized_command = result
-        call._command_realized = True
         return result
     command_inputs = call.command_args().inputs
     subs: dict[str, Any] = {
@@ -317,5 +316,4 @@ def resolve_command(node: Node) -> str | None:
     result = node.command.format(**quoted)
     if call is not None:
         call._realized_command = result
-        call._command_realized = True
     return result
