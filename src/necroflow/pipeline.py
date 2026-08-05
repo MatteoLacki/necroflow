@@ -448,6 +448,11 @@ class Pipeline(_GraphBase):
                     f"P[{name!r}] if this label is intentional"
                 )
             self._assign_node(name, value)
+            # Labels live only in _state.node_names, read back through
+            # __getattr__; drop any earlier plain attribute of the same name
+            # instead of shadowing it with a second copy of the Node.
+            self.__dict__.pop(name, None)
+            return
         object.__setattr__(self, name, value)
 
     def _header(self) -> str:
