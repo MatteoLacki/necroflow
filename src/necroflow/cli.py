@@ -672,7 +672,12 @@ def _run(args) -> None:
 
 
 def _gc(args) -> None:
-    collect(args.nodes_dir, args.gc_pipelines_script, yes=args.yes)
+    collect(
+        args.nodes_dir,
+        args.gc_rules_script,
+        yes=args.yes,
+        prune_unknown_rules=args.prune_unknown_rules,
+    )
 
 
 def _graph(args) -> None:
@@ -1127,11 +1132,16 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.set_defaults(func=_run)
 
     gc_parser = subparsers.add_parser(
-        "gc", help="Delete cache entries incompatible with current pipeline rules"
+        "gc", help="Delete cache entries outside the declared rule scope"
     )
     gc_parser.add_argument("--nodes-dir", type=Path, default=Path("nodes"))
     gc_parser.add_argument(
-        "--gc-pipelines-script", required=True, type=Path, metavar="PATH.py"
+        "--gc-rules-script", required=True, type=Path, metavar="PATH.py"
+    )
+    gc_parser.add_argument(
+        "--prune-unknown-rules",
+        action="store_true",
+        help="also collect nodes whose rule name the script never declares",
     )
     gc_parser.add_argument("-y", "--yes", action="store_true")
     gc_parser.set_defaults(func=_gc)

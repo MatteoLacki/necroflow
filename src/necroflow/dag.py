@@ -15,7 +15,7 @@ from necroflow.nodes import (
     NodeTypeMeta,
     _topo_sort,
 )
-from necroflow.fingerprints import command_ast, python_identity
+from necroflow.fingerprints import IDENTITY_FORMAT, command_ast, python_identity
 from necroflow.rules import parse_resource
 
 _HASH_CHUNK_SIZE = 1024 * 1024
@@ -143,7 +143,7 @@ def write_dependencies(node: Node) -> None:
     }
     if node.rule_call is not None:
         data["identity"] = {
-            "format": "v3",
+            "format": IDENTITY_FORMAT,
             "rule_hash": node.rule_hash,
             "provenance_hash": node.provenance_hash,
         }

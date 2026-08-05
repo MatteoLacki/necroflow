@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 import re
 import shutil
@@ -12,45 +11,35 @@ import tomlkit
 
 from necroflow.config import load_module
 from necroflow.executor import _acquire_lock
-from necroflow.fingerprints import declared_rule_hash
+from necroflow.fingerprints import IDENTITY_FORMAT, declared_rule_hash
 from necroflow.rules import Rule
 
 _HASH_COMPONENT = re.compile(r"[0-9a-f]{64}")
 
 
-def _load_rule_hashes(script: Path) -> set[str]:
-    """Return declared hashes for module-level Rules reachable from pipeline factories."""
+def _load_declared_rules(script: Path) -> tuple[set[str], set[str]]:
+    """Return the (rule hashes, rule names) a GC scope script preserves.
 
-    module = load_module(script, kind="gc-pipelines")
-    pipelines = getattr(module, "pipelines", None)
+    The script states its scope explicitly as ``rules = [...]``. A renamed or
+    deleted rule therefore fails at import, which is the loud failure a
+    destructive tool wants; silent under-discovery would delete live nodes.
+    """
+
+    module = load_module(script, kind="gc-rules")
+    rules = getattr(module, "rules", None)
     if (
-        not isinstance(pipelines, list)
-        or not pipelines
-        or not all(inspect.isfunction(pipeline) for pipeline in pipelines)
+        not isinstance(rules, list)
+        or not rules
+        or not all(isinstance(rule, Rule) for rule in rules)
     ):
         raise ValueError(
-            f"GC pipelines script {script} must define a non-empty "
-            "pipelines list of functions"
+            f"GC rules script {script} must define a non-empty "
+            "rules list of Rule objects"
         )
-    rules: set[Rule] = set()
-    pending = list(pipelines)
-    visited: set[int] = set()
-    while pending:
-        factory = pending.pop()
-        if id(factory) in visited:
-            continue
-        visited.add(id(factory))
-        for name in factory.__code__.co_names:
-            value = factory.__globals__.get(name)
-            if isinstance(value, Rule):
-                rules.add(value)
-            elif inspect.isfunction(value):
-                pending.append(value)
-    if not rules:
-        raise ValueError(
-            f"GC pipelines script {script} does not reference any module-level rules"
-        )
-    return {declared_rule_hash(rule) for rule in rules}
+    return (
+        {declared_rule_hash(rule) for rule in rules},
+        {rule.__name__ for rule in rules},
+    )
 
 
 def _entry(call_dir: Path):
@@ -60,7 +49,7 @@ def _entry(call_dir: Path):
     try:
         metadata = tomlkit.parse(metadata_path.read_text(encoding="utf-8"))
         identity = metadata["identity"]
-        if identity["format"] != "v3":
+        if identity["format"] != IDENTITY_FORMAT:
             return None
         if identity["rule_hash"] != call_dir.parent.name:
             return None
@@ -172,16 +161,41 @@ def _incompatible_keys(entries, valid_rule_hashes: set[str]) -> set[str]:
     return {key for key in entries if incompatible(key, set())}
 
 
-def collect(nodes_dir: Path, pipelines_script: Path, *, yes: bool = False) -> None:
-    """Report and optionally delete nodes outside the current pipeline provenance."""
+def _rule_name(key: str) -> str:
+    """Return the rule-name component of a node-store entry key."""
+
+    return Path(key).parts[0]
+
+
+def collect(
+    nodes_dir: Path,
+    rules_script: Path,
+    *,
+    yes: bool = False,
+    prune_unknown_rules: bool = False,
+) -> None:
+    """Report and optionally delete nodes outside the declared rule scope."""
 
     nodes_dir = nodes_dir.expanduser().resolve()
     try:
-        valid_rule_hashes = _load_rule_hashes(pipelines_script)
+        valid_rule_hashes, declared_names = _load_declared_rules(rules_script)
     except Exception as exc:
         raise SystemExit(f"error: {exc}") from exc
     with _acquire_lock(nodes_dir):
         entries, non_current = _scan_entries(nodes_dir)
+
+        # A rule name on disk that the script never names is more often a
+        # forgotten import than a deleted rule. Treat those hashes as valid so
+        # neither they nor their descendants are collected, unless the caller
+        # asks for it explicitly.
+        unknown_names = sorted({_rule_name(key) for key in entries} - declared_names)
+        if unknown_names and not prune_unknown_rules:
+            valid_rule_hashes |= {
+                Path(key).parts[1]
+                for key in entries
+                if _rule_name(key) in unknown_names
+            }
+
         incompatible_keys = _incompatible_keys(entries, valid_rule_hashes)
         incompatible = sorted(
             (
@@ -192,6 +206,14 @@ def collect(nodes_dir: Path, pipelines_script: Path, *, yes: bool = False) -> No
             key=str,
         )
         non_current = sorted(non_current, key=str)
+        if unknown_names:
+            state = "pruning" if prune_unknown_rules else "preserved"
+            print(f"Rules absent from {rules_script} ({state}):")
+            for name in unknown_names:
+                print(name)
+            if not prune_unknown_rules:
+                print("Pass --prune-unknown-rules to collect their nodes.")
+            print()
         batches = (
             ("Incompatible provenance", incompatible),
             ("Non-current layout", non_current),

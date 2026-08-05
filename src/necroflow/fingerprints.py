@@ -14,8 +14,12 @@ from typing import Annotated, Any, Callable, get_args, get_origin, Union
 
 from necroflow.rule_call import RuleCall
 
-RULE_HASH_DOMAIN = "necroflow.rule-hash/v3"
-PROVENANCE_HASH_DOMAIN = "necroflow.provenance-hash/v3"
+# Stamped into .rip/dependencies.toml by write_dependencies and required back by
+# any reader of stored provenance, and carried in both hash domains so a format
+# bump cannot leave the stored marker and the hashes disagreeing.
+IDENTITY_FORMAT = "v3"
+RULE_HASH_DOMAIN = f"necroflow.rule-hash/{IDENTITY_FORMAT}"
+PROVENANCE_HASH_DOMAIN = f"necroflow.provenance-hash/{IDENTITY_FORMAT}"
 
 
 class FingerprintValueError(TypeError):

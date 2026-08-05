@@ -102,27 +102,39 @@ Delete cache entries that cannot have been produced by the current collection
 of pipeline rules:
 
 ```bash
-necroflow gc --nodes-dir nodes --gc-pipelines-script gc_pipelines.py
-necroflow gc --nodes-dir nodes --gc-pipelines-script gc_pipelines.py -y
+necroflow gc --nodes-dir nodes --gc-rules-script gc_rules.py
+necroflow gc --nodes-dir nodes --gc-rules-script gc_rules.py -y
 ```
 
-The script defines a non-empty list of pipeline factory functions:
+The script states the preserved scope explicitly as a non-empty list of `Rule`
+objects:
 
 ```python
-from pipeline import analysis_pipeline, qc_pipeline
+from pipeline import align, count_reads, prepare_reference
 
-pipelines = [analysis_pipeline, qc_pipeline]
+rules = [align, count_reads, prepare_reference]
 ```
 
-GC discovers module-level rules referenced by those functions and helpers. It
-prints provenance-incompatible rule-call directories and folders that fail the
-current layout or metadata checks in separate batches, followed by their total
-size. It then asks `Delete these directories? [y/N]`; `-y` skips confirmation.
-The node-store lock is held while scanning and deleting. Rule calls with mutable
-outputs are protected from provenance-based deletion; malformed or non-current
-folders are not. A current local rule call is also deleted when its recorded
-provenance descends from an obsolete parent rule. GC has no job TOML dependency
-and never evaluates concrete job configurations.
+Any expression producing that list works, so rules built by `text_file_rule`,
+`symlink_file_rule`, or the `command(...)` factory and stored in a container are
+declared with `rules = list(REGISTRY.values())`. A renamed or deleted rule makes
+the script fail at import, which is deliberate: silent under-discovery is the
+one failure mode that deletes live nodes.
+
+GC prints provenance-incompatible rule-call directories and folders that fail
+the current layout or metadata checks in separate batches, followed by their
+total size. It then asks `Delete these directories? [y/N]`; `-y` skips
+confirmation. The node-store lock is held while scanning and deleting. Rule
+calls with mutable outputs are protected from provenance-based deletion;
+malformed or non-current folders are not. A current local rule call is also
+deleted when its recorded provenance descends from an obsolete parent rule. GC
+has no job TOML dependency and never evaluates concrete job configurations.
+
+A rule *name* present in the node store but absent from `rules` is reported
+under `Rules absent from ...` and preserved, together with everything descending
+from it — an undeclared name is a forgotten import far more often than a deleted
+rule. Pass `--prune-unknown-rules` to collect those nodes once the deletion is
+genuinely intended.
 
 Run preflight checks without executing rules:
 
