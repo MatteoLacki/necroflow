@@ -142,11 +142,15 @@ CLI runs also write a per-job execution summary next to the manifest:
 results/<job-label>/execution.toml
 ```
 
-That summary lists every requested node and ancestor for that job. Executed nodes
-include `duration_seconds`, `started_at`, `finished_at`, `exit_code`, and
-`output_size_bytes`; cached nodes are marked `cached = true` and include the
-current measured output size when the cached output directory exists. With
-`--keep-going`, failed attempted nodes are included with `state = "failed"` or
+That summary lists every rule call needed by the requested nodes and their
+ancestors. Each `[[rules]]` entry includes its output-node identities and labels,
+without duplicating a co-output rule call's execution measurements. Executed
+rule calls include `duration_seconds`, `started_at`, `finished_at`, `exit_code`,
+and `output_size_bytes`; cached calls are marked `cached = true` and include the
+current measured output size when the cached output directory exists. Top-level
+`total_duration_seconds` is the sum of durations for attempted rule calls; it can
+exceed wall-clock time when calls run concurrently. With `--keep-going`, failed
+attempted rule calls are included with `state = "failed"` or
 `state = "interrupted"` and the captured error/exit code.
 
 `--autoclean` may delete intermediate node directories and their `.rip/run.toml`

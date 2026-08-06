@@ -154,7 +154,7 @@ necroflow
 │   ├── per-job requested-output copies (reflink/clone when available)
 │   ├── manifest.toml with paths, origin node keys, and content hashes
 │   ├── provenance-aware gc with pipeline-collection scripts
-│   ├── execution.toml for requested nodes and ancestors
+│   ├── execution.toml for requested rule calls, outputs, and total runtime
 │   ├── dependencies.toml
 │   ├── content hash files
 │   ├── invalidation token files

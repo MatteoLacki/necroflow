@@ -1425,6 +1425,8 @@ def test_cli_invalid_shellpath_errors_cleanly(tmp_path, factory_file):
 
 
 def test_main_writes_execution_summary_for_requested_ancestors(tmp_path, factory_file):
+    """Execution summaries describe timed rule calls, not their output Nodes."""
+
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
     nodes_dir = tmp_path / "nodes"
@@ -1435,13 +1437,53 @@ def test_main_writes_execution_summary_for_requested_ancestors(tmp_path, factory
     summary = results_dir / "job" / "execution.toml"
     assert summary.exists()
     doc = tomlkit.parse(summary.read_text())
-    nodes = {node["label"]: node for node in doc["nodes"]}
-    assert set(nodes) == {"a", "b"}
-    assert nodes["a"]["cached"] is False
-    assert nodes["b"]["cached"] is False
-    assert nodes["a"]["duration_seconds"] >= 0
-    assert nodes["a"]["output_size_bytes"] == 0
-    assert "make_a" == nodes["a"]["rule"]
+    rules = {rule["name"]: rule for rule in doc["rules"]}
+    assert set(rules) == {"make_a", "make_b"}
+    assert rules["make_a"]["cached"] is False
+    assert rules["make_b"]["cached"] is False
+    assert rules["make_a"]["duration_seconds"] >= 0
+    assert rules["make_a"]["output_size_bytes"] == 0
+    assert rules["make_a"]["outputs"][0]["labels"] == ["a"]
+    assert doc["total_duration_seconds"] == pytest.approx(
+        sum(rule["duration_seconds"] for rule in rules.values())
+    )
+
+
+def test_main_execution_summary_counts_cooutput_rule_once(tmp_path):
+    """Co-output Nodes share one execution and must not duplicate its runtime."""
+
+    factory = tmp_path / "pipe.py"
+    factory.write_text(textwrap.dedent("""\
+        from necroflow import NodeType
+        from necroflow.rules import Inputs, Outputs, Rule
+        class A(NodeType): filename = "a.txt"
+        class B(NodeType): filename = "b.txt"
+        make_pair = Rule(
+            "make_pair", Inputs(v=str), Outputs(a=A, b=B), "touch {a} {b}"
+        )
+        def factory(P, cfg):
+            P.a, P.b = make_pair(P, v=cfg["v"])
+    """))
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory}:factory"\nv = "hello"\n')
+    results_dir = tmp_path / "results"
+
+    main(
+        [
+            "--nodes-dir",
+            str(tmp_path / "nodes"),
+            "--results-dir",
+            str(results_dir),
+            str(job),
+        ]
+    )
+
+    doc = tomlkit.parse((results_dir / "job" / "execution.toml").read_text())
+    assert len(doc["rules"]) == 1
+    rule = doc["rules"][0]
+    assert rule["name"] == "make_pair"
+    assert {output["name"] for output in rule["outputs"]} == {"a", "b"}
+    assert doc["total_duration_seconds"] == pytest.approx(rule["duration_seconds"])
 
 
 def test_main_execution_summary_survives_autocleaned_intermediate(
@@ -1464,10 +1506,10 @@ def test_main_execution_summary_survives_autocleaned_intermediate(
     )
 
     doc = tomlkit.parse((results_dir / "job" / "execution.toml").read_text())
-    nodes = {node["label"]: node for node in doc["nodes"]}
-    assert set(nodes) == {"a", "b"}
-    assert not Path(nodes["a"]["path"]).exists()
-    assert Path(nodes["b"]["path"]).exists()
+    rules = {rule["name"]: rule for rule in doc["rules"]}
+    assert set(rules) == {"make_a", "make_b"}
+    assert not Path(rules["make_a"]["outputs"][0]["path"]).exists()
+    assert Path(rules["make_b"]["outputs"][0]["path"]).exists()
 
 
 def test_main_keep_going_failure_writes_execution_summary(tmp_path):
@@ -1505,11 +1547,11 @@ def test_main_keep_going_failure_writes_execution_summary(tmp_path):
         )
 
     doc = tomlkit.parse((results_dir / "job" / "execution.toml").read_text())
-    nodes = {node["label"]: node for node in doc["nodes"]}
-    assert nodes["a"]["state"] == "failed"
-    assert nodes["a"]["exit_code"] == 1
-    assert nodes["b"]["state"] == "up_to_date"
-    assert nodes["b"]["cached"] is False
+    rules = {rule["name"]: rule for rule in doc["rules"]}
+    assert rules["fail_a"]["state"] == "failed"
+    assert rules["fail_a"]["exit_code"] == 1
+    assert rules["make_b"]["state"] == "up_to_date"
+    assert rules["make_b"]["cached"] is False
 
 
 # -- Agent-oriented JSON, doctor, and explain -------------------------------

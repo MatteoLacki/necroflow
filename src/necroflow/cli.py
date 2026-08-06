@@ -818,24 +818,51 @@ def _write_execution_summaries(
         return
     for label, pipeline, request in combos:
         data = tomlkit.document()
-        nodes_array = tomlkit.aot()
+        rules_array = tomlkit.aot()
+        rule_nodes: dict[Path, list[Node]] = {}
         for node in sorted(
             _requested_with_ancestors(request), key=lambda n: n.relative_path
         ):
-            event = report.get(node.relative_path.as_posix())
-            if event is None:
+            rule_nodes.setdefault(node.rule_call.relative_path, []).append(node)
+
+        total_duration = 0.0
+        for rule_key, nodes in rule_nodes.items():
+            events = [
+                event
+                for node in nodes
+                if (event := report.get(node.relative_path.as_posix())) is not None
+            ]
+            if not events:
                 continue
+            event = next((event for event in events if not event.cached), events[0])
             values = event.to_toml_dict()
-            labels = pipeline.labels_for(node)
-            if len(labels) == 1:
-                values["label"] = labels[0]
-            if node.output_name is not None:
-                values["output_name"] = node.output_name
+            for node_field in ("key", "rule", "output_name", "label", "path"):
+                values.pop(node_field, None)
+            values = {
+                "key": rule_key.as_posix(),
+                "name": event.rule,
+                **values,
+            }
+            if event.duration_seconds is not None:
+                total_duration += event.duration_seconds
             table = tomlkit.table()
             for key, value in values.items():
                 table[key] = value
-            nodes_array.append(table)
-        data["nodes"] = nodes_array
+
+            outputs = tomlkit.aot()
+            for node in nodes:
+                output = tomlkit.table()
+                output["key"] = node.relative_path.as_posix()
+                output["name"] = node.output_name
+                output["path"] = str(node.path)
+                labels = pipeline.labels_for(node)
+                if labels:
+                    output["labels"] = labels
+                outputs.append(output)
+            table["outputs"] = outputs
+            rules_array.append(table)
+        data["total_duration_seconds"] = total_duration
+        data["rules"] = rules_array
         combo_dir = results_dir / label
         combo_dir.mkdir(parents=True, exist_ok=True)
         (combo_dir / "execution.toml").write_text(tomlkit.dumps(data), encoding="utf-8")
