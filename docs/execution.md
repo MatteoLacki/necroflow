@@ -1,6 +1,6 @@
 # Execution, Scheduling, and Cleanup
 
-[Previous: Generated Config Files](generated-config-files.md) | [README](../README.md) | [Next: Release Checklist](release.md)
+[Previous: Generated Config Files](generated-config-files.md) | [README](../README.md) | [Next: Scheduler Internals](schedulers.md)
 
 ## Parallelism and scheduling
 
@@ -168,4 +168,4 @@ Or via CLI:
 necroflow --nodes-dir nodes --results-dir results --autoclean job.toml
 ```
 
-[Previous: Generated Config Files](generated-config-files.md) | [README](../README.md) | [Next: Release Checklist](release.md)
+[Previous: Generated Config Files](generated-config-files.md) | [README](../README.md) | [Next: Scheduler Internals](schedulers.md)

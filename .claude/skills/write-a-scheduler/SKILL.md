@@ -19,7 +19,8 @@ def my_scheduler(ready, remaining, available_resources):
 
 The protocol used to be 2 arguments; `execute()` now rejects wrong-arity callables up front
 with a `TypeError` naming the 3-argument form. Callable objects (a class with `__call__`)
-work too — see `ConnectedComponentScheduler` in `src/necroflow/schedulers.py`.
+work too — see `make_connected_component_scheduler()` in `src/necroflow/schedulers.py`,
+detailed in `docs/schedulers.md`.
 
 ## Registration
 
@@ -38,10 +39,13 @@ necroflow --scheduler fifo job.toml                          # built-ins: fifo, 
   resource requirements don't fit `available_resources` right now. A job exceeding a cap
   still runs solo when nothing else is running.
 - Return only nodes from `ready` (a permutation/subset). Returning others is ignored at best.
-- **Key nodes by `node.key`, never `id(node)`** — DAG deduplication aliases node objects.
-- If the scheduler keeps state across calls (adjacency, component sizes), make it a class
-  and reset when a fresh `remaining` set appears; `ConnectedComponentScheduler` is the
-  reference implementation (incremental re-BFS on the affected component only).
+- **Key nodes by `node.relative_path`, never `id(node)`** — DAG deduplication aliases node objects.
+- If the scheduler keeps state across calls (adjacency, component sizes), build it from a
+  factory function that returns a fresh closure per `execute()` call — never a shared
+  singleton, which leaks state across separate executions.
+  `make_connected_component_scheduler()` is the reference implementation (incremental re-BFS
+  on the affected component only); see `docs/schedulers.md` for exactly how it works and its
+  cost tradeoffs.
 - Schedulers must not mutate nodes or touch `node.state` — that is the executor's state machine.
 
 ## Testing pattern

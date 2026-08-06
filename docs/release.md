@@ -1,6 +1,6 @@
 # Release Checklist
 
-[Previous: Execution, Scheduling, and Cleanup](execution.md) | [README](../README.md) | [Next: Development](development.md)
+[Previous: Scheduler Internals](schedulers.md) | [README](../README.md) | [Next: Development](development.md)
 
 1. Build, check, and upload a new version to PyPI:
 
@@ -57,4 +57,4 @@ Manual equivalent:
 
 2. Verify template files are present in the wheel or installed package.
 
-[Previous: Execution, Scheduling, and Cleanup](execution.md) | [README](../README.md) | [Next: Development](development.md)
+[Previous: Scheduler Internals](schedulers.md) | [README](../README.md) | [Next: Development](development.md)

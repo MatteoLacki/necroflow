@@ -27,6 +27,7 @@ disagrees with the code, the code wins (and this file should be fixed).
 | Adding/editing a rule (placeholders, typed outputs, mistakes) | `.claude/skills/add-a-rule/SKILL.md` |
 | Node re-ran or cached unexpectedly | `.claude/skills/debug-stale-classification/SKILL.md` |
 | Writing a custom scheduler | `.claude/skills/write-a-scheduler/SKILL.md` |
+| Built-in scheduler internals (connected-component algorithm, cost tradeoffs) | `docs/schedulers.md` |
 | Doctor preflight checks, findings, side effects, and limits | `docs/doctor.md` |
 
 Skills under `.claude/skills/` are auto-loaded by Claude Code; other agents should read them
