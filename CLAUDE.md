@@ -172,7 +172,7 @@ Full semantics: the `execute()` docstring and `docs/execution.md`.
 
 ```
 src/necroflow/
-  nodes.py           — Node, NodeState, NodeType/NodeTypeMeta, topo sort, connected components,
+  nodes.py           — Node, NodeState, NodeType/NodeTypeMeta, topo sort,
                        per-node state files
   rule_call.py       — concrete rule invocation, shared identity and command state
   contexts.py        — immutable NamedValues and CommandArgs public views

@@ -27,7 +27,6 @@ from necroflow.schedulers import (
     fifo_scheduler,
     make_connected_component_scheduler,
 )
-from necroflow.nodes import iter_connected_components
 from necroflow.config import JobConfig, iter_job_configs
 from necroflow.contexts import CommandArgs, NamedValues
 
@@ -54,7 +53,6 @@ __all__ = [
     "execute",
     "fifo_scheduler",
     "make_connected_component_scheduler",
-    "iter_connected_components",
     "JobConfig",
     "iter_job_configs",
     "CommandArgs",

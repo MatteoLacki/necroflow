@@ -205,32 +205,3 @@ def _topo_sort(nodes: list[Node]) -> list[Node]:
 
 def _is_nodetype(ann) -> bool:
     return inspect.isclass(ann) and issubclass(ann, NodeType)
-
-
-def iter_connected_components(nodes: list[Node]):
-    """Yield each connected component of nodes as a list (undirected parent↔child edges)."""
-    node_keys = {n.relative_path for n in nodes}
-    adj: dict[Path, list[Node]] = {n.relative_path: [] for n in nodes}
-    for n in nodes:
-        for p in n.parents:
-            if p.relative_path in node_keys:
-                adj[n.relative_path].append(p)
-                adj[p.relative_path].append(n)
-
-    visited: set[Path] = set()
-    key_to_node = {n.relative_path: n for n in nodes}
-    for n in nodes:
-        if n.relative_path in visited:
-            continue
-        frontier = [n]
-        component: list[Node] = []
-        while frontier:
-            cur = frontier.pop()
-            if cur.relative_path in visited:
-                continue
-            visited.add(cur.relative_path)
-            component.append(key_to_node[cur.relative_path])
-            frontier.extend(
-                nb for nb in adj[cur.relative_path] if nb.relative_path not in visited
-            )
-        yield component
