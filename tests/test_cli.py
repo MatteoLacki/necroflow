@@ -1310,6 +1310,32 @@ def test_provenance_subcommand_prints_metadata(tmp_path, factory_file, capsys):
     assert "v = 'hello'" in captured
 
 
+def test_provenance_reports_the_stored_v3_identity_hashes(
+    tmp_path, factory_file, capsys
+):
+    """provenance must surface both stored hashes, matching the node's own path.
+
+    The v3 split replaced a single stored 'hash' key with an [identity] table;
+    the reader kept asking for the removed key and silently printed an empty
+    value for every node. Tie the output to the path components so a future
+    schema change cannot rot this again unnoticed.
+    """
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    nodes_dir = tmp_path / "nodes"
+    main(
+        ["--nodes-dir", str(nodes_dir), "--results-dir", str(tmp_path / "r"), str(job)]
+    )
+    output = _real_output(nodes_dir, "b.txt")
+    _rule, rule_hash, provenance_hash, _filename = output.relative_to(nodes_dir).parts
+
+    main(["provenance", str(output)])
+
+    captured = capsys.readouterr().out
+    assert f"rule_hash = {rule_hash}" in captured
+    assert f"provenance_hash = {provenance_hash}" in captured
+
+
 def test_job_custom_fingerprint_is_rejected(tmp_path, factory_file):
     fingerprint_file = tmp_path / "fingerprint.py"
     fingerprint_file.write_text("def fingerprint(args):\n" "    return 'b' * 64\n")

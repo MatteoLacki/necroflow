@@ -402,10 +402,12 @@ def _provenance_payload(path: Path) -> dict:
     if not rip.exists():
         raise SystemExit(f"error: provenance metadata not found: {rip}")
     doc = tomlkit.parse(rip.read_text(encoding="utf-8"))
+    identity = doc.get("identity", {})
     return {
         "path": str(path),
         "rule": doc.get("rule", ""),
-        "hash": doc.get("hash", ""),
+        "rule_hash": identity.get("rule_hash", ""),
+        "provenance_hash": identity.get("provenance_hash", ""),
         "config": _json_ready(doc.get("config", {})),
         "execution": _json_ready(doc.get("execution", {})),
     }
@@ -727,7 +729,8 @@ def _provenance(args) -> None:
         return
     print(f"path = {path}")
     print(f"rule = {payload.get('rule', '')}")
-    print(f"hash = {payload.get('hash', '')}")
+    print(f"rule_hash = {payload.get('rule_hash', '')}")
+    print(f"provenance_hash = {payload.get('provenance_hash', '')}")
     config = payload.get("config", {})
     if config:
         print("[config]")
@@ -1173,8 +1176,6 @@ def main(argv=None) -> None:
     if argv and argv[0] not in commands:
         argv = ["run", *argv]
     elif argv is None:
-        import sys
-
         if len(sys.argv) > 1 and sys.argv[1] not in commands:
             argv = ["run", *sys.argv[1:]]
     parser = _build_parser()
