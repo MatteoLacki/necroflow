@@ -113,6 +113,7 @@ def _validate_job_config(
 
 
 def _dedupe_preserve_order(labels: list[str]) -> list[str]:
+    # Unlike dict, set does not preserve insertion order: it's session specific
     seen = set()
     result = []
     for label in labels:

@@ -414,8 +414,6 @@ Only a DAG can be executed. The executor walks every required Node and its
 canonical ancestors, classifying outputs as missing, stale, up to date, or
 orphan. An up-to-date call is skipped without realizing its callable command.
 
-V2 paths are not probed or migrated. Split v3 paths form a new cache namespace.
-
 ## 12. Commands are realized only for submitted work
 
 Immediately before running a missing or stale canonical call,
@@ -447,7 +445,7 @@ state, dependency hashes, invalidator tokens, provenance, and run statistics
 under the rule-call's `.rip/` directory.
 
 Classification treats every parent as an ordering and failure dependency. For a
-mutable parent only the newer-mtime/content-hash comparison is skipped. Missing,
+mutable parent, e.g. a database like SQLITE, only the newer-mtime/content-hash comparison is skipped. Missing,
 stale, compromised, forced, and invalidator-changed state still propagates to
 consumers. Autoclean refuses to remove mutable paths or any shared rule-call
 directory containing one.
