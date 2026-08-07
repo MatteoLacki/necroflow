@@ -408,55 +408,26 @@ Requirements from multiple Pipelines accumulate. Registration and requirement
 selection are separate: interning happens during rule calls; `require()`
 controls which canonical subgraphs execute.
 
-## 11. Classification decides whether work is needed
+## 11. Execution handoff
 
-Only a DAG can be executed. The executor walks every required Node and its
-canonical ancestors, classifying outputs as missing, stale, up to date, or
-orphan. An up-to-date call is skipped without realizing its callable command.
+`P.finish()` only freezes Pipeline construction. The caller then selects requested labels or sinks and records those endpoint Nodes with `dag.require()`.
 
-## 12. Commands are realized only for submitted work
+`dag.require()` does not traverse ancestors or inspect files. Requirements from all root Pipelines sharing the DAG accumulate.
 
-Immediately before running a missing or stale canonical call,
-`resolve_command(node)` creates immutable `CommandArgs`:
+Classification begins inside `dag.execute()` under the node-store lock. It constructs the required ancestor closure, classifies each output Node, and excludes inactive Nodes.
 
-```python
-CommandArgs(
-    inputs={"fastq": S.fastq.path, "reference": reference.path},
-    config={},
-    outputs={"bam": S.bam.path, "log": S.align_log.path},
-    constraints={"threads": 4},
-    workdir=node.rule_call.workdir,
-)
-```
+See [Executor, Classification, Scheduling, and Cleanup](executor.md) for the exact closure, classification algorithm, state machine, scheduling loop, metadata commit, failures, cleanup, and CLI result copying.
 
-A callable returns one complete shell string. The result is cached on the
-canonical RuleCall, so co-outputs and duplicate factory calls realize it once.
-Static command templates use the same resolved values. For a variadic input,
-`CommandArgs.inputs` contains an ordered tuple of resolved Paths; a static
-`{name}` placeholder shell-quotes each path independently and joins them with
-one space.
+## 12. Commands remain lazy
 
-## 13. Execution materializes the canonical call
+Missing and stale Nodes become ready only after every parent is up to date. The scheduler orders ready Nodes; the executor retains dependency, resource, submission, and state-transition control.
 
-The executor creates the workdir, runs a built-in materializer or resolved
-shell command, and verifies every declared co-output exists. The immutable
-`RuleCall.shellpath` supplies the selected shell executable. Success writes
-state, dependency hashes, invalidator tokens, provenance, and run statistics
-under the rule-call's `.rip/` directory.
+A submitted rule call runs one representative for its active co-outputs. Callable command realization happens in the worker and is cached on the canonical `RuleCall`.
 
-Classification treats every parent as an ordering and failure dependency. For a
-mutable parent, e.g. a database like SQLITE, only the newer-mtime/content-hash comparison is skipped. Missing,
-stale, compromised, forced, and invalidator-changed state still propagates to
-consumers. Autoclean refuses to remove mutable paths or any shared rule-call
-directory containing one.
+## 13. Materialization commits cache state
 
-Execution returns a plain dict mapping each cached or attempted Node's
-`relative_path.as_posix()` key to its `ExecutionEvent`. `DAG.execute()` stores
-and returns that same dict; a keep-going `ExceptionGroup` carries it as
-`execution_report`. Nodes blocked by failed dependencies have no event because
-they were neither cache hits nor attempted.
+Provisional command success is followed by active output validation, report creation, dependency/hash metadata, ancestor graph writing, and the shared `up_to_date` state.
 
-Identity, paths, and deduplication are eager. Command realization and
-materialization are lazy.
+Identity, paths, and deduplication are eager. Classification, command realization, filesystem materialization, and result copying happen after construction.
 
 [Previous: Rules and Typed Outputs](rules.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)

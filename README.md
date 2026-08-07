@@ -173,7 +173,7 @@ ref = "hg38"
 gene_model = "gencode_v44"
 ```
 
-The same pipeline can also be assembled and executed from Python directly; see [Rules and typed outputs](docs/rules.md) and [Execution, scheduling, and cleanup](docs/execution.md). See [Command-line interface](docs/cli.md) and [Job TOML and parameter grids](docs/job-toml.md) for the full CLI format.
+The same pipeline can also be assembled and executed from Python directly; see [Rules and typed outputs](docs/rules.md) and [Executor, classification, scheduling, and cleanup](docs/executor.md). See [Command-line interface](docs/cli.md) and [Job TOML and parameter grids](docs/job-toml.md) for the full CLI format.
 
 ## Where outputs live
 
@@ -262,7 +262,7 @@ text = '{\n  "mode": "uppercase"\n}\n'
 - [Rules and typed outputs](docs/rules.md)
 - [Rule-call lifecycle and pipeline internals](docs/rule-call-lifecycle.md)
 - [Generated config files](docs/generated-config-files.md)
-- [Execution, scheduling, and cleanup](docs/execution.md)
+- [Executor, classification, scheduling, and cleanup](docs/executor.md)
 - [Scheduler internals](docs/schedulers.md)
 - [Manuscript argument conspect](docs/paper-arguments.md)
 - [Release checklist](docs/release.md)

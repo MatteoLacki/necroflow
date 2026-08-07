@@ -15,7 +15,7 @@ disagrees with the code, the code wins (and this file should be fixed).
 | Compact map of the whole feature surface | `features.txt` |
 | Recent / agent-relevant feature notes | `AI.md` |
 | Rules, typed outputs, subtypes, conditional pipelines, subpipelines | `docs/rules.md` |
-| Execution, scheduling, resources, failure handling, autoclean | `docs/execution.md` |
+| Executor, classification, scheduling, resources, failure handling, autoclean | `docs/executor.md` |
 | Output layout, `.rip/` metadata, caching, STALE detection | `docs/caching.md` |
 | CLI flags and subcommands (`run`, `graph`, `outputs`, `provenance`, `doctor`, `explain`, `gc`) | `docs/cli.md` |
 | Job TOML format and `__grid` parameter grids | `docs/job-toml.md` |
@@ -167,7 +167,7 @@ on_complete=None)
 
 The dict is keyed by `node.relative_path.as_posix()`. `DAG.execute()` forwards
 all kwargs and stores the same dict as `dag.last_execution_report`.
-Full semantics: the `execute()` docstring and `docs/execution.md`.
+Full semantics: the `execute()` docstring and `docs/executor.md`.
 
 ## File map
 

@@ -1,11 +1,11 @@
 # Scheduler Internals
 
-[Previous: Execution, Scheduling, and Cleanup](execution.md) | [README](../README.md) | [Next: Release Checklist](release.md)
+[Previous: Executor, Classification, Scheduling, and Cleanup](executor.md) | [README](../README.md) | [Next: Release Checklist](release.md)
 
 This page documents how the two built-in schedulers actually work. For the scheduler
 *protocol* — the 3-argument callable contract, registration, and how to write your own —
-see `.claude/skills/write-a-scheduler/SKILL.md` and the "Parallelism and scheduling" section
-of [execution.md](execution.md).
+see `.claude/skills/write-a-scheduler/SKILL.md` and the "Scheduling" section
+of [executor.md](executor.md).
 
 ## `fifo_scheduler`
 
@@ -127,4 +127,4 @@ connected-component scheduler is worth its cost — and it is a real, measured c
 speculative — chiefly for pipelines built from many largely-independent per-sample subgraphs,
 which is the more common shape in practice.
 
-[Previous: Execution, Scheduling, and Cleanup](execution.md) | [README](../README.md) | [Next: Release Checklist](release.md)
+[Previous: Executor, Classification, Scheduling, and Cleanup](executor.md) | [README](../README.md) | [Next: Release Checklist](release.md)

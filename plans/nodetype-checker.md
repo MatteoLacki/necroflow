@@ -159,7 +159,7 @@ function descriptor only binds `self` on instance access, not class access.
   (currently ~399-445, before "Multi-output rules" at ~447). Declaration example, note the
   callback receives the output `Path` and must raise to fail, runs once per active output
   after the file is confirmed to exist, pointer to `is_csv`/`is_tsv`.
-- `docs/execution.md`: extend "Failure handling" (~97-111), directly after the existing
+- `docs/executor.md`: extend "Failure handling" (~97-111), directly after the existing
   "necroflow verifies that the declared output file exists" sentence: "If the output
   `NodeType` defines a `checker`, necroflow also calls it with the output path immediately
   afterward; a raising checker fails the job the same way a missing output does."
