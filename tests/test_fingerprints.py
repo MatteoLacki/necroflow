@@ -17,11 +17,11 @@ from necroflow import (
     Outputs,
     Pipeline,
     command,
-    classify_nodes,
     execute,
     output,
     resolve_command,
 )
+from necroflow.planning import classify_nodes
 from necroflow.rules import Rule
 from necroflow.fingerprints import (
     FingerprintValueError,

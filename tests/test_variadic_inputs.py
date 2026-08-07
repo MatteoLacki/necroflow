@@ -15,11 +15,11 @@ from necroflow import (
     Many,
     NodeState,
     NodeType,
-    classify_nodes,
     output,
     Outputs,
     Pipeline,
 )
+from necroflow.planning import classify_nodes
 from necroflow.dag import resolve_command
 from necroflow.rules import Rule
 

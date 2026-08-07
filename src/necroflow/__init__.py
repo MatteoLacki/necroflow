@@ -7,7 +7,6 @@ from necroflow.dag import (
     NodeType,
     resolve_command,
     write_dependencies,
-    classify_nodes,
 )
 from necroflow.rules import (
     Constraints,
@@ -46,7 +45,6 @@ __all__ = [
     "text_file_rule",
     "resolve_command",
     "write_dependencies",
-    "classify_nodes",
     "NodeState",
     "Pipeline",
     "DAG",

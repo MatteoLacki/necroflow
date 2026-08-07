@@ -3,7 +3,8 @@ import time
 import pytest
 from pathlib import Path
 
-from necroflow import Pipeline, DAG, NodeType, NodeState, classify_nodes
+from necroflow import Pipeline, DAG, NodeType, NodeState
+from necroflow.planning import classify_nodes
 
 
 class Fastq(NodeType):

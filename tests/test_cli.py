@@ -12,7 +12,7 @@ import pytest
 import necroflow.cli as cli_core
 from necroflow.planning import plan_execution
 from pathlib import Path
-from necroflow import NodeType, Pipeline, DAG, classify_nodes, output
+from necroflow import NodeType, Pipeline, DAG, output
 from necroflow.cli import (
     _materialize_results,
     _graph_payload,

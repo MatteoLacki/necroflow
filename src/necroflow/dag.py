@@ -194,13 +194,6 @@ def _output_mtime(path: Path) -> float:
     return path.stat().st_mtime
 
 
-def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
-    """Set each eagerly addressed Node's base cache state."""
-    from necroflow.planning import classify_nodes as _classify_nodes
-
-    _classify_nodes(nodes, required_nodes)
-
-
 class _ShellArguments:
     """Render a tuple of paths as independently quoted shell arguments."""
 

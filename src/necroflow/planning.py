@@ -42,7 +42,7 @@ def _parent_content_changed(node: Node, parent: Node) -> bool:
     )
 
 
-def _classify_nodes(
+def classify_nodes(
     nodes: list[Node], required_nodes: list[Node]
 ) -> tuple[dict[Path, Path], set[Path]]:
     """Classify base cache state and return evidence used for stale decisions."""
@@ -93,11 +93,6 @@ def _classify_nodes(
         node.state = NodeState.STALE if stale else NodeState.UP_TO_DATE
 
     return changed_parents, changed_invalidators
-
-
-def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
-    """Set base cache state for required, orphaned, and excluded Nodes."""
-    _classify_nodes(nodes, required_nodes)
 
 
 def _propagate_stale(active: list[Node], active_keys: set[Path]) -> None:
@@ -190,7 +185,7 @@ def plan_execution(
 ) -> ExecutionPlan:
     """Classify one execution snapshot without deleting or executing outputs."""
     nodes = list(dag.nodes)
-    changed_parents, changed_invalidators = _classify_nodes(nodes, dag.required_nodes)
+    changed_parents, changed_invalidators = classify_nodes(nodes, dag.required_nodes)
 
     active = [
         node
