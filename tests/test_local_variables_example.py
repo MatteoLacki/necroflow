@@ -28,6 +28,6 @@ def test_local_variables_can_be_rebound_while_only_the_result_is_labelled(tmp_pa
     assert pipeline.nodes == [pipeline.result]
     assert len(dag.nodes) == 3
 
-    dag.execute()
+    dag.run()
 
     assert pipeline.result.path.read_text() == "RESULT: HELLO\n"

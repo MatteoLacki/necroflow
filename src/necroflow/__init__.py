@@ -21,7 +21,7 @@ from necroflow.rules import (
     text_file_rule,
 )
 from necroflow.pipeline import Pipeline
-from necroflow.executor import execute
+from necroflow.executor import run
 from necroflow.schedulers import (
     fifo_scheduler,
     make_connected_component_scheduler,
@@ -48,7 +48,7 @@ __all__ = [
     "NodeState",
     "Pipeline",
     "DAG",
-    "execute",
+    "run",
     "fifo_scheduler",
     "make_connected_component_scheduler",
     "JobConfig",

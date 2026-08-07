@@ -377,8 +377,8 @@ class DAG:
         """Write the ASCII DAG render to a file."""
         Path(path).write_text(str(self) + "\n", encoding="utf-8")
 
-    def execute(self, **kwargs):
-        from necroflow.executor import execute
+    def run(self, **kwargs):
+        from necroflow.executor import run
 
-        self.last_execution_report = execute(self, **kwargs)
+        self.last_execution_report = run(self, **kwargs)
         return self.last_execution_report

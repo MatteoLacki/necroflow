@@ -12,7 +12,7 @@ commands
 silent
 p ("rule call", self.__name__, kwargs)
 continue
-break DAG.execute
+break DAG.run
 commands
 silent
 up

@@ -18,17 +18,17 @@ REPO = Path(__file__).resolve().parent.parent
 CLAUDE_MD = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
 
 
-def test_execute_parameters_are_documented_in_claude_md():
-    """Every execute() parameter name must appear in CLAUDE.md.
+def test_run_parameters_are_documented_in_claude_md():
+    """Every run() parameter name must appear in CLAUDE.md.
 
-    Agents read CLAUDE.md before the code. If execute() grows a parameter that
+    Agents read CLAUDE.md before the code. If run() grows a parameter that
     CLAUDE.md never mentions, agents cannot discover it; if CLAUDE.md lists the
     parameters, at minimum the list must be complete. The full semantics live
     in the docstring — CLAUDE.md only needs the names.
     """
-    params = inspect.signature(executor.execute).parameters
+    params = inspect.signature(executor.run).parameters
     missing = [name for name in params if name not in CLAUDE_MD]
-    assert not missing, f"execute() params absent from CLAUDE.md: {missing}"
+    assert not missing, f"run() params absent from CLAUDE.md: {missing}"
 
 
 def test_scheduler_protocol_in_claude_md_matches_code():

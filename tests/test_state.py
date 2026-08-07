@@ -83,7 +83,7 @@ def test_mark_done_interrupted_is_compromised(tmp_path):
 
 def test_successful_run_not_compromised(tmp_path):
     dag, P = simple_dag(tmp_path)
-    dag.execute()
+    dag.run()
 
     for n in dag.nodes:
         assert not n.is_compromised
@@ -94,7 +94,7 @@ def test_successful_run_not_compromised(tmp_path):
 
 def test_simulated_crash_reruns_node(tmp_path):
     dag, P = simple_dag(tmp_path)
-    dag.execute()
+    dag.run()
 
     b_node = next(n for n in dag.nodes if n.rule.__name__ == "make_b")
 
@@ -103,7 +103,7 @@ def test_simulated_crash_reruns_node(tmp_path):
 
     mtime_before = b_node.path.stat().st_mtime
     time.sleep(0.05)
-    dag.execute()
+    dag.run()
     assert b_node.path.stat().st_mtime > mtime_before
 
 
@@ -111,13 +111,13 @@ def test_unknown_state_reruns_node_instead_of_trusting_cache(tmp_path):
     """Malformed persisted state must fail safe by forcing the node to run again."""
 
     dag, pipeline = simple_dag(tmp_path)
-    dag.execute()
+    dag.run()
     node = pipeline.b
     node.state_file.write_text("unknown-state")
     mtime_before = node.path.stat().st_mtime
 
     time.sleep(0.05)
-    dag.execute()
+    dag.run()
 
     assert node.path.stat().st_mtime > mtime_before
 
@@ -132,7 +132,7 @@ def test_failed_node_state(tmp_path):
     dag.require([P.c])
 
     with pytest.raises(Exception):
-        dag.execute()
+        dag.run()
 
     c_node = next(n for n in dag.nodes if n.rule.__name__ == "fail_c")
     assert c_node.state == NodeState.FAILED
@@ -149,7 +149,7 @@ def test_interrupted_node_state(tmp_path):
     dag.require([P.c])
 
     with pytest.raises(Exception):
-        dag.execute()
+        dag.run()
 
     c_node = next(n for n in dag.nodes if n.rule.__name__ == "signal_c")
     assert c_node.state == NodeState.INTERRUPTED
@@ -192,7 +192,7 @@ def test_failed_node_reruns_on_retry(tmp_path):
     dag, P = _xy_dag(tmp_path, "make_y_fail")
 
     with pytest.raises(Exception):
-        dag.execute()
+        dag.run()
 
     x = next(n for n in dag.nodes if n.rule.__name__ == "make_x")
     y = next(n for n in dag.nodes if n.rule.__name__ == "make_y_fail")
@@ -203,7 +203,7 @@ def test_failed_node_reruns_on_retry(tmp_path):
     time.sleep(0.05)
 
     with pytest.raises(Exception):
-        dag.execute()
+        dag.run()
 
     assert x.path.stat().st_mtime == x_mtime
     assert y.path.stat().st_mtime > y_mtime
@@ -213,7 +213,7 @@ def test_interrupted_node_reruns_on_retry(tmp_path):
     dag, P = _xy_dag(tmp_path, "make_y_signal")
 
     with pytest.raises(Exception):
-        dag.execute()
+        dag.run()
 
     x = next(n for n in dag.nodes if n.rule.__name__ == "make_x")
     y = next(n for n in dag.nodes if n.rule.__name__ == "make_y_signal")
@@ -224,7 +224,7 @@ def test_interrupted_node_reruns_on_retry(tmp_path):
     time.sleep(0.05)
 
     with pytest.raises(Exception):
-        dag.execute()
+        dag.run()
 
     assert x.path.stat().st_mtime == x_mtime
     assert y.path.stat().st_mtime > y_mtime
@@ -262,12 +262,12 @@ def test_directory_output_content_change_invalidates_children(tmp_path):
         return dag, pipeline
 
     first_dag, first = build()
-    first_dag.execute()
+    first_dag.run()
     time.sleep(0.05)
     (first.directory.path / "item.txt").write_text("changed")
 
     second_dag, second = build()
-    second_dag.execute()
+    second_dag.run()
 
     assert second.copied.path.read_text() == "changed"
 
@@ -296,18 +296,18 @@ def test_nodetype_invalidator_external_file_change_reruns_node(tmp_path):
         Outputs(out=ExternalInvalidated),
         "echo {text} > {out}",
     )
-    execute = DAG(outdir=tmp_path)
-    P = Pipeline(execute)
+    dag = DAG(outdir=tmp_path)
+    P = Pipeline(dag)
     P.out = r_make_external(P, text="payload", dependency=str(dependency))
 
     P.finish()
-    execute.require(P.sinks())
-    execute.execute()
+    dag.require(P.sinks())
+    dag.run()
     mtime_before = P.out.path.stat().st_mtime
 
     time.sleep(0.05)
     dependency.write_text("v2")
-    execute.execute()
+    dag.run()
 
     assert P.out.path.stat().st_mtime > mtime_before
 
@@ -331,12 +331,12 @@ def test_nodetype_invalidator_output_file_change_reruns_node(tmp_path):
     P.out = r_make_output_hash(P, text="payload")
     P.finish()
     dag.require(P.sinks())
-    dag.execute()
+    dag.run()
 
     P.out.path.write_text("manual edit\n")
     assert P.out.path.read_text().strip() == "manual edit"
 
-    dag.execute()
+    dag.run()
 
     assert P.out.path.read_text().strip() == "payload"
 
@@ -360,14 +360,14 @@ def test_nodetype_invalidator_missing_metadata_reruns_node(tmp_path):
     P.out = r_make_output(P, text="payload")
     P.finish()
     dag.require(P.sinks())
-    dag.execute()
+    dag.run()
     token_file = P.out.path.parent / ".rip" / (P.out.path.name + ".invalidation")
     assert token_file.exists()
     token_file.unlink()
     mtime_before = P.out.path.stat().st_mtime
 
     time.sleep(0.05)
-    dag.execute()
+    dag.run()
 
     assert P.out.path.stat().st_mtime > mtime_before
 
@@ -392,7 +392,7 @@ def test_nodetype_invalidator_must_return_string_token(tmp_path):
     dag.require(pipeline.sinks())
 
     with pytest.raises(TypeError, match="invalidator for InvalidToken must return str"):
-        dag.execute()
+        dag.run()
 
 
 def test_nodetype_invalidator_exception_fails_fast(tmp_path):
@@ -418,11 +418,11 @@ def test_nodetype_invalidator_exception_fails_fast(tmp_path):
     P.out = r_make_raising(P, text="payload")
     P.finish()
     dag.require(P.sinks())
-    dag.execute()
+    dag.run()
 
     should_raise["value"] = True
     with pytest.raises(RuntimeError, match="invalidator failed"):
-        dag.execute()
+        dag.run()
 
 
 def test_multi_output_invalidator_reruns_shared_command_once(tmp_path):
@@ -453,11 +453,11 @@ def test_multi_output_invalidator_reruns_shared_command_once(tmp_path):
     P.finish()
     dag.require(P.sinks())
 
-    dag.execute()
+    dag.run()
     assert count.read_text().strip() == "1"
 
     dependency.write_text("v2")
-    dag.execute()
+    dag.run()
 
     assert count.read_text().strip() == "2"
     assert P.a.path.exists()

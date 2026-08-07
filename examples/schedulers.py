@@ -70,7 +70,7 @@ for word in ["hello", "world"]:
     pipeline.finish()
     dag1.require(pipeline.sinks())
 print("--- connected_component_scheduler (default) ---")
-dag1.execute()
+dag1.run()
 
 # fifo scheduler
 dag2 = DAG(OUTDIR / "fifo")
@@ -80,4 +80,4 @@ for word in ["hello", "world"]:
     pipeline.finish()
     dag2.require(pipeline.sinks())
 print("--- fifo_scheduler ---")
-dag2.execute(scheduler=fifo_scheduler)
+dag2.run(scheduler=fifo_scheduler)

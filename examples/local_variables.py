@@ -53,5 +53,5 @@ def build(outdir="nodes") -> tuple[DAG, Pipeline]:
 
 if __name__ == "__main__":
     dag, pipeline = build()
-    dag.execute()
+    dag.run()
     print(pipeline.result.path.read_text(), end="")

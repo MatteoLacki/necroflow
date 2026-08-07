@@ -136,7 +136,7 @@ def make_connected_component_scheduler() -> Scheduler:
 
     The returned function builds its component index on its first call. Later
     calls re-BFS only components containing newly completed nodes. Create a new
-    scheduler for each ``execute()`` invocation so graph-specific state cannot
+    scheduler for each ``run()`` invocation so graph-specific state cannot
     leak between runs.
     """
     state = _ConnectedComponentState()

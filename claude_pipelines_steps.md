@@ -35,7 +35,7 @@ P = Pipeline(dag)
 cohort_pipeline(P, config)
 P.finish()
 dag.require(P.sinks())
-dag.execute()
+dag.run()
 ```
 
 ## Assumptions
@@ -464,14 +464,14 @@ def require(self, nodes) -> None:
 
 ---
 
-## `dag.execute()`
+## `dag.run()`
 
 ```python
 # src/necroflow/pipeline.py:559
-def execute(self, **kwargs):
-    from necroflow.executor import execute
+def run(self, **kwargs):
+    from necroflow.executor import run
 
-    self.last_execution_report = execute(self, **kwargs)
+    self.last_execution_report = run(self, **kwargs)
     return self.last_execution_report
 ```
 
@@ -647,7 +647,7 @@ With `keep_going=False`, the first failure re-raises from inside the `with pool`
 
 ### Result
 
-`execute()` returns `dict[str, ExecutionEvent]` keyed by `node.relative_path.as_posix()`, also
+`run()` returns `dict[str, ExecutionEvent]` keyed by `node.relative_path.as_posix()`, also
 stored on `dag.last_execution_report`. This program discards it.
 
 ---

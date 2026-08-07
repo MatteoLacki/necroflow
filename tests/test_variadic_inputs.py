@@ -306,7 +306,7 @@ def test_variadic_union_applies_mutability_per_concrete_parent(tmp_path):
     )
     result = merge(pipeline, (ordinary, mutable))
     dag.require([result])
-    dag.execute()
+    dag.run()
 
     time.sleep(0.05)
     mutable.path.write_text("changed")

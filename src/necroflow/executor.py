@@ -326,7 +326,7 @@ class _AutocleanPlan:
 
     Bundles the state that autoclean's during-run cleanup needs so callers pass
     one object instead of a bool plus two separate collections at every site.
-    ``enabled`` mirrors ``execute()``'s ``autoclean`` flag directly; ``children``
+    ``enabled`` mirrors ``run()``'s ``autoclean`` flag directly; ``children``
     and ``final_keys`` stay empty when disabled so downstream code needs no
     separate None/False check to skip cleanup.
     """
@@ -532,7 +532,7 @@ def _run_with_retries(node, log_path, runner) -> None:
             _logger.job_retry(node, attempt, max_attempts, exc.returncode)
 
 
-def execute(
+def run(
     dag: DAG,
     resource_caps: dict[str, int] | None = None,
     scheduler: Scheduler | None = None,
@@ -548,7 +548,7 @@ def execute(
     The report is a dict mapping each cached or attempted Node's stable POSIX
     relative-path key to its :class:`ExecutionEvent`. Dependency-blocked Nodes
     have no entry because no cache hit or execution attempt occurred for them.
-    ``DAG.execute()`` stores and returns this same dict.
+    ``DAG.run()`` stores and returns this same dict.
 
     Cache classification happens before execution. UP_TO_DATE nodes become
     cached report events, ORPHAN nodes are excluded, and MISSING/STALE nodes run
@@ -580,7 +580,7 @@ def execute(
     second executor can observe or mutate partially updated state.
     """
     if not isinstance(dag, DAG):
-        raise TypeError(f"execute requires a DAG, got {type(dag).__name__}")
+        raise TypeError(f"run requires a DAG, got {type(dag).__name__}")
     if scheduler is None:
         scheduler = make_connected_component_scheduler()
     _validate_scheduler(scheduler)

@@ -579,7 +579,7 @@ def _run(args) -> None:
         _materialize_results(results_dir, combos)
         _write_execution_summaries(results_dir, combos, report)
 
-    dag.execute(
+    dag.run(
         resource_caps=_parse_resource_caps(args),
         scheduler=_load_scheduler(args.scheduler),
         keep_going=args.keep_going,

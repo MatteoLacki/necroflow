@@ -6,8 +6,8 @@ Run from the necroflow/ directory:
     python examples/custom_invalidation.py
 
 The PreparedText NodeType hashes an external dependency file. The first
-execute() writes the output. The example then edits the dependency file and
-runs execute() again; the changed invalidation token marks the node STALE and
+run() writes the output. The example then edits the dependency file and
+runs run() again; the changed invalidation token marks the node STALE and
 reruns the command at the same content-addressed output path.
 """
 
@@ -50,7 +50,7 @@ def run_once() -> Path:
     P = build_pipeline(dag)
     P.finish()
     dag.require(P.sinks())
-    dag.execute()
+    dag.run()
     return P.prepared.path
 
 

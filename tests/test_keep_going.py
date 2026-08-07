@@ -43,19 +43,19 @@ def two_branch_dag(tmp_path):
 def test_default_raises_immediately(tmp_path):
     dag, P = two_branch_dag(tmp_path)
     with pytest.raises(Exception):
-        dag.execute()
+        dag.run()
 
 
 def test_keep_going_raises_exception_group(tmp_path):
     dag, P = two_branch_dag(tmp_path)
     with pytest.raises(ExceptionGroup):
-        dag.execute(keep_going=True)
+        dag.run(keep_going=True)
 
 
 def test_keep_going_runs_independent_branch(tmp_path):
     dag, P = two_branch_dag(tmp_path)
     with pytest.raises(ExceptionGroup):
-        dag.execute(keep_going=True)
+        dag.run(keep_going=True)
 
     # make_b is independent — its output should exist
     b_node = next(n for n in dag.nodes if n.rule.__name__ == "make_b")
@@ -65,7 +65,7 @@ def test_keep_going_runs_independent_branch(tmp_path):
 def test_keep_going_downstream_of_failure_is_failed(tmp_path):
     dag, P = two_branch_dag(tmp_path)
     with pytest.raises(ExceptionGroup):
-        dag.execute(keep_going=True)
+        dag.run(keep_going=True)
 
     d_node = next(n for n in dag.nodes if n.rule.__name__ == "make_d")
     assert d_node.state == NodeState.FAILED
@@ -78,4 +78,4 @@ def test_keep_going_no_error_when_all_succeed(tmp_path):
     P.a = R_make_a(P, x="x1")
     P.b = R_make_b(P, x="x2")
     dag.require([P.a, P.b])
-    dag.execute(keep_going=True)  # should not raise
+    dag.run(keep_going=True)  # should not raise

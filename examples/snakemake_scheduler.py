@@ -177,7 +177,7 @@ if __name__ == "__main__":
         return chosen
 
     print("--- snakemake greedy scheduler (threads capped at 2) ---")
-    dag.execute(resource_caps={"threads": 2}, scheduler=recording_scheduler)
+    dag.run(resource_caps={"threads": 2}, scheduler=recording_scheduler)
     print("scheduler returned, in order:")
     for line in order:
         print(f"  {line}")

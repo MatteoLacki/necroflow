@@ -17,7 +17,7 @@ from necroflow import (
     Outputs,
     Pipeline,
     command,
-    execute,
+    run,
     output,
     resolve_command,
 )
@@ -180,14 +180,14 @@ def test_callable_stays_lazy_through_dedup_and_cached_execution(tmp_path):
     dag.require(duplicate.sinks())
 
     assert CALL_COUNT == 0
-    dag.execute()
+    dag.run()
     assert CALL_COUNT == 1
 
     cached_dag = DAG(tmp_path)
     cached = build(cached_dag)
     cached.finish()
     cached_dag.require(cached.sinks())
-    execute(cached_dag)
+    run(cached_dag)
     assert CALL_COUNT == 1
 
 
@@ -525,7 +525,7 @@ def test_callable_provenance_separates_command_and_fingerprint(tmp_path):
 
     pipeline.finish()
     pipeline.dag.require(pipeline.sinks())
-    execute(pipeline.dag)
+    run(pipeline.dag)
 
     metadata = (pipeline.result.path.parent / ".rip" / "dependencies.toml").read_text()
     assert "[identity]" in metadata

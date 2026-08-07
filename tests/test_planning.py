@@ -30,7 +30,7 @@ def test_plan_partitions_nodes_without_deleting_orphans(tmp_path):
 
     first = _pipeline(tmp_path)
     first.dag.require([first.b])
-    first.dag.execute()
+    first.dag.run()
     orphan_path = first.b.path
 
     second = _pipeline(tmp_path)
@@ -48,7 +48,7 @@ def test_forced_staleness_and_reasons_propagate_in_one_plan(tmp_path):
 
     pipeline = _pipeline(tmp_path)
     pipeline.dag.require([pipeline.b])
-    pipeline.dag.execute()
+    pipeline.dag.run()
 
     plan = plan_execution(
         pipeline.dag,
@@ -89,7 +89,7 @@ def test_plan_records_reasons_without_reinvoking_invalidator(tmp_path):
     pipeline = Pipeline(dag)
     pipeline.output = make_tracked(pipeline, value="x")
     dag.require([pipeline.output])
-    dag.execute()
+    dag.run()
     calls = 0
 
     plan = plan_execution(dag)

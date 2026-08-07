@@ -1,4 +1,4 @@
-"""Tests for execute(), schedulers, and thread budget."""
+"""Tests for run(), schedulers, and thread budget."""
 
 from necroflow.rules import Constraints, Inputs, Outputs, Rule
 from necroflow import (
@@ -16,16 +16,16 @@ from pathlib import Path
 
 import pytest
 import tomlkit
-from necroflow import NodeState, NodeType, Pipeline, DAG, execute, output
+from necroflow import NodeState, NodeType, Pipeline, DAG, run, output
 import necroflow.schedulers as schedulers
 from necroflow import fifo_scheduler, make_connected_component_scheduler, output
 
 
-def execute_pipeline(pipeline, **kwargs):
-    """Execute one Pipeline through its owning canonical DAG."""
+def run_pipeline(pipeline, **kwargs):
+    """Run one Pipeline through its owning canonical DAG."""
     pipeline.finish()
     pipeline.dag.require(pipeline.sinks())
-    return execute(pipeline.dag, **kwargs)
+    return run(pipeline.dag, **kwargs)
 
 
 class A(NodeType):
@@ -90,11 +90,11 @@ R_env_shell = Rule(
 # ── basic execution ───────────────────────────────────────────────────────────
 
 
-def test_execute_creates_outputs(tmp_path):
+def test_run_creates_outputs(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
-    execute_pipeline(P)
+    run_pipeline(P)
     assert P.a.path.exists()
     assert P.b.path.exists()
 
@@ -119,7 +119,7 @@ def test_repeat_retries_failed_command_until_success(tmp_path):
         node.path.parent.mkdir(parents=True, exist_ok=True)
         node.path.touch()
 
-    execute_pipeline(P, node_runner=flaky_runner)
+    run_pipeline(P, node_runner=flaky_runner)
 
     assert attempts == 3
     assert P.out.path.exists()
@@ -141,7 +141,7 @@ def test_repeat_retries_real_shell_command(tmp_path):
     P = Pipeline(DAG(tmp_path / "nodes"))
     P.out = rule(P, counter=str(counter))
 
-    execute_pipeline(P)
+    run_pipeline(P)
 
     assert counter.read_text().strip() == "2"
     assert P.out.path.exists()
@@ -165,7 +165,7 @@ def test_repeat_stops_after_first_success(tmp_path):
         node.path.parent.mkdir(parents=True, exist_ok=True)
         node.path.touch()
 
-    execute_pipeline(P, node_runner=successful_runner)
+    run_pipeline(P, node_runner=successful_runner)
 
     assert attempts == 1
 
@@ -188,7 +188,7 @@ def test_repeat_does_not_retry_non_process_errors(tmp_path):
         raise RuntimeError("runner bug")
 
     with pytest.raises(RuntimeError, match="runner bug"):
-        execute_pipeline(P, node_runner=broken_runner)
+        run_pipeline(P, node_runner=broken_runner)
 
     assert attempts == 1
 
@@ -211,14 +211,14 @@ def test_repeat_raises_last_command_failure_after_limit(tmp_path):
         raise subprocess.CalledProcessError(7, "always_fails")
 
     with pytest.raises(subprocess.CalledProcessError) as caught:
-        execute_pipeline(P, node_runner=failing_runner)
+        run_pipeline(P, node_runner=failing_runner)
 
     assert caught.value.returncode == 7
     assert attempts == 3
     assert P.out.state == NodeState.FAILED
 
 
-def test_execute_handles_outdir_with_spaces(tmp_path):
+def test_run_handles_outdir_with_spaces(tmp_path):
     """String command placeholders must survive output paths containing spaces.
 
     Necroflow owns the generated output paths, so callers should not have to
@@ -229,7 +229,7 @@ def test_execute_handles_outdir_with_spaces(tmp_path):
     P = Pipeline(DAG(outdir))
     P.a = R_make_a(P, x="x")
 
-    execute_pipeline(P)
+    run_pipeline(P)
 
     assert P.a.path.exists()
 
@@ -241,7 +241,7 @@ def test_explicit_shellpath_uses_selected_shell_for_brace_expansion(tmp_path):
     P = Pipeline(DAG(tmp_path), shellpath=bash)
     P.out = R_brace_shell(P, x="x")
 
-    execute_pipeline(P)
+    run_pipeline(P)
 
     assert P.out.path.read_text() == "left\nright\n"
 
@@ -253,7 +253,7 @@ def test_explicit_shellpath_runs_custom_shell_wrapper(tmp_path, monkeypatch):
     P = Pipeline(DAG(tmp_path / "out"), shellpath=wrapper)
     P.out = R_env_shell(P, x="x")
 
-    execute_pipeline(P)
+    run_pipeline(P)
 
     assert P.out.path.read_text() == "wrapper\n"
 
@@ -282,7 +282,7 @@ def test_pipeline_shellpath_can_be_combined_with_node_runner(tmp_path):
     P = Pipeline(DAG(tmp_path), shellpath=shell)
     P.out = R_make_a(P, x="x")
 
-    execute_pipeline(P, node_runner=lambda node, log_path: node.path.touch())
+    run_pipeline(P, node_runner=lambda node, log_path: node.path.touch())
     assert P.out.path.exists()
 
 
@@ -291,7 +291,7 @@ def test_workdir_placeholder_resolves_to_rule_output_dir(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a_workdir(P, x="x")
 
-    execute_pipeline(P)
+    run_pipeline(P)
 
     assert (P.a.path.parent / "scratch" / "value.txt").read_text().strip() == "x"
 
@@ -301,33 +301,33 @@ def test_workdir_can_stage_results_before_final_output_move(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a_from_workdir(P, x="final contents")
 
-    execute_pipeline(P)
+    run_pipeline(P)
 
     assert P.a.path.read_text().strip() == "final contents"
     assert (P.a.path.parent / "tool-results").is_dir()
     assert not (P.a.path.parent / "tool-results" / "a.txt").exists()
 
 
-def test_execute_via_dag(tmp_path):
+def test_run_via_dag(tmp_path):
     dag = DAG(tmp_path)
     P = Pipeline(dag)
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
     P.finish()
     dag.require(P.sinks())
-    dag.execute()
+    dag.run()
     assert P.b.path is not None
     assert P.b.path.exists()
 
 
-def test_execute_idempotent(tmp_path):
+def test_run_idempotent(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
-    execute_pipeline(P)
+    run_pipeline(P)
     mtime_a = P.a.path.stat().st_mtime
     mtime_b = P.b.path.stat().st_mtime
-    execute_pipeline(P)
+    run_pipeline(P)
     assert P.a.path.stat().st_mtime == mtime_a
     assert P.b.path.stat().st_mtime == mtime_b
 
@@ -338,12 +338,12 @@ def test_forced_stale_parent_propagates_to_child(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
-    execute_pipeline(P)
+    run_pipeline(P)
     mtime_a = P.a.path.stat().st_mtime
     mtime_b = P.b.path.stat().st_mtime
 
     time.sleep(0.05)
-    execute_pipeline(P, forced_stale_keys={P.a.relative_path})
+    run_pipeline(P, forced_stale_keys={P.a.relative_path})
 
     assert P.a.path.stat().st_mtime > mtime_a
     assert P.b.path.stat().st_mtime > mtime_b
@@ -355,13 +355,13 @@ def test_compromised_parent_propagates_to_child(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
-    execute_pipeline(P)
+    run_pipeline(P)
     mtime_a = P.a.path.stat().st_mtime
     mtime_b = P.b.path.stat().st_mtime
     P.a.state_file.write_text("running")
 
     time.sleep(0.05)
-    execute_pipeline(P)
+    run_pipeline(P)
 
     assert P.a.path.stat().st_mtime > mtime_a
     assert P.b.path.stat().st_mtime > mtime_b
@@ -388,7 +388,7 @@ def test_conditional_pipeline(tmp_path):
     P2.finish()
     dag.require(P1.sinks())
     dag.require(P2.sinks())
-    dag.execute()
+    dag.run()
 
     # shared upstream is at the same path for both pipelines
     assert P1.a.path == P2.a.path
@@ -400,11 +400,11 @@ def test_conditional_pipeline(tmp_path):
     assert P2.result.path.exists()
 
 
-def test_execute_failure_raises(tmp_path):
+def test_run_failure_raises(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_fail_a(P, x="x")
     with pytest.raises(Exception):
-        execute_pipeline(P)
+        run_pipeline(P)
 
 
 def test_rule_without_command_or_materializer_fails_clearly(tmp_path):
@@ -415,14 +415,14 @@ def test_rule_without_command_or_materializer_fails_clearly(tmp_path):
     pipeline.out = rule(pipeline, value="x")
 
     with pytest.raises(RuntimeError, match="neither a command nor a materializer"):
-        execute_pipeline(pipeline)
+        run_pipeline(pipeline)
 
 
 def test_missing_output_raises(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_no_output_a(P, x="x")
     with pytest.raises(RuntimeError, match="output missing"):
-        execute_pipeline(P)
+        run_pipeline(P)
 
 
 def test_missing_cooutput_raises(tmp_path):
@@ -434,7 +434,7 @@ def test_missing_cooutput_raises(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a, P.b = R_make_only_a(P, x="x")
     with pytest.raises(RuntimeError, match="output missing"):
-        execute_pipeline(P)
+        run_pipeline(P)
 
 
 def test_cooutputs_run_once(tmp_path):
@@ -442,7 +442,7 @@ def test_cooutputs_run_once(tmp_path):
     # We verify the command only ran once by checking a single job.log exists
     P = Pipeline(DAG(tmp_path))
     P.a, P.b = R_make_ab(P, x="x")
-    execute_pipeline(P)
+    run_pipeline(P)
     assert P.a.path.exists() and P.b.path.exists()
     # both co-outputs share a directory; only one job.log should exist
     assert (P.a.path.parent / ".rip" / "job.log").exists()
@@ -469,7 +469,7 @@ def test_shared_node_executed_once(tmp_path):
     P2.finish()
     dag.require(P1.sinks())
     dag.require(P2.sinks())
-    dag.execute()
+    dag.run()
 
     # All outputs must exist, including the shared upstream node from P1
     assert P1.a.path.exists()
@@ -500,7 +500,7 @@ def test_shared_node_path_set_on_first_pipeline(tmp_path):
     P2.finish()
     dag.require(P1.sinks())
     dag.require(P2.sinks())
-    dag.execute()
+    dag.run()
 
     assert P1.a.path is not None
     assert P1.a.path.exists()
@@ -514,11 +514,11 @@ def test_single_node_pipeline_executes(tmp_path):
     P.a = R_make_a(P, x="x")
     P.finish()
     dag.require(P.sinks())
-    dag.execute()
+    dag.run()
     assert P.a.path is not None and P.a.path.exists()
 
 
-def test_execute_rejects_concurrent_writer_for_the_same_node_store(tmp_path):
+def test_run_rejects_concurrent_writer_for_the_same_node_store(tmp_path):
     """The node-store lock must reject a second executor before it starts jobs."""
 
     pipeline = Pipeline(DAG(tmp_path))
@@ -529,7 +529,7 @@ def test_execute_rejects_concurrent_writer_for_the_same_node_store(tmp_path):
     with lock_path.open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         with pytest.raises(RuntimeError, match="Another necroflow instance"):
-            execute_pipeline(pipeline)
+            run_pipeline(pipeline)
 
     assert not pipeline.a.path.exists()
 
@@ -542,7 +542,7 @@ def test_fifo_scheduler(tmp_path):
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
     P.c = R_make_c(P, P.a)
-    execute_pipeline(P, scheduler=fifo_scheduler)
+    run_pipeline(P, scheduler=fifo_scheduler)
     assert P.b.path.exists() and P.c.path.exists()
 
 
@@ -550,7 +550,7 @@ def test_connected_component_scheduler(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
-    execute_pipeline(P, scheduler=make_connected_component_scheduler())
+    run_pipeline(P, scheduler=make_connected_component_scheduler())
     assert P.b.path.exists()
 
 
@@ -563,7 +563,7 @@ def test_scheduler_receives_available_resources(tmp_path):
 
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
-    execute_pipeline(P, scheduler=recording_scheduler, resource_caps={"threads": 3})
+    run_pipeline(P, scheduler=recording_scheduler, resource_caps={"threads": 3})
     assert seen == [{"threads": 3}]
 
 
@@ -572,7 +572,7 @@ def test_legacy_two_argument_scheduler_rejected_up_front(tmp_path):
 
     The scheduler protocol grew a third argument (available_resources). A legacy
     2-argument callable would otherwise raise a bare TypeError mid-run, after the
-    lock is taken and nodes are classified. execute() must reject it before doing
+    lock is taken and nodes are classified. run() must reject it before doing
     any work, and the error must spell out the expected protocol so the author
     can fix the signature without reading executor internals.
     """
@@ -583,7 +583,7 @@ def test_legacy_two_argument_scheduler_rejected_up_front(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
     with pytest.raises(TypeError, match=r"ready, remaining, available_resources"):
-        execute_pipeline(P, scheduler=legacy_scheduler)
+        run_pipeline(P, scheduler=legacy_scheduler)
     assert not (tmp_path / "make_a").exists()
 
 
@@ -599,7 +599,7 @@ def test_scheduler_protocol_accepts_callable_objects(tmp_path):
 
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
-    execute_pipeline(P, scheduler=ObjectScheduler())
+    run_pipeline(P, scheduler=ObjectScheduler())
     assert P.a.path.exists()
 
 
@@ -613,7 +613,7 @@ def test_custom_scheduler_invoked(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
-    execute_pipeline(P, scheduler=recording_scheduler)
+    run_pipeline(P, scheduler=recording_scheduler)
     assert len(calls) > 0
 
 
@@ -648,7 +648,7 @@ def test_scheduler_must_return_a_list_of_ready_nodes(tmp_path):
         pipeline.b = R_make_b(pipeline, pipeline.a)
 
         with pytest.raises(error_type, match=message):
-            execute_pipeline(pipeline, scheduler=scheduler)
+            run_pipeline(pipeline, scheduler=scheduler)
 
 
 # ── connected-component scheduler ordering ────────────────────────────────────
@@ -699,7 +699,7 @@ def test_scheduler_exhausts_smallest_chain_first(tmp_path):
     P.c4d = Rchain_c4_s4(P, P.c4c)
 
     fn, started = _recording(make_connected_component_scheduler())
-    execute_pipeline(P, scheduler=fn, resource_caps={"threads": 1})
+    run_pipeline(P, scheduler=fn, resource_caps={"threads": 1})
 
     chain2 = {"c2_s1", "c2_s2"}
     chain3 = {"c3_s1", "c3_s2", "c3_s3"}
@@ -724,7 +724,7 @@ def test_connected_component_scheduler_builds_index_once(tmp_path, monkeypatch):
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
 
-    execute_pipeline(
+    run_pipeline(
         P,
         scheduler=make_connected_component_scheduler(),
         resource_caps={"threads": 1},
@@ -733,10 +733,10 @@ def test_connected_component_scheduler_builds_index_once(tmp_path, monkeypatch):
     assert build_calls == 1
 
 
-def test_default_scheduler_has_fresh_state_for_each_execute(tmp_path):
-    """Repeated execute calls must not inherit connected-component state."""
+def test_default_scheduler_has_fresh_state_for_each_run(tmp_path):
+    """Repeated run calls must not inherit connected-component state."""
 
-    def execute_once(nodes_dir):
+    def run_once(nodes_dir):
         P = Pipeline(DAG(nodes_dir))
         P.c2a = Rchain_c2_s1(P, x="c2")
         P.c2b = Rchain_c2_s2(P, P.c2a)
@@ -753,7 +753,7 @@ def test_default_scheduler_has_fresh_state_for_each_execute(tmp_path):
             started.append(node.rule.__name__)
             node.path.touch()
 
-        execute_pipeline(
+        run_pipeline(
             P,
             resource_caps={"threads": 1},
             node_runner=recording_runner,
@@ -772,8 +772,8 @@ def test_default_scheduler_has_fresh_state_for_each_execute(tmp_path):
         "c4_s4",
     ]
 
-    assert execute_once(tmp_path / "first") == expected
-    assert execute_once(tmp_path / "second") == expected
+    assert run_once(tmp_path / "first") == expected
+    assert run_once(tmp_path / "second") == expected
 
 
 class FA(NodeType):
@@ -827,7 +827,7 @@ def test_scheduler_fork_prefers_smaller_branch(tmp_path):
     P.g = Rfork_rg(P, P.f)
 
     fn, started = _recording(make_connected_component_scheduler())
-    execute_pipeline(P, scheduler=fn, resource_caps={"threads": 1})
+    run_pipeline(P, scheduler=fn, resource_caps={"threads": 1})
 
     assert started == ["ra", "rb", "rc", "re", "rd", "rf", "rg"]
 
@@ -839,7 +839,7 @@ def test_single_thread_budget(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
-    execute_pipeline(P, resource_caps={"threads": 1})
+    run_pipeline(P, resource_caps={"threads": 1})
     assert P.a.path.exists() and P.b.path.exists()
 
 
@@ -848,7 +848,7 @@ def test_autoclean_deletes_orphan(tmp_path):
     P1 = Pipeline(DAG(tmp_path))
     P1.a = R_make_a(P1, x="x")
     P1.b = R_make_b(P1, P1.a)
-    execute_pipeline(P1)
+    run_pipeline(P1)
     b_path = P1.b.path
     assert b_path.exists()
 
@@ -858,7 +858,7 @@ def test_autoclean_deletes_orphan(tmp_path):
     P2.a = R_make_a(P2, x="x")
     P2.b = R_make_b(P2, P2.a)
     dag.require([P2.a])
-    dag.execute(autoclean=True)
+    dag.run(autoclean=True)
 
     assert not b_path.exists()
 
@@ -868,13 +868,13 @@ def test_autoclean_removes_only_orphaned_cooutput_from_active_directory(tmp_path
 
     first = Pipeline(DAG(tmp_path))
     first.a, first.b = R_make_ab(first, x="x")
-    execute_pipeline(first)
+    run_pipeline(first)
 
     dag = DAG(tmp_path)
     second = Pipeline(dag)
     second.a, second.b = R_make_ab(second, x="x")
     dag.require([second.a])
-    dag.execute(autoclean=True)
+    dag.run(autoclean=True)
 
     assert second.a.path.exists()
     assert not second.b.path.exists()
@@ -888,7 +888,7 @@ def test_autoclean_preserves_intermediate_when_cooutput_is_final(tmp_path):
     pipeline.a, pipeline.b = R_make_ab(pipeline, x="x")
     pipeline.c = R_make_c(pipeline, pipeline.a)
 
-    execute_pipeline(pipeline, autoclean=True)
+    run_pipeline(pipeline, autoclean=True)
 
     assert pipeline.a.path.exists()
     assert pipeline.b.path.exists()
@@ -912,7 +912,7 @@ def test_autoclean_preserves_mutable_intermediate(tmp_path):
     pipeline.store = create(pipeline, seed="x")
     pipeline.result = consume(pipeline, pipeline.store)
 
-    execute_pipeline(pipeline, autoclean=True)
+    run_pipeline(pipeline, autoclean=True)
 
     assert pipeline.store.path.exists()
     assert pipeline.result.path.exists()
@@ -941,13 +941,13 @@ def test_autoclean_preserves_orphaned_directory_with_mutable_cooutput(tmp_path):
     first = Pipeline(DAG(tmp_path))
     first.store, first.log = create(first, seed="x")
     first.dag.require([first.store])
-    first.dag.execute()
+    first.dag.run()
 
     second = Pipeline(DAG(tmp_path))
     second.store, second.log = create(second, seed="x")
     second.a = R_make_a(second, x="independent")
     second.dag.require([second.a])
-    second.dag.execute(autoclean=True)
+    second.dag.run(autoclean=True)
 
     assert second.store.path.exists()
     assert second.log.path.exists()
@@ -957,7 +957,7 @@ def test_autoclean_false_leaves_orphan(tmp_path):
     P1 = Pipeline(DAG(tmp_path))
     P1.a = R_make_a(P1, x="x")
     P1.b = R_make_b(P1, P1.a)
-    execute_pipeline(P1)
+    run_pipeline(P1)
     b_path = P1.b.path
 
     dag = DAG(tmp_path)
@@ -965,7 +965,7 @@ def test_autoclean_false_leaves_orphan(tmp_path):
     P2.a = R_make_a(P2, x="x")
     P2.b = R_make_b(P2, P2.a)
     dag.require([P2.a])
-    dag.execute(autoclean=False)
+    dag.run(autoclean=False)
 
     assert b_path.exists()
 
@@ -975,7 +975,7 @@ def test_dry_run_does_not_execute(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
-    execute_pipeline(P, dry_run=True)
+    run_pipeline(P, dry_run=True)
     assert not P.a.path.exists()
     assert not P.b.path.exists()
 
@@ -983,14 +983,14 @@ def test_dry_run_does_not_execute(tmp_path):
 def test_dry_run_autoclean_does_not_delete_orphans(tmp_path):
     """dry_run=True with autoclean=True must not mutate the output tree.
 
-    This guards a real bug: execute(..., dry_run=True, autoclean=True) currently
+    This guards a real bug: run(..., dry_run=True, autoclean=True) currently
     deletes ORPHAN outputs before it reaches the dry-run branch. A dry run may
     report what would be cleaned, but it must not unlink files or directories.
     """
     P1 = Pipeline(DAG(tmp_path))
     P1.a = R_make_a(P1, x="x")
     P1.b = R_make_b(P1, P1.a)
-    execute_pipeline(P1)
+    run_pipeline(P1)
     b_path = P1.b.path
     assert b_path.exists()
 
@@ -999,7 +999,7 @@ def test_dry_run_autoclean_does_not_delete_orphans(tmp_path):
     P2.a = R_make_a(P2, x="x")
     P2.b = R_make_b(P2, P2.a)
     dag.require([P2.a])
-    dag.execute(autoclean=True, dry_run=True)
+    dag.run(autoclean=True, dry_run=True)
 
     assert b_path.exists()
 
@@ -1011,7 +1011,7 @@ def test_dry_run_shows_missing(tmp_path, caplog):
     P = Pipeline(DAG(tmp_path / "out"))
     P.a = R_make_a(P, x="x")
     with caplog.at_level(logging.INFO, logger="necroflow"):
-        execute_pipeline(P, dry_run=True)
+        run_pipeline(P, dry_run=True)
     assert "would-run" in caplog.text
     assert "MISSING" in caplog.text
     assert "make_a" in caplog.text
@@ -1024,11 +1024,11 @@ def test_dry_run_shows_stale(tmp_path, caplog):
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
-    execute_pipeline(P)
+    run_pipeline(P)
     time.sleep(0.01)
     P.a.path.write_bytes(b"updated")  # content change → different hash → STALE
     with caplog.at_level(logging.INFO, logger="necroflow"):
-        execute_pipeline(P, dry_run=True)
+        run_pipeline(P, dry_run=True)
     assert "STALE" in caplog.text
     assert "make_b" in caplog.text
 
@@ -1039,9 +1039,9 @@ def test_dry_run_all_up_to_date(tmp_path, caplog):
 
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
-    execute_pipeline(P)
+    run_pipeline(P)
     with caplog.at_level(logging.INFO, logger="necroflow"):
-        execute_pipeline(P, dry_run=True)
+        run_pipeline(P, dry_run=True)
     assert "0 would run" in caplog.text
 
 
@@ -1054,7 +1054,7 @@ def test_autoclean_deletes_intermediates(tmp_path):
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
     P.c = R_make_c_from_b(P, P.b)
-    execute_pipeline(P, autoclean=True)
+    run_pipeline(P, autoclean=True)
     assert P.c.path.exists()
     assert not P.b.path.exists()
     assert not P.a.path.exists()
@@ -1065,7 +1065,7 @@ def test_autoclean_deletes_intermediate_workdir(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a_workdir(P, x="x")
     P.b = R_make_b(P, P.a)
-    execute_pipeline(P, autoclean=True)
+    run_pipeline(P, autoclean=True)
     assert P.b.path.exists()
     assert not P.a.path.parent.exists()
 
@@ -1076,7 +1076,7 @@ def test_autoclean_false_leaves_intermediates(tmp_path):
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
     P.c = R_make_c_from_b(P, P.b)
-    execute_pipeline(P, autoclean=False)
+    run_pipeline(P, autoclean=False)
     assert P.a.path.exists()
     assert P.b.path.exists()
     assert P.c.path.exists()
@@ -1086,7 +1086,7 @@ def test_heavy_job_runs_solo(tmp_path):
     # job needing 4 threads runs even with threads cap=2 (solo fallback when nothing else running)
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a_heavy(P, x="x")
-    execute_pipeline(P, resource_caps={"threads": 2})
+    run_pipeline(P, resource_caps={"threads": 2})
     assert P.a.path.exists()
 
 
@@ -1133,7 +1133,7 @@ def test_resource_cap_respected(tmp_path):
     P.a = R2_make_a(P, x="1")
     P.b = R2_make_b(P, x="2")
     # Should complete without error (solo fallback ensures each job runs eventually)
-    execute_pipeline(P, resource_caps={"threads": 8, "ram": parse_resource("300Mi")})
+    run_pipeline(P, resource_caps={"threads": 8, "ram": parse_resource("300Mi")})
     assert P.a.path.exists() and P.b.path.exists()
 
 
@@ -1148,7 +1148,7 @@ def test_text_file_rule_writes_exact_text(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.config = r_write_config(P, text='{"a": 1}\n')
 
-    execute_pipeline(P)
+    run_pipeline(P)
 
     assert P.config.path.read_text() == '{"a": 1}\n'
 
@@ -1163,10 +1163,10 @@ def test_text_file_rule_is_idempotent(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.config = r_write_config(P, text="same\n")
 
-    execute_pipeline(P)
+    run_pipeline(P)
     mtime = P.config.path.stat().st_mtime
     time.sleep(0.05)
-    execute_pipeline(P)
+    run_pipeline(P)
 
     assert P.config.path.stat().st_mtime == mtime
 
@@ -1225,7 +1225,7 @@ def test_text_file_custom_input_name(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.config = r_write_config(P, serialized_config="custom\n")
 
-    execute_pipeline(P)
+    run_pipeline(P)
 
     assert P.config.path.read_text() == "custom\n"
 
@@ -1266,7 +1266,7 @@ def test_text_file_rule_accepts_encoding(tmp_path):
 
     P = Pipeline(DAG(tmp_path))
     P.config = write_config(P, text="hello")
-    execute_pipeline(P)
+    run_pipeline(P)
 
     assert P.config.path.read_text(encoding="utf-16-le") == "hello"
 
@@ -1296,7 +1296,7 @@ def test_symlink_file_rule_links_to_source_content(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P.raw = r_ingest_raw(P, path=str(source))
 
-    execute_pipeline(P)
+    run_pipeline(P)
 
     assert P.raw.path.is_symlink()
     assert P.raw.path.read_text() == "hello\n"
@@ -1330,7 +1330,7 @@ def test_symlink_file_decorator_matches_factory_and_links(tmp_path):
     P = Pipeline(DAG(tmp_path))
     P = Pipeline(DAG(tmp_path / "out"))
     P.raw = ingest_raw(P, path=str(source))
-    execute_pipeline(P)
+    run_pipeline(P)
 
     assert P.raw.path.is_symlink()
     assert P.raw.path.read_text() == "decorated\n"
@@ -1367,14 +1367,14 @@ def test_symlink_file_change_reruns_downstream_consumer(tmp_path):
 
     outdir = tmp_path / "out"
     P1 = build()
-    execute_pipeline(P1)
+    run_pipeline(P1)
     assert P1.copied.path.read_text() == "v1\n"
 
     time.sleep(0.05)
     source.write_text("v2\n")
 
     P2 = build()
-    execute_pipeline(P2)
+    run_pipeline(P2)
 
     assert P2.copied.path.read_text() == "v2\n"
     assert P2.copied.path == P1.copied.path  # in-place overwrite, not a new dir
@@ -1390,7 +1390,7 @@ def test_symlink_file_custom_path_arg(tmp_path):
     P = Pipeline(DAG(tmp_path / "out"))
     P.raw = r_ingest_raw(P, dataset_path=str(source))
 
-    execute_pipeline(P)
+    run_pipeline(P)
 
     assert P.raw.path.read_text() == "hi\n"
 
@@ -1408,12 +1408,12 @@ def test_symlink_file_rejects_non_nodetype_output():
         r_ingest_raw = symlink_file_rule("ingest_raw", str)
 
 
-def test_execute_returns_report_and_writes_run_stats_with_output_size(tmp_path):
+def test_run_returns_report_and_writes_run_stats_with_output_size(tmp_path):
     """Execution returns a plain dict indexed by stable POSIX Node keys."""
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a_from_workdir(P, x="abc")
 
-    report = execute_pipeline(P)
+    report = run_pipeline(P)
 
     assert isinstance(report, dict)
     event = report.get(P.a.relative_path.as_posix())
@@ -1433,13 +1433,13 @@ def test_execute_returns_report_and_writes_run_stats_with_output_size(tmp_path):
     assert run_doc["run"]["duration_seconds"] >= 0
 
 
-def test_execute_report_marks_cached_nodes_and_measures_size(tmp_path):
+def test_run_report_marks_cached_nodes_and_measures_size(tmp_path):
     """Cached execution events use the same stable-keyed dict contract."""
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a_from_workdir(P, x="cached")
-    execute_pipeline(P)
+    run_pipeline(P)
 
-    cached_report = execute_pipeline(P)
+    cached_report = run_pipeline(P)
 
     event = cached_report.get(P.a.relative_path.as_posix())
     assert event is not None

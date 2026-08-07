@@ -544,14 +544,14 @@ def test_pipeline_repr_matches_its_ascii_render(tmp_path):
     assert repr(pipeline) == str(pipeline)
 
 
-def test_execute_rejects_pipeline_view(tmp_path):
-    from necroflow import execute
+def test_run_rejects_pipeline_view(tmp_path):
+    from necroflow import run
 
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
 
     with pytest.raises(TypeError, match="requires a DAG"):
-        execute(P)
+        run(P)
 
 
 def test_pipeline_missing_attribute_still_raises():

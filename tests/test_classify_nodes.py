@@ -104,7 +104,7 @@ def test_up_to_date_after_run(tmp_path):
     dag = DAG(outdir=tmp_path)
     P = make_pipeline(dag)
     dag.require([P.sorted])
-    dag.execute()
+    dag.run()
     classify_nodes(dag.nodes, dag.required_nodes)
     for n in dag.required_nodes:
         assert n.state == NodeState.UP_TO_DATE
@@ -114,7 +114,7 @@ def test_stale_direct(tmp_path):
     dag = DAG(outdir=tmp_path)
     P = make_pipeline(dag)
     dag.require([P.sorted])
-    dag.execute()
+    dag.run()
 
     raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
     time.sleep(0.05)
@@ -131,7 +131,7 @@ def test_stale_transitive(tmp_path):
     dag = DAG(outdir=tmp_path)
     P = make_pipeline(dag)
     dag.require([P.sorted])
-    dag.execute()
+    dag.run()
 
     raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
     time.sleep(0.05)
@@ -146,7 +146,7 @@ def test_orphan(tmp_path):
     dag = DAG(outdir=tmp_path)
     P = make_pipeline(dag)
     dag.require([P.sorted])
-    dag.execute()
+    dag.run()
 
     # rebuild dag requesting only raw_fastq — align/sort outputs become orphans
     dag2 = DAG(outdir=tmp_path)
@@ -164,13 +164,13 @@ def test_reruns_stale_nodes(tmp_path):
     dag = DAG(outdir=tmp_path)
     P = make_pipeline(dag)
     dag.require([P.sorted])
-    dag.execute()
+    dag.run()
 
     raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
     time.sleep(0.05)
     raw_node.path.write_bytes(b"updated content")  # content change → different hash
 
-    dag.execute()
+    dag.run()
 
     classify_nodes(dag.nodes, dag.required_nodes)
     for n in dag.required_nodes:
@@ -181,12 +181,12 @@ def test_skips_up_to_date_on_rerun(tmp_path, capsys):
     dag = DAG(outdir=tmp_path)
     P = make_pipeline(dag)
     dag.require([P.sorted])
-    dag.execute()
+    dag.run()
 
     # second run: record mtimes, re-execute, confirm paths unchanged
     mtimes_before = {n.output_name: n.path.stat().st_mtime for n in dag.required_nodes}
     time.sleep(0.05)
-    dag.execute()
+    dag.run()
     mtimes_after = {n.output_name: n.path.stat().st_mtime for n in dag.required_nodes}
     assert mtimes_before == mtimes_after
 
@@ -196,7 +196,7 @@ def test_content_unchanged_parent_not_stale(tmp_path):
     dag = DAG(outdir=tmp_path)
     P = make_pipeline(dag)
     dag.require([P.sorted])
-    dag.execute()
+    dag.run()
 
     raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
     time.sleep(0.05)
@@ -244,7 +244,7 @@ def test_mutable_parent_content_change_does_not_stale_consumer(tmp_path):
     pipeline.database = R_create_database(pipeline, seed="initial")
     pipeline.receipt = R_mutate_database(pipeline, pipeline.database)
     dag.require([pipeline.receipt])
-    dag.execute()
+    dag.run()
 
     time.sleep(0.05)
     pipeline.database.path.write_text("externally changed\n")
@@ -266,10 +266,10 @@ def test_missing_mutable_parent_replays_consumer(tmp_path):
     pipeline.database = R_create_database(pipeline, seed="initial")
     pipeline.receipt = R_mutate_database(pipeline, pipeline.database)
     dag.require([pipeline.receipt])
-    dag.execute()
+    dag.run()
     pipeline.database.path.unlink()
 
-    dag.execute()
+    dag.run()
 
     assert pipeline.database.path.read_text() == "initial\nmutation\n"
     assert pipeline.receipt.state == NodeState.UP_TO_DATE
@@ -310,7 +310,7 @@ def test_mutable_parent_invalidator_still_propagates_stale(tmp_path):
     pipeline.database = create(pipeline, generation=str(generation))
     pipeline.receipt = consume(pipeline, pipeline.database)
     dag.require([pipeline.receipt])
-    dag.execute()
+    dag.run()
 
     generation.write_text("two")
     classify_nodes(dag.nodes, dag.required_nodes)
@@ -327,14 +327,14 @@ def test_mutable_parent_explicit_staleness_replays_consumer(tmp_path, trigger):
     pipeline.database = R_create_database(pipeline, seed="initial")
     pipeline.receipt = R_mutate_database(pipeline, pipeline.database)
     dag.require([pipeline.receipt])
-    dag.execute()
+    dag.run()
     before = pipeline.receipt.path.stat().st_mtime_ns
     time.sleep(0.05)
 
     if trigger == "forced":
-        dag.execute(forced_stale_keys={pipeline.database.relative_path})
+        dag.run(forced_stale_keys={pipeline.database.relative_path})
     else:
         pipeline.database.state_file.write_text("running")
-        dag.execute()
+        dag.run()
 
     assert pipeline.receipt.path.stat().st_mtime_ns > before

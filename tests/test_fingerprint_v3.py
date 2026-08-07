@@ -88,7 +88,7 @@ def test_success_metadata_records_outputs_and_exact_parent_keys(tmp_path):
     pipeline.result = consume_rule(pipeline, pipeline.state)
     dag.require([pipeline.result])
 
-    dag.execute()
+    dag.run()
 
     source_metadata = tomlkit.parse(
         (pipeline.state.path.parent / ".rip" / "dependencies.toml").read_text()

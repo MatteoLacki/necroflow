@@ -13,7 +13,7 @@ factory returns
   -> P.finish()
   -> select requested labels or sinks
   -> dag.require(requested Nodes)
-  -> dag.execute()
+  -> dag.run()
        -> validate scheduler
        -> lock node store
        -> build invocation-local execution plan
@@ -28,7 +28,7 @@ factory returns
        -> unlock node store
 ```
 
-`P.finish()` performs no classification or execution. Planning begins inside `execute()` after all Pipelines have contributed requirements to the shared DAG.
+`P.finish()` performs no classification or execution. Planning begins inside `run()` after all Pipelines have contributed requirements to the shared DAG.
 
 ## From `P.finish()` to DAG requirements
 
@@ -42,7 +42,7 @@ The normal Python handoff is:
 factory(P, config)
 P.finish()
 dag.require(P.sinks())
-dag.execute()
+dag.run()
 ```
 
 `P.sinks()` returns labeled canonical Nodes that are not parents of another Node recorded by that Pipeline. It requires finished construction.
@@ -55,11 +55,11 @@ Several labels may request the same canonical Node as distinct visible results.
 
 Requirements accumulate across expanded jobs and root Pipelines sharing the DAG.
 
-## Entering `execute()`
+## Entering `run()`
 
-`DAG.execute(**kwargs)` forwards to `necroflow.executor.execute(dag, **kwargs)`. On a normal return, it stores and returns the same report as `dag.last_execution_report`.
+`DAG.run(**kwargs)` forwards to `necroflow.executor.run(dag, **kwargs)`. On a normal return, it stores and returns the same report as `dag.last_execution_report`.
 
-Before touching the node store, `execute()` validates the scheduler's three-argument protocol.
+Before touching the node store, `run()` validates the scheduler's three-argument protocol.
 
 Without an explicit scheduler, it creates a fresh incremental connected-component scheduler for this invocation.
 
@@ -296,12 +296,12 @@ Custom schedulers must therefore select work whenever progress is possible.
 
 The default scheduler incrementally orders ready Nodes by connected-component size in remaining work. Smaller components come first.
 
-A fresh default scheduler is created for every `execute()` call.
+A fresh default scheduler is created for every `run()` call.
 
 Library callers passing one explicitly should also create a fresh closure per execution:
 
 ```python
-dag.execute(scheduler=make_connected_component_scheduler())
+dag.run(scheduler=make_connected_component_scheduler())
 ```
 
 The CLI accepts `--scheduler connected-components`, `--scheduler fifo`, or a local Python callable such as `--scheduler schedulers.py:my_scheduler`.
@@ -326,7 +326,7 @@ def align(fastq: Fastq, ref: str):
     bam = output(Bam)
     return bam
 
-dag.execute(
+dag.run(
     resource_caps={
         "threads": 16,
         "ram": parse_resource("64Gi"),
@@ -476,7 +476,7 @@ The executor then raises an `ExceptionGroup` containing attempted-job errors and
 
 ## Execution reports
 
-`execute()` returns `dict[str, ExecutionEvent]` keyed by `node.relative_path.as_posix()`.
+`run()` returns `dict[str, ExecutionEvent]` keyed by `node.relative_path.as_posix()`.
 
 The report contains:
 
@@ -492,7 +492,7 @@ Cached events have `cached=True` and no execution timestamps or duration. Their 
 
 Co-output success events use separate Node keys but share timing and output-directory size.
 
-`DAG.execute()` stores the report only when `execute()` returns normally.
+`DAG.run()` stores the report only when `run()` returns normally.
 
 A keep-going `ExceptionGroup` carries its report on the exception instead.
 
@@ -521,7 +521,7 @@ Post-job cleanup is triggered only by successful job completion.
 A fully cached invocation removes eligible orphans before scheduling, but does not revisit cached intermediates for deletion.
 
 ```python
-dag.execute(autoclean=True)
+dag.run(autoclean=True)
 ```
 
 ## Completion callbacks and CLI results

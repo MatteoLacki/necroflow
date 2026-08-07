@@ -112,7 +112,7 @@ class ToolBinary(NodeType):
 
 Use this for external dependencies that should invalidate a cached node without becoming normal necroflow outputs, such as a binary, script, or selected source tree hash. Types without `invalidator` use the normal cache behavior. If the callback raises, execution fails fast instead of guessing whether the cache is valid.
 
-Invalidators are evaluated during the initial node classification at the start of `execute()`. After a job succeeds, necroflow recomputes and stores the token for that node's outputs, but it does not re-run all invalidators between tasks in the same execution. If an external dependency changes while a pipeline is already running, that change is detected on the next `execute()` invocation.
+Invalidators are evaluated during the initial node classification at the start of `run()`. After a job succeeds, necroflow recomputes and stores the token for that node's outputs, but it does not re-run all invalidators between tasks in the same execution. If an external dependency changes while a pipeline is already running, that change is detected on the next `run()` invocation.
 
 ### Mutable dependencies
 
@@ -196,7 +196,7 @@ trick at all.)
 ## Concurrency
 
 **Only one necroflow operation may mutate a given node store at a time.**
-`execute()` acquires an exclusive lock on `nodes/.rip/necroflow.lock` (via
+`run()` acquires an exclusive lock on `nodes/.rip/necroflow.lock` (via
 `fcntl.flock`) at startup; CLI result materialization completes before that lock
 is released. `necroflow gc` holds the same lock while scanning and deleting. A
 second operation targeting the same node store fails immediately. Running two

@@ -50,7 +50,7 @@ necroflow outputs --json job.toml      # requested output paths
 necroflow explain job.toml             # what would run and why (per-node reasons)
 necroflow doctor job.toml              # preflight checks with stable NF_* issue codes
 necroflow provenance --json nodes/rule/rule_hash/provenance_hash/file
-python -c "import inspect, necroflow.executor as e; print(inspect.signature(e.execute))"
+python -c "import inspect, necroflow.executor as e; print(inspect.signature(e.run))"
 ```
 
 ## Setup
@@ -136,8 +136,8 @@ These have been true since the June refactors and are load-bearing design decisi
   node-store root. A rule call returns Nodes with final fingerprints, relative paths, and absolute
   paths; there is no late resolution, DAG reindexing, or delayed deduplication.
 - **Execution is DAG-only.** After a factory returns, call `P.finish()`, then
-  `dag.require(P.sinks())` (or explicit label-selected Nodes), then `dag.execute()`.
-  `DAG.add` and `execute(Pipeline)` do not exist.
+  `dag.require(P.sinks())` (or explicit label-selected Nodes), then `dag.run()`.
+  `DAG.add` and `run(Pipeline)` do not exist.
 
 ## Scheduler protocol (current — 3 arguments)
 
@@ -151,23 +151,23 @@ def my_scheduler(ready: list[Node], remaining: list[Node],
 - `remaining` — all not-yet-done, not-yet-running nodes (superset of ready)
 - `available_resources` — remaining capacity for capped resources, e.g. `{"threads": 12}`
 - The return value must be a `list` containing only currently ready nodes, with no duplicates;
-  `execute()` rejects invalid selections before submission.
-- Plain callables and callable objects both work; `execute()` rejects wrong-arity schedulers
+  `run()` rejects invalid selections before submission.
+- Plain callables and callable objects both work; `run()` rejects wrong-arity schedulers
   up front with a `TypeError` naming this protocol.
 - Built-ins in `src/necroflow/schedulers.py`: `make_connected_component_scheduler()` creates the default
   incremental smallest-component-first scheduler; `fifo_scheduler` uses registration order.
   CLI: `--scheduler connected-components | fifo | file.py:callable`.
 
-## `execute()` — check the docstring for details
+## `run()` — check the docstring for details
 
-`necroflow.executor.execute(dag, resource_caps=None, scheduler=None, keep_going=False,
+`necroflow.executor.run(dag, resource_caps=None, scheduler=None, keep_going=False,
 autoclean=False, dry_run=False, node_runner=None, forced_stale_keys=None,
 on_complete=None)
 -> dict[str, ExecutionEvent]`
 
-The dict is keyed by `node.relative_path.as_posix()`. `DAG.execute()` forwards
+The dict is keyed by `node.relative_path.as_posix()`. `DAG.run()` forwards
 all kwargs and stores the same dict as `dag.last_execution_report`.
-Full semantics: the `execute()` docstring and `docs/executor.md`.
+Full semantics: the `run()` docstring and `docs/executor.md`.
 
 ## File map
 
@@ -187,7 +187,7 @@ src/necroflow/
                        invalidation, active/orphan partition, classification reasons
   pipeline.py        — Pipeline (prefixed views, labels, finish)
   ascii_render.py    — render_ascii, _node_label, write_ancestor_graph
-  executor.py        — execute(), resource caps, lock, ExecutionEvent, autoclean, keep_going
+  executor.py        — run(), resource caps, lock, ExecutionEvent, autoclean, keep_going
   logger.py          — thread-safe job logging
   config.py          — job TOML loading and grid expansion (iter_job_configs, JobConfig)
   grid.py            — __grid TOML expansion and deterministic result labels

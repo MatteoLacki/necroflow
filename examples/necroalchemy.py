@@ -300,7 +300,7 @@ if __name__ == "__main__":
     dag.save("/tmp/necroalchemy_dag.txt")
     print("DAG render      → /tmp/necroalchemy_dag.txt")
 
-    dag.execute(keep_going=True)
+    dag.run(keep_going=True)
 
     # Pipeline labels remain local handles for canonical outputs.
     for node in dag.nodes:

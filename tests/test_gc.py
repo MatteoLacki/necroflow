@@ -45,7 +45,7 @@ def _run_cached_rule(nodes_dir, command="printf old > {result}", *, mutable=Fals
     pipeline = Pipeline(dag)
     pipeline.result = rule(pipeline, value="same")
     dag.require([pipeline.result])
-    dag.execute()
+    dag.run()
     return pipeline.result.path.parent
 
 
@@ -62,7 +62,7 @@ def _run_source_and_consumer(nodes_dir):
     source = old_source(pipeline, value="same")
     pipeline.result = CURRENT_CONSUMER(pipeline, source)
     dag.require([pipeline.result])
-    dag.execute()
+    dag.run()
     return source.path.parent, pipeline.result.path.parent
 
 
@@ -143,7 +143,7 @@ def test_gc_keeps_nodes_from_current_rules(tmp_path):
     pipeline = Pipeline(dag)
     pipeline.result = CURRENT_PRODUCER(pipeline, value="same")
     dag.require([pipeline.result])
-    dag.execute()
+    dag.run()
     call_dir = pipeline.result.path.parent
     scope = tmp_path / "gc_rules.py"
     scope.write_text(

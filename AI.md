@@ -119,7 +119,7 @@ scheduler resource. V3 identity excludes retry policy.
 
 ## CLI forced invalidation
 
-The CLI accepts repeated `--invalidate LABEL` and `--reap NAME` options. `--reap` expands labels from a top-level `reap.toml` table shaped like `name = ["label", ...]`; `--reap-file PATH` overrides the default file. Labels resolve through each expanded Pipeline, then to Node relative paths passed into `execute(..., forced_stale_keys=...)`. The executor only marks active requested nodes stale, and then propagates STALE to active descendants. Invalidation does not request extra outputs.
+The CLI accepts repeated `--invalidate LABEL` and `--reap NAME` options. `--reap` expands labels from a top-level `reap.toml` table shaped like `name = ["label", ...]`; `--reap-file PATH` overrides the default file. Labels resolve through each expanded Pipeline, then to Node relative paths passed into `run(..., forced_stale_keys=...)`. The executor only marks active requested nodes stale, and then propagates STALE to active descendants. Invalidation does not request extra outputs.
 
 ## Job config validation
 
@@ -129,7 +129,7 @@ The CLI accepts repeatable `--validation PATH.py:FUNCTION` flags. Each validator
 
 ## Execution reports
 
-`execute()` returns a `dict[str, ExecutionEvent]` keyed by each Node's stable POSIX relative path; `DAG.execute()` stores the same dict as `dag.last_execution_report` and returns it. Successful rule calls write `.rip/run.toml` with start/end timestamps, `duration_seconds`, `exit_code`, and total rule-call output size excluding `.rip`. CLI runs write `results/<job>/execution.toml` after copy finalization, covering each rule call needed by the requested nodes and ancestors. Its `[[rules]]` entries group co-outputs under one execution measurement, and top-level `total_duration_seconds` sums attempted rule-call durations. The run-level summary survives `--autoclean`, while node-local `.rip/run.toml` can disappear with cleaned intermediates. Cached calls are reported as `cached = true` with measured current output size and no new duration. With `--keep-going`, the executor attaches the node-keyed dict to the raised `ExceptionGroup` and the CLI writes rule-call summaries before re-raising.
+`run()` returns a `dict[str, ExecutionEvent]` keyed by each Node's stable POSIX relative path; `DAG.run()` stores the same dict as `dag.last_execution_report` and returns it. Successful rule calls write `.rip/run.toml` with start/end timestamps, `duration_seconds`, `exit_code`, and total rule-call output size excluding `.rip`. CLI runs write `results/<job>/execution.toml` after copy finalization, covering each rule call needed by the requested nodes and ancestors. Its `[[rules]]` entries group co-outputs under one execution measurement, and top-level `total_duration_seconds` sums attempted rule-call durations. The run-level summary survives `--autoclean`, while node-local `.rip/run.toml` can disappear with cleaned intermediates. Cached calls are reported as `cached = true` with measured current output size and no new duration. With `--keep-going`, the executor attaches the node-keyed dict to the raised `ExceptionGroup` and the CLI writes rule-call summaries before re-raising.
 
 ## CLI output roots
 

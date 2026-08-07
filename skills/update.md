@@ -73,7 +73,7 @@ def factory(P: Pipeline, config) -> None:
    Job TOML `.pipeline` and string `.requests` entries normally remain valid.
 8. For direct Python entry points, create one `DAG(nodes_dir)`, construct each
    `Pipeline(dag)`, call its factory, select `P.sinks()` or explicit `P[label]`
-   Nodes with `dag.require(...)`, then call `dag.execute()`. Delete
+   Nodes with `dag.require(...)`, then call `dag.run()`. Delete
    `resolve_paths()` and `dag.add()`; Nodes already have final fingerprints,
    relative paths, and absolute paths when rules return.
 9. Convert argv-list commands to a shell string or a module-level,

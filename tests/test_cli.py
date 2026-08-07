@@ -1063,11 +1063,11 @@ def test_run_preflights_result_paths_before_execution(
     def reject(_path):
         raise ValueError("simulated NAME_MAX failure")
 
-    def unexpected_execute(*_args, **_kwargs):
-        pytest.fail("DAG.execute was called before result-path preflight")
+    def unexpected_run(*_args, **_kwargs):
+        pytest.fail("DAG.run was called before result-path preflight")
 
     monkeypatch.setattr(cli_core, "_check_path_limits", reject)
-    monkeypatch.setattr(DAG, "execute", unexpected_execute)
+    monkeypatch.setattr(DAG, "run", unexpected_run)
 
     with pytest.raises(SystemExit, match="Pipeline label 'b' is invalid.*NAME_MAX"):
         main(["--outdir", str(tmp_path / "out"), str(job)])
@@ -2034,7 +2034,7 @@ def test_explain_reports_ignored_mutable_parent_content(tmp_path):
     pipeline.mutable = R_mutable_step1(pipeline, v="hello")
     pipeline.log = R_mutable_step2(pipeline, pipeline.mutable)
     pipeline.dag.require([pipeline.log])
-    pipeline.dag.execute()
+    pipeline.dag.run()
     time.sleep(0.05)
     pipeline.mutable.path.write_text("changed")
     plan = plan_execution(pipeline.dag, include_advisories=True)

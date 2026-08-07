@@ -15,13 +15,13 @@ def fifo_scheduler(ready, remaining, available_resources) -> list:
 ```
 
 Stateless, one line. `ready` is already in registration order because that is the order
-`execute()` builds it in each iteration, so this is a no-op pass-through. No adjacency, no
+`run()` builds it in each iteration, so this is a no-op pass-through. No adjacency, no
 per-call bookkeeping, `available_resources` unused. This is the baseline every other
 scheduler's added complexity has to justify.
 
 ## `make_connected_component_scheduler()` — the default
 
-`dag.execute()` uses this unless `scheduler=` says otherwise (`--scheduler
+`dag.run()` uses this unless `scheduler=` says otherwise (`--scheduler
 connected-components` on the CLI). It prioritises `ready` nodes by the size of the
 **connected component** (undirected: parent↔child edges either direction) they currently
 belong to within `remaining` — smallest first. The intent is to finish small, largely
@@ -30,12 +30,12 @@ keeping the number of simultaneously in-flight intermediates — and therefore p
 memory — lower than a scheduler with no topology awareness.
 
 `make_connected_component_scheduler()` is a **factory**, not a class: it returns a closure
-over one fresh `_ConnectedComponentState`, so state cannot leak between separate `execute()`
+over one fresh `_ConnectedComponentState`, so state cannot leak between separate `run()`
 calls. This replaced an earlier shared-singleton implementation
 (`ConnectedComponentScheduler`) that leaked exactly that way — the same `remaining` set
-across two different `execute()` calls silently treated the second graph as an incremental
+across two different `run()` calls silently treated the second graph as an incremental
 update of the first and produced wrong or arbitrary orderings. Always create a new one per
-execution; `execute(scheduler=None)` does this for you.
+execution; `run(scheduler=None)` does this for you.
 
 ### State
 
