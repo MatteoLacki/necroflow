@@ -83,6 +83,11 @@ The planner receives every eagerly interned DAG Node plus explicitly required No
 
 Identity during this walk is `node.relative_path`.
 
+The traversal roots are exactly `dag.required_nodes`, populated by `dag.require(...)`; eagerly
+interned Nodes outside that set are not roots. A shared ancestor may enter the traversal frontier
+more than once, but after its `relative_path` is first recorded, later visits are skipped and its
+parents are not walked again.
+
 The closure contains requested Nodes plus every ancestor needed to produce them.
 
 Co-output siblings are not added merely because they share a `RuleCall`. A sibling joins only when it is required or is an ancestor of a required Node.
