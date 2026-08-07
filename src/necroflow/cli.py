@@ -52,14 +52,12 @@ from necroflow.dag import (
     NodeState,
     _check_path_limits,
     _content_hash,
-    _has_changed_invalidation,
-    _output_mtime,
     parse_resource,
     resolve_command,
 )
 from necroflow.pipeline import _normalize_shellpath
 from necroflow.graphviz_render import render_png
-from necroflow.executor import _prepare_active
+from necroflow.planning import plan_execution
 from necroflow.gc import collect
 
 
@@ -414,101 +412,15 @@ def _provenance_payload(path: Path) -> dict:
     }
 
 
-def _parent_content_changed(node, parent) -> bool:
-    """Return whether a newer parent differs from its stored successful hash."""
-
-    if node.path is None or parent.path is None or not parent.path.exists():
-        return False
-    if _output_mtime(parent.path) <= _output_mtime(node.path):
-        return False
-    hash_file = parent.path.parent / ".rip" / (parent.path.name + ".hash")
-    return not (
-        hash_file.exists()
-        and _content_hash(parent.path) == hash_file.read_text().strip()
-    )
-
-
-def _classification_reasons(node, forced_stale_keys: set[Path]) -> list[dict]:
-    if node.state == NodeState.MISSING:
-        return [{"kind": "output_missing", "path": str(node.path)}]
-    if node.state == NodeState.FAILED:
-        return [{"kind": "blocked_by_failed_parent"}]
-    if node.state == NodeState.UP_TO_DATE:
-        reasons: list[dict] = [{"kind": "up_to_date"}]
-        for parent in node.parents:
-            if not parent.mutable:
-                continue
-            try:
-                if _parent_content_changed(node, parent):
-                    reasons.append(
-                        {
-                            "kind": "mutable_parent_content_ignored",
-                            "parent_key": parent.relative_path.as_posix(),
-                            "parent_label": parent.rule_call.dag.label_for(parent),
-                        }
-                    )
-            except OSError as exc:
-                reasons.append(
-                    {
-                        "kind": "parent_check_error",
-                        "parent_key": parent.relative_path.as_posix(),
-                        "error": str(exc),
-                    }
-                )
-        return reasons
-
-    reasons = []
-    if node.relative_path in forced_stale_keys:
-        reasons.append({"kind": "forced_invalidation"})
-    if node.is_compromised:
-        reasons.append({"kind": "compromised_prior_state"})
-    try:
-        if _has_changed_invalidation(node):
-            reasons.append({"kind": "invalidator_changed"})
-    except Exception as exc:
-        reasons.append({"kind": "invalidator_error", "error": str(exc)})
-    for parent in node.parents:
-        if parent.state in (NodeState.MISSING, NodeState.STALE):
-            reasons.append(
-                {
-                    "kind": "parent_not_up_to_date",
-                    "parent_key": parent.relative_path.as_posix(),
-                    "parent_label": parent.rule_call.dag.label_for(parent),
-                    "parent_state": parent.state.value if parent.state else None,
-                }
-            )
-        elif not parent.mutable:
-            try:
-                if _parent_content_changed(node, parent):
-                    reasons.append(
-                        {
-                            "kind": "parent_content_changed",
-                            "parent_key": parent.relative_path.as_posix(),
-                            "parent_label": parent.rule_call.dag.label_for(parent),
-                        }
-                    )
-            except OSError as exc:
-                reasons.append(
-                    {
-                        "kind": "parent_check_error",
-                        "parent_key": parent.relative_path.as_posix(),
-                        "error": str(exc),
-                    }
-                )
-    if node.state == NodeState.STALE and not reasons:
-        reasons.append({"kind": "stale"})
-    return reasons
-
-
 def _explain_payload(args) -> dict:
     nodes_dir, _results_dir = _resolve_roots(args)
     dag, combos, forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
-    active, _active_keys, _n_cleaned = _prepare_active(
+    plan = plan_execution(
         dag,
-        autoclean=False,
-        dry_run=True,
         forced_stale_keys=forced_stale_keys,
+        include_advisories=True,
     )
+    active = plan.active
     labels = {
         label: pipeline[label]
         for _job_label, pipeline, _request in combos
@@ -532,7 +444,7 @@ def _explain_payload(args) -> dict:
                 **_node_json(node, nodes_dir=nodes_dir),
                 "will_run": node.state in (NodeState.MISSING, NodeState.STALE),
                 "command": command,
-                "reasons": _classification_reasons(node, forced_stale_keys),
+                "reasons": plan.reasons[node.relative_path],
             }
         )
     return {

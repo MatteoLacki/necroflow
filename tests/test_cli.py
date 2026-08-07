@@ -10,6 +10,7 @@ import tomlkit
 import pytest
 
 import necroflow.cli as cli_core
+from necroflow.planning import plan_execution
 from pathlib import Path
 from necroflow import NodeType, Pipeline, DAG, classify_nodes, output
 from necroflow.cli import (
@@ -2036,9 +2037,8 @@ def test_explain_reports_ignored_mutable_parent_content(tmp_path):
     pipeline.dag.execute()
     time.sleep(0.05)
     pipeline.mutable.path.write_text("changed")
-    classify_nodes(pipeline.dag.nodes, pipeline.dag.required_nodes)
-
-    reasons = cli_core._classification_reasons(pipeline.log, set())
+    plan = plan_execution(pipeline.dag, include_advisories=True)
+    reasons = plan.reasons[pipeline.log.relative_path]
 
     assert pipeline.log.state.value == "up_to_date"
     assert "mutable_parent_content_ignored" in {reason["kind"] for reason in reasons}

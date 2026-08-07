@@ -14,7 +14,6 @@ from necroflow.nodes import (
     NodeState,
     NodeType,
     NodeTypeMeta,
-    _topo_sort,
 )
 from necroflow.fingerprints import IDENTITY_FORMAT, command_ast, python_identity
 from necroflow.rule_call import RuleCall
@@ -196,63 +195,10 @@ def _output_mtime(path: Path) -> float:
 
 
 def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
-    """Set each eagerly addressed node's state from cache and dependency metadata.
+    """Set each eagerly addressed Node's base cache state."""
+    from necroflow.planning import classify_nodes as _classify_nodes
 
-    Nodes in the required subgraph (required_nodes + all ancestors) get Missing/Stale/UpToDate.
-    Nodes outside the subgraph with existing output get Orphan.
-    Nodes outside the subgraph with no output get state=None (excluded from execution).
-    """
-    # BFS to collect all nodes in the required subgraph
-    required: dict[Path, Node] = {}
-    frontier = list(required_nodes)
-    while frontier:
-        n = frontier.pop()
-        if n.relative_path in required:
-            continue
-        required[n.relative_path] = n
-        frontier.extend(p for p in n.parents if p.relative_path not in required)
-
-    # ORPHAN pass: output exists from a prior run but isn't needed now; skipped
-    # by the executor unless autoclean=True, in which case it gets deleted
-    for node in nodes:
-        if node.relative_path not in required:
-            node.state = (
-                NodeState.ORPHAN
-                if (node.path is not None and node.path.exists())
-                else None
-            )
-
-    # Classify in topological order so STALE propagates naturally in one pass
-    for node in _topo_sort(list(required.values())):
-        if node.path is None or not node.path.exists():
-            node.state = NodeState.MISSING
-            continue
-
-        node_mtime = _output_mtime(node.path)
-        stale = any(
-            p.state in (NodeState.MISSING, NodeState.STALE)
-            for p in node.parents
-            if p.state is not None
-        )
-        if not stale:
-            for p in node.parents:
-                if p.path is None or not p.path.exists():
-                    continue
-                if p.mutable:
-                    continue
-                if _output_mtime(p.path) <= node_mtime:
-                    continue  # fast path: parent not newer
-                hash_file = p.path.parent / ".rip" / (p.path.name + ".hash")
-                if (
-                    hash_file.exists()
-                    and _content_hash(p.path) == hash_file.read_text().strip()
-                ):
-                    continue  # parent re-ran but content unchanged
-                stale = True
-                break
-        if _has_changed_invalidation(node):
-            stale = True
-        node.state = NodeState.STALE if stale else NodeState.UP_TO_DATE
+    _classify_nodes(nodes, required_nodes)
 
 
 class _ShellArguments:

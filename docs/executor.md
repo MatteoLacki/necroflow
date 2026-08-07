@@ -4,7 +4,7 @@
 
 This document starts where Pipeline construction ends. It covers request selection, cache classification, execution, failure handling, cleanup, reports, and CLI result materialization.
 
-Source of truth is `dag.py`, `nodes.py`, `executor.py`, and the execution handoff in `cli.py`.
+Source of truth is `planning.py`, `nodes.py`, `executor.py`, and the execution handoff in `dag.py` and `cli.py`.
 
 ## Flow at a glance
 
@@ -16,8 +16,9 @@ factory returns
   -> dag.execute()
        -> validate scheduler
        -> lock node store
-       -> classify required ancestor closure
-       -> apply forced and compromised invalidation
+       -> build invocation-local execution plan
+            -> classify required ancestor closure
+            -> apply forced and compromised invalidation
        -> optionally remove orphans
        -> promote and schedule runnable Nodes
        -> execute one representative per rule call
@@ -27,7 +28,7 @@ factory returns
        -> unlock node store
 ```
 
-`P.finish()` performs no classification or execution. Classification begins inside `execute()` after all Pipelines have contributed requirements to the shared DAG.
+`P.finish()` performs no classification or execution. Planning begins inside `execute()` after all Pipelines have contributed requirements to the shared DAG.
 
 ## From `P.finish()` to DAG requirements
 
@@ -78,7 +79,7 @@ Only one executor per exact node-store root is supported. Overlapping roots, suc
 
 ## Required ancestor closure
 
-Classification receives every eagerly interned DAG Node plus explicitly required Nodes. It walks recursively from each requirement through `node.parents`.
+The planner receives every eagerly interned DAG Node plus explicitly required Nodes. It walks recursively from each requirement through `node.parents`.
 
 Identity during this walk is `node.relative_path`.
 
@@ -181,9 +182,13 @@ Recipe, config, shell policy, and parent lineage already determine the content-a
 
 Changing identity inputs compiles a different path. Its output is normally `MISSING`; an old compiled output outside the closure may become `ORPHAN`.
 
-## Preparing active Nodes
+## Building the execution plan
 
-After base classification:
+`planning.plan_execution()` captures the classification snapshot for one invocation. It returns an `ExecutionPlan` containing active Nodes, orphan Nodes, and reasons recorded from the same filesystem and invalidator observations.
+
+The planner mutates each canonical `Node.state`; it does not create a second state model. The plan is not a frozen schedule. Runtime states continue changing as jobs become ready, run, fail, or complete.
+
+After base classification, active Nodes are:
 
 ```python
 active = [
@@ -193,7 +198,7 @@ active = [
 ]
 ```
 
-The executor records `active_keys` from `relative_path`, then applies these steps in order.
+The plan derives `active_keys` from `relative_path`, then applies forced and compromised invalidation in that order.
 
 ### Forced invalidation
 
@@ -204,16 +209,6 @@ Stale state then propagates repeatedly into active `UP_TO_DATE` descendants. Mut
 CLI `--invalidate LABEL` and `--reap NAME` produce these keys.
 
 An inactive invalidated label does not become required and does not run.
-
-### Orphan cleanup
-
-With `autoclean=True` and `dry_run=False`, orphan cleanup happens before jobs.
-
-If no active output shares the orphan's rule-call directory, the whole directory is removed.
-
-If an active sibling shares it, only the orphan output path is removed.
-
-Any mutable output protects its complete rule-call directory. A mutable output path is never removed individually.
 
 ### Compromised prior state
 
@@ -229,7 +224,23 @@ state file contains anything else -> compromised
 
 The Node becomes `STALE`, then stale state propagates to active descendants.
 
-This check occurs after forced invalidation and orphan cleanup.
+This check occurs after forced invalidation.
+
+### Classification reasons
+
+The planner records why each active Node is missing, stale, or up to date. Forced, compromised, invalidator, and parent evidence is captured while producing the plan; `necroflow explain` consumes these reasons instead of probing the filesystem again.
+
+Explain also requests advisory checks for changed mutable-parent content. Those checks do not affect classification.
+
+### Orphan cleanup
+
+Planning never deletes files. After the plan is complete, the executor performs orphan cleanup only with `autoclean=True` and `dry_run=False`.
+
+If no active output shares the rule-call directory belonging to an orphan, the whole directory is removed.
+
+If an active sibling shares it, only the orphan output path is removed.
+
+Any mutable output protects its complete rule-call directory. A mutable output path is never removed individually.
 
 ## Runtime state machine
 

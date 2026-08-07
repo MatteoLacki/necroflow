@@ -414,7 +414,7 @@ controls which canonical subgraphs execute.
 
 `dag.require()` does not traverse ancestors or inspect files. Requirements from all root Pipelines sharing the DAG accumulate.
 
-Classification begins inside `dag.execute()` under the node-store lock. It constructs the required ancestor closure, classifies each output Node, and excludes inactive Nodes.
+Planning begins inside `dag.execute()` under the node-store lock. `planning.plan_execution()` constructs the required ancestor closure, classifies each output Node, applies invocation-specific invalidation, and returns the active/orphan partition with captured reasons. It does not delete outputs or execute commands.
 
 See [Executor, Classification, Scheduling, and Cleanup](executor.md) for the exact closure, classification algorithm, state machine, scheduling loop, metadata commit, failures, cleanup, and CLI result copying.
 

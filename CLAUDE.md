@@ -182,7 +182,9 @@ src/necroflow/
                        parse_resource with SI/binary suffixes
   schedulers.py      — Scheduler protocol, fifo_scheduler, incremental scheduler factory
   dag.py             — path-length checks, resolve_command, write_dependencies,
-                       classify_nodes, content hashing, the DAG registry/executor class
+                       content hashing, the DAG registry/executor class
+  planning.py        — required closure, cache classification, forced/compromised
+                       invalidation, active/orphan partition, classification reasons
   pipeline.py        — Pipeline (prefixed views, labels, finish)
   ascii_render.py    — render_ascii, _node_label, write_ancestor_graph
   executor.py        — execute(), resource caps, lock, ExecutionEvent, autoclean, keep_going

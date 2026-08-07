@@ -1,9 +1,9 @@
 """Local execution orchestration for a prepared :class:`~necroflow.pipeline.DAG`.
 
-The executor coordinates domains owned by other modules: ``dag.py`` classifies
-cache state, ``nodes.py`` persists run state, schedulers order eligible work,
-and rules provide commands and resource requirements. This module owns the run
-lifecycle:
+The executor coordinates domains owned by other modules: ``planning.py``
+classifies cache state, ``nodes.py`` persists run state, schedulers order
+eligible work, and rules provide commands and resource requirements. This
+module owns the run lifecycle:
 
 1. Lock the node store and classify the required subgraph.
 2. Promote MISSING/STALE nodes to READY once their parents are UP_TO_DATE.
@@ -41,10 +41,10 @@ from necroflow.ascii_render import write_ancestor_graph
 from necroflow.dag import (
     DAG,
     NodeState,
-    classify_nodes,
     resolve_command,
     write_dependencies,
 )
+from necroflow.planning import ExecutionPlan, plan_execution
 from necroflow.schedulers import (
     Scheduler,
     fifo_scheduler,
@@ -394,73 +394,27 @@ def _cleanup_parents(node, plan: _AutocleanPlan, active_keys: set) -> int:
     return n_cleaned
 
 
-def _propagate_stale(active: list, active_keys: set) -> None:
-    """Propagate STALE from active parents to active UP_TO_DATE descendants."""
-    changed = True
-    while changed:
-        changed = False
-        for node in active:
-            if node.state != NodeState.UP_TO_DATE:
-                continue
-            if any(
-                p.relative_path in active_keys and p.state == NodeState.STALE
-                for p in node.parents
-            ):
-                node.state = NodeState.STALE
-                changed = True
+def _clean_orphans(plan: ExecutionPlan, *, autoclean: bool, dry_run: bool) -> int:
+    """Delete planned orphan outputs when autoclean is enabled."""
+    if not autoclean or dry_run:
+        return 0
 
-
-def _prepare_active(
-    dag,
-    autoclean: bool,
-    dry_run: bool,
-    forced_stale_keys: set[Path] | None = None,
-):
-    """Classify eagerly addressed nodes, clean orphans, reclassify compromised.
-
-    Returns (active, active_keys, n_cleaned):
-      active      — nodes in the required subgraph (state is not None and not ORPHAN)
-      active_keys — set of their relative paths
-      n_cleaned   — number of orphan outputs deleted (only non-zero when autoclean=True)
-    """
-    nodes = list(dag.nodes)
-    classify_nodes(nodes, dag.required_nodes)
-
-    active = [n for n in nodes if n.state is not None and n.state != NodeState.ORPHAN]
-    active_keys = {n.relative_path for n in active}
-
-    if forced_stale_keys:
-        for n in active:
-            if n.relative_path in forced_stale_keys and n.state == NodeState.UP_TO_DATE:
-                n.state = NodeState.STALE
-        _propagate_stale(active, active_keys)
-
+    active_dirs = {node.path.parent for node in plan.active if node.path is not None}
+    cleaned_dirs: set[Path] = set()
     n_cleaned = 0
-    if autoclean and not dry_run:
-        active_dirs = {n.path.parent for n in active if n.path is not None}
-        cleaned_dirs: set[Path] = set()
-        for n in nodes:
-            if n.state != NodeState.ORPHAN or n.path is None:
-                continue
-            output_dir = n.path.parent
-            if output_dir in cleaned_dirs:
-                continue
-            if output_dir not in active_dirs:
-                if _remove_rule_output_dir(n):
-                    cleaned_dirs.add(output_dir)
-                    n_cleaned += 1
-            elif _remove_output_path(n):
+    for node in plan.orphans:
+        if node.path is None:
+            continue
+        output_dir = node.path.parent
+        if output_dir in cleaned_dirs:
+            continue
+        if output_dir not in active_dirs:
+            if _remove_rule_output_dir(node):
+                cleaned_dirs.add(output_dir)
                 n_cleaned += 1
-
-    compromised = False
-    for n in active:
-        if n.state == NodeState.UP_TO_DATE and n.is_compromised:
-            n.state = NodeState.STALE
-            compromised = True
-    if compromised:
-        _propagate_stale(active, active_keys)
-
-    return active, active_keys, n_cleaned
+        elif _remove_output_path(node):
+            n_cleaned += 1
+    return n_cleaned
 
 
 def _promote_states(active: list) -> None:
@@ -639,9 +593,17 @@ def execute(
     with _acquire_lock(outdir):
         # Classify under the execution lock so another process cannot invalidate
         # the filesystem snapshot before jobs start.
-        active, active_keys, n_cleaned = _prepare_active(
-            dag, autoclean, dry_run, forced_stale_keys
+        plan = plan_execution(
+            dag,
+            forced_stale_keys=forced_stale_keys,
         )
+        n_cleaned = _clean_orphans(
+            plan,
+            autoclean=autoclean,
+            dry_run=dry_run,
+        )
+        active = plan.active
+        active_keys = plan.active_keys
         report: dict[str, ExecutionEvent] = {}
         _record_cached_events(report, active)
 
