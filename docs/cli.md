@@ -37,7 +37,7 @@ necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \
 | `--reap NAME` | Force labels listed under `NAME` in `reap.toml` to rerun. Repeatable. |
 | `--reap-file PATH` | TOML file for named invalidation sets (default: `reap.toml`). |
 | `--validation PATH.py:FUNCTION` | Validate each expanded job config with a Python callable. Repeatable. |
-| `--scheduler NAME|PATH.py:FUNCTION` | Run-only scheduler: `connected-components` (default), `fifo`, or a local three-argument callable. |
+| `--scheduler NAME|PATH.py:FUNCTION` | Run-only scheduler: `fifo` (default) or a local three-argument RuleCall callable. |
 | `--shellpath PATH` | Executable shell for string commands, e.g. `/bin/bash`. Defaults to Python's system shell behavior. |
 | `--long-names` | Use full nested parameter paths in generated job/result labels (`job__ref+hg38`) instead of the default short, deduplicated form (`job__hg38`). See [Job TOML and Parameter Grids](job-toml.md). |
 
@@ -84,7 +84,7 @@ necroflow graph --json job.toml
 necroflow graph --png graph.png job.toml
 ```
 
-`--png` requires the `dev` extra and Graphviz `dot`; it groups rule calls by dependency depth. Mutable Nodes are marked in the ASCII view, mutable Graphviz edges are dashed and labelled, and JSON Nodes and edges include a `mutable` boolean.
+`--png` requires the `dev` extra and Graphviz `dot`; it groups rule calls by dependency depth. Nodes owned by mutable Rules are marked in ASCII; their Graphviz edges are dashed and labelled; JSON Nodes and edges include a `mutable` boolean.
 
 List requested output paths without running jobs:
 
@@ -156,10 +156,6 @@ necroflow explain --node counts job.toml
 necroflow explain --json job.toml
 ```
 
-`explain` reports requested nodes and ancestors, predicted paths, state, command,
-resource constraints, whether each node would run, and best-effort reasons such
-as `output_missing`, `up_to_date`, `parent_not_up_to_date`,
-`parent_content_changed`, `mutable_parent_content_ignored`,
-`forced_invalidation`, `invalidator_changed`, and `compromised_prior_state`.
+`explain` reports requested RuleCalls and ancestors in FIFO registration order, nesting all declared output Nodes under each call. It shows predicted workdir, state, command, resources, tri-state `will_run`, and reasons such as `output_missing`, `up_to_date`, `parent_will_run`, `consumed_hash_missing`, `parent_content_changed`, `mutable_parent_rebuilt`, `mutable_parent_content_ignored`, `forced_invalidation`, `invalidator_changed`, and `compromised_prior_state`. Descendants of calls that would run remain unknown until real parent bytes exist.
 
 [Previous: Where Outputs Live and Caching](caching.md) | [README](../README.md) | [Next: Job TOML and Parameter Grids](job-toml.md)

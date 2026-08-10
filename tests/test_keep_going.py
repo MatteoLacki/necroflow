@@ -1,7 +1,7 @@
 from necroflow.rules import Constraints, Inputs, Outputs, Rule
 import pytest
 
-from necroflow import Pipeline, DAG, NodeType, NodeState
+from necroflow import Pipeline, DAG, NodeType, RuleCallState
 
 
 class A(NodeType):
@@ -68,7 +68,7 @@ def test_keep_going_downstream_of_failure_is_failed(tmp_path):
         dag.run(keep_going=True)
 
     d_node = next(n for n in dag.nodes if n.rule.__name__ == "make_d")
-    assert d_node.state == NodeState.FAILED
+    assert d_node.rule_call.state == RuleCallState.FAILED
     assert not d_node.path.exists()
 
 

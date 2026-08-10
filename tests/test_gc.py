@@ -32,15 +32,13 @@ CURRENT_PRODUCER = Rule(
 
 
 def _run_cached_rule(nodes_dir, command="printf old > {result}", *, mutable=False):
-    output_type = Result
-    if mutable:
-
-        class MutableResult(NodeType):
-            filename = "result.txt"
-            mutable = True
-
-        output_type = MutableResult
-    rule = Rule("produce", Inputs(value=str), Outputs(result=output_type), command)
+    rule = Rule(
+        "produce",
+        Inputs(value=str),
+        Outputs(result=Result),
+        command,
+        mutable=mutable,
+    )
     dag = DAG(nodes_dir)
     pipeline = Pipeline(dag)
     pipeline.result = rule(pipeline, value="same")

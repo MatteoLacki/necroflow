@@ -58,7 +58,7 @@ def _entry(call_dir: Path):
         outputs = metadata["outputs"]
         if not isinstance(outputs, list):
             return None
-        mutable = any(output.get("mutable") is True for output in outputs)
+        mutable = metadata.get("mutable") is True
         parents = [str(parent["node_key"]) for parent in metadata["parents"]]
         for parent_key in parents:
             parts = Path(parent_key).parts

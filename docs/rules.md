@@ -396,32 +396,22 @@ both filtered precursors and indexed". Use a union for alternatives:
 Mixed unions such as `NodeType | str` are rejected because node inputs and config
 inputs are different parts of the rule API.
 
-## Mutable NodeTypes
+## Mutable Rules
 
-Set `mutable = True` on a concrete `NodeType` for persistent state, such as a
-SQLite database, whose bytes may legitimately change in place without
-invalidating every consumer:
+Mutability belongs to a producer Rule, not its output type. Set `mutable=True` for persistent single-output state whose external byte changes should not invalidate consumers:
 
 ```python
-class Database(NodeType):
-    filename = "state.sqlite3"
-    mutable = True
+@command("update-db {database}", mutable=True)
+def update_database(seed: str):
+    database = output(Database)
+    return database
 ```
 
-The inherited default is `False`, and Rule declaration rejects non-boolean
-values. Necroflow copies the resolved flag onto each concrete Node. Mutable
-Nodes remain ordinary parents for commands, graph traversal, scheduling,
-provenance, and fingerprints. Only the newer-parent content comparison is
-skipped. A missing, stale, compromised, forcibly invalidated, or
-`invalidator`-changed mutable parent still stales consumers. Changing the
-producer identity also changes downstream fingerprints.
+The default is `False`; non-boolean values fail Rule construction. A mutable Rule must declare exactly one output. Mutability participates in the local rule hash, so changing it changes this call and downstream identity.
 
-Mutable inputs may be modified by commands, but necroflow does not serialize
-writers, prevent external changes, or provide transactions. Rules sharing a
-mutable input may run concurrently unless the pipeline author creates explicit
-ordering or resource constraints. Use this escape hatch only when those races
-and the cache consequences are understood. Mutable outputs are never removed
-by autoclean.
+Mutable calls remain ordinary parents for commands, graph traversal, scheduling, provenance, and failure propagation. External content-only edits do not stale consumers. If a mutable call executes during the current run, every consumer replays. Missing, forced, compromised, invalidator-changed, or failed mutable parents retain normal behavior. Mutable workdirs are never autocleaned.
+
+Necroflow does not serialize external writers or provide transactions. Multiple mutable siblings are prohibited by the single-output constraint.
 
 Unions are for inputs only. A rule output should be a concrete `NodeType`, not a
 union, because necroflow needs one exact artifact type to choose the filename,
@@ -446,7 +436,7 @@ def validate(config):
 
 ## Multi-output rules
 
-A rule with multiple declared outputs runs its command **once**; all co-outputs are marked complete when the command finishes:
+A rule with multiple declared outputs is one atomic RuleCall. Requesting either output activates, executes, validates, hashes, reports, retains, and cleans all co-outputs together; CLI results still copy only requested Nodes:
 
 ```python
 @symlink_file

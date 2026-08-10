@@ -17,34 +17,35 @@ Prefer plain files over embedded databases for local state.
 - Rationale: SQLite was dropped because plain files compose better with standard Unix tools, survive crashes identically, and eliminate a dependency.
 
 ### Content-addressed, not time-addressed
-mtime is a fast-path shortcut, not the source of truth.
-- Staleness check: `mtime fast-path → SHA-256 content hash fallback`
-- A parent that re-ran without changing its output must NOT invalidate children
-- Constraints (`threads`, `memory`) are intentionally excluded from fingerprints — execution resources ≠ computation identity
-- Fingerprints use `hashlib.sha256` updated incrementally, not `repr(tuple(...))`
+mtime invalidates a stored-hash fast path; it is not freshness policy.
+- Consumers persist `consumed_sha256` for each immutable parent Node.
+- Compare consumed hash with current parent bytes after parent RuleCall settles.
+- Identical rebuilt bytes must NOT invalidate consumers.
+- Mutable parent execution does invalidate consumers; external mutable edits do not.
+- Constraints and `repeat` remain outside fingerprints.
+- Use framed canonical SHA-256 identity, not `repr(tuple(...))`.
 
 ### Identity via stable keys, never `id()`
 `id(obj)` is object identity — it breaks across DAG deduplication.
-Use `node.key` (`rule/fingerprint/filename`) everywhere adjacency or visited-sets are needed.
-The regression: the original scheduler used `{id(n): ...}` dicts; deduplication created aliased nodes whose `id()` was never in the dict.
+Use `node.relative_path` for Node identity and `call.relative_path` for RuleCall identity. Serialize with `.as_posix()`. Object identity breaks across canonical interning and process boundaries.
 
 ### Single responsibility per module
 When a module grows a second conceptual domain, extract it:
-- `nodes.py` — Node, NodeType, NodeState, topo_sort, connected components
-- `rules.py` — Rule internals, command/text/symlink declarations, parse_resource
-- `schedulers.py` — Scheduler protocol, fifo_scheduler, incremental scheduler factory
-- `executor.py` — orchestration only; no state logic, no resource parsing
+- `nodes.py` — Node and NodeType typed output concepts
+- `rule_call.py` — RuleCall identity, RuleCallState, persisted state methods
+- `planning.py` — required closure and lazy cache classification
+- `rules.py` — declarations, contracts, mutability, resource parsing
+- `schedulers.py` — RuleCall Scheduler protocol and FIFO
+- `executor.py` — orchestration, resources, reports, cleanup
 
 ### Methods own their domain
 State transitions belong on the object that owns the state.
-- `node.mark_running()`, `node.mark_done()`, `node.is_compromised` → on `Node`
+- `call.mark_running()`, `call.mark_done()`, `call.is_compromised` → on `RuleCall`
 - `rule.resources` → on `Rule`
 - Free functions in `executor.py` that operated on node internals were moved to methods
 
-### Execution-local state when initialization cost matters
-The connected-component scheduler was a stateless function recomputing all components on every call — O(n) per scheduler tick.
-Replaced with an incremental scheduler: it computes once, then on each job completion only re-BFSs the affected component.
-Pattern: bind mutable state into a fresh closure for each `execute()` run so initialization work is reused without leaking across runs.
+### Ordered registries before derived schedulers
+`DAG.calls` insertion order already supplies deterministic FIFO. Keep scheduling policy minimal until measured needs justify derived topology or persistent scheduler state.
 
 ### Context managers for paired operations
 `_acquire_lock()` is a `@contextmanager`, not a manual try/finally.
@@ -89,7 +90,7 @@ Replaced with explicit attribute assignment `P.bam = align(...)`. Explicit beats
 ### Set-based done-tracking via `id()`
 The first executor: `done_ids = {id(n) for n in nodes if check_cache(n)}`. Two problems:
 1. `id()` breaks after deduplication (aliased nodes)
-2. A set of done ids carries no failure/running state — the state machine (`NodeState` enum) makes every state queryable.
+2. A set of done ids carries no failure/running state — `RuleCallState` makes call state queryable.
 
 ### SQLite as "proper" persistence
 `StateDB` (SQLite) was introduced June 20, removed June 25 — 5 days. The plain `.rip/state` file approach was simpler, survived crashes identically, required no dependency, and composed with standard tools. Don't reach for a database for simple flags.
@@ -103,7 +104,7 @@ First 9 days had zero tests. First tests (June 19) immediately exposed a co-outp
 ## What to avoid (summary)
 
 - `repr(tuple(...))` for hashing — use `hashlib.sha256` updated incrementally
-- `id(n)` as dict keys or set members — use stable `.key`
+- `id(n)` as dict keys or set members — use stable `.relative_path`
 - `ContextVar` magic for implicit registration — use explicit assignment
 - External deps (networkx, matplotlib) when pure Python works
 - SQLite for simple local state flags

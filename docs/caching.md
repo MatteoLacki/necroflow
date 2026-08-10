@@ -52,11 +52,10 @@ for a runnable example.
 Fingerprint v3 splits identity into two full SHA-256 values:
 
 - `rule_hash` describes the local recipe: rule name, command or built-in recipe
-  identity, declared input contracts, output contracts, filenames, and
-  mutability.
+  identity, declared input contracts, output contracts, filenames, and Rule mutability.
 - `provenance_hash` describes one invocation: the `rule_hash`, effective config,
   selected shell, and ordered parent identities, including their rule hashes,
-  provenance hashes, output names, and mutable-edge markers.
+  provenance hashes, and output names. Parent rule hashes already encode mutability.
 
 Each output lives at
 `nodes/{rule}/{rule_hash}/{provenance_hash}/{filename}`. The canonical
@@ -112,37 +111,36 @@ class ToolBinary(NodeType):
 
 Use this for external dependencies that should invalidate a cached node without becoming normal necroflow outputs, such as a binary, script, or selected source tree hash. Types without `invalidator` use the normal cache behavior. If the callback raises, execution fails fast instead of guessing whether the cache is valid.
 
-Invalidators are evaluated during the initial node classification at the start of `run()`. After a job succeeds, necroflow recomputes and stores the token for that node's outputs, but it does not re-run all invalidators between tasks in the same execution. If an external dependency changes while a pipeline is already running, that change is detected on the next `run()` invocation.
+Invalidators are evaluated when the owning RuleCall becomes classifiable. After success, necroflow recomputes and stores tokens for every declared output.
 
-### Mutable dependencies
+### Atomic cache policy
 
-A concrete `NodeType` may set `mutable = True` when its contents are persistent
-state that legitimately changes in place. The parent remains part of the DAG,
-command inputs, scheduling gates, provenance, and downstream identity, but its
-mtime and content hash do not stale consumers. The default fingerprint records
-`mutable=True` on that edge; ordinary edges omit the marker.
+A RuleCall is the cache unit. Requesting any co-output activates, validates, hashes, retains, reports, and cleans every declared output together. Only requested Nodes are copied into visible `results/`.
 
-Mutability suppresses only content-change invalidation. Missing, stale,
-compromised, forcibly invalidated, or invalidator-changed parents still
-propagate staleness. For a database that may be replaced while its path remains
-present, define an `invalidator` token from a stable database generation UUID or
-schema identity—not from the complete mutable contents. A changed generation
-then replays consumers while ordinary row updates remain cache-neutral.
+After success, each consumer records `consumed_sha256` for every immutable parent Node in `dependencies.toml`. Classification waits until parent calls settle, then compares recorded hashes with current parent bytes. Missing or malformed consumed hashes are stale. A rebuilt parent producing identical bytes preserves the consumer cache; changed bytes replay it.
 
-Necroflow does not lock mutable inputs against sibling rules or external
-processes. Pipeline authors own writer ordering, idempotence, and transaction
-semantics. Autoclean never deletes a mutable output or a shared rule-call
-directory containing one.
+Current hashes use `.rip/{filename}.hash` as an mtime-gated fast path. The stored digest is trusted when output mtime is no newer than hash-file mtime; otherwise current bytes are hashed. Hashes are memoized during one invocation. External edits preserving or backdating mtime are unsupported.
 
-- Re-running with the same inputs is a no-op (cache hit).
-- Changing any upstream parameter, command, or declared type produces a new path — old results are never overwritten.
-- A parent whose mtime is newer than a child triggers a content-hash check: if the parent's bytes are unchanged, the child is **not** re-run. Only a genuine content change marks children STALE, unless the parent NodeType is mutable.
-- Each output folder contains a `.rip/` subdirectory with:
-  - `dependencies.toml` — full accumulated config plus v3 identity, declared
-    outputs (including filename and mutability), and canonical parent node keys.
-  - `{filename}.hash` — SHA-256 content hash, used for STALE detection on the next run.
-  - `job.log` — captured stdout/stderr.
-  - `state` — last recorded run state (`running` / `up_to_date` / `failed` / `interrupted`). If a process is killed mid-run the `state` file is left as `running`; on the next invocation necroflow detects this and re-runs the node even if its output exists on disk. Unrecognized state values also force a re-run rather than trusting a malformed cache record.
+### Mutable Rules
+
+Set `mutable=True` on a single-output Rule whose persistent state may change in place without external byte edits invalidating consumers:
+
+```python
+@command("update-db {db}", mutable=True)
+def update_db(...):
+    db = output(Database)
+    return db
+```
+
+Multiple outputs on a mutable Rule are rejected. Mutable calls remain normal graph, provenance, scheduling, and failure units. If a mutable parent executes during the current run, consumers replay. Missing, forced, compromised, invalidator-changed, and failed mutable parents retain normal propagation. External content-only changes are ignored.
+
+Autoclean never deletes mutable RuleCall workdirs. Necroflow provides no transaction or external-writer coordination.
+
+- Re-running with identical identity and unchanged evidence is a cache hit.
+- Changing upstream parameters, commands, contracts, or Rule mutability produces new paths.
+- `.rip/dependencies.toml` stores identity, accumulated config, declared outputs, canonical parents, and immutable `consumed_sha256` values.
+- `.rip/{filename}.hash` stores each declared output SHA-256.
+- `.rip/state` stores call state (`running`, `up_to_date`, `failed`, or `interrupted`). A leftover or unknown non-success value compromises the whole call.
 
 ### External dataset ingestion
 
@@ -167,11 +165,10 @@ P.spectra = raw_spectra(P, path=config["spectra"])
 `$(realpath ...)` resolves to an absolute path so the symlink survives if the
 working directory changes; see `examples/sage_recal/pipeline.py` for a
 runnable version. Once the file is behind a symlinked node, the normal
-mtime-fast-path / content-hash mechanism described above applies automatically:
-`Path.stat()` follows the symlink to the real file, so editing it bumps the
-mtime necroflow sees, the fast path fails, the content hash is recomputed and
-found to differ from the value stored in `.rip/{filename}.hash`, and every
-downstream consumer is correctly marked `STALE` and reruns. No
+stored-hash fast path and consumed-hash comparison apply automatically:
+`Path.stat()` follows the symlink to the real file, so editing it normally bumps the
+mtime necroflow sees, invalidates the stored-hash fast path, and exposes changed
+bytes to each downstream consumer. No
 `NodeType.invalidator` is needed for this case — the existing STALE machinery
 already covers it once the file is a real node in the DAG.
 

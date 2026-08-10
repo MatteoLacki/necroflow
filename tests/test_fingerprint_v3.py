@@ -56,17 +56,22 @@ def test_output_mutability_changes_rule_hash(tmp_path):
     class StatefulResult(NodeType):
         filename = "state.sqlite3"
 
-    rule = Rule(
+    immutable_rule = Rule(
         "produce_state",
         Inputs(value=str),
         Outputs(result=StatefulResult),
         "touch {result}",
     )
+    mutable_rule = Rule(
+        "produce_state",
+        Inputs(value=str),
+        Outputs(result=StatefulResult),
+        "touch {result}",
+        mutable=True,
+    )
     pipeline = Pipeline(DAG(tmp_path))
-    immutable = rule(pipeline, value="same")
-
-    StatefulResult.mutable = True
-    mutable = rule(pipeline, value="same")
+    immutable = immutable_rule(pipeline, value="same")
+    mutable = mutable_rule(pipeline, value="same")
 
     assert immutable.rule_hash != mutable.rule_hash
 
@@ -74,10 +79,13 @@ def test_output_mutability_changes_rule_hash(tmp_path):
 def test_success_metadata_records_outputs_and_exact_parent_keys(tmp_path):
     class MutableState(NodeType):
         filename = "state.sqlite3"
-        mutable = True
 
     source_rule = Rule(
-        "state", Inputs(value=str), Outputs(state=MutableState), "touch {state}"
+        "state",
+        Inputs(value=str),
+        Outputs(state=MutableState),
+        "touch {state}",
+        mutable=True,
     )
     consume_rule = Rule(
         "consume", Inputs(state=MutableState), Outputs(result=Result), "touch {result}"
@@ -96,7 +104,7 @@ def test_success_metadata_records_outputs_and_exact_parent_keys(tmp_path):
     result_metadata = tomlkit.parse(
         (pipeline.result.path.parent / ".rip" / "dependencies.toml").read_text()
     )
-    assert source_metadata["outputs"][0]["mutable"] is True
+    assert source_metadata["mutable"] is True
     assert source_metadata["outputs"][0]["filename"] == "state.sqlite3"
     assert result_metadata["parents"][0]["node_key"] == (
         pipeline.state.relative_path.as_posix()

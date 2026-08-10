@@ -70,7 +70,7 @@ def render_png(
             s = _group_key(parent.relative_path.as_posix())
             if s != t:
                 edge = (s, t)
-                edges[edge] = edges.get(edge, True) and parent.mutable
+                edges[edge] = edges.get(edge, True) and parent.rule_call.mutable
 
     G = nx.DiGraph()
     G.add_nodes_from(order)

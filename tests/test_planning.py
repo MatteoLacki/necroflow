@@ -1,6 +1,6 @@
-"""Tests for invocation-local execution planning."""
+"""Tests for invocation-local RuleCall planning."""
 
-from necroflow import DAG, NodeState, NodeType, Pipeline
+from necroflow import DAG, NodeType, Pipeline, RuleCallState
 from necroflow.planning import plan_execution
 from necroflow.rules import Inputs, Outputs, Rule
 
@@ -22,52 +22,47 @@ def _pipeline(nodes_dir):
     pipeline = Pipeline(dag)
     pipeline.a = MAKE_A(pipeline, value="x")
     pipeline.b = MAKE_B(pipeline, pipeline.a)
+    pipeline.finish()
     return pipeline
 
 
-def test_plan_partitions_nodes_without_deleting_orphans(tmp_path):
-    """Planning identifies old inactive outputs but never deletes filesystem state."""
-
+def test_plan_partitions_calls_without_deleting_orphans(tmp_path):
+    """Planning identifies inactive call dirs but never deletes them."""
     first = _pipeline(tmp_path)
     first.dag.require([first.b])
     first.dag.run()
-    orphan_path = first.b.path
+    orphan_path = first.b.rule_call.workdir
 
     second = _pipeline(tmp_path)
     second.dag.require([second.a])
     plan = plan_execution(second.dag)
 
-    assert plan.active == [second.a]
-    assert plan.orphans == [second.b]
+    assert plan.active == [second.a.rule_call]
+    assert plan.orphans == [second.b.rule_call]
     assert orphan_path.exists()
-    assert plan.reasons[second.a.relative_path][0]["kind"] == "up_to_date"
+    assert plan.reasons[second.a.rule_call.relative_path][0]["kind"] == "up_to_date"
 
 
-def test_forced_staleness_and_reasons_propagate_in_one_plan(tmp_path):
-    """One plan must contain both forced invalidation and its descendant cause."""
-
+def test_forced_parent_leaves_child_unclassified_until_parent_settles(tmp_path):
+    """Planner does not assume rebuilt parent bytes before execution."""
     pipeline = _pipeline(tmp_path)
     pipeline.dag.require([pipeline.b])
     pipeline.dag.run()
 
     plan = plan_execution(
         pipeline.dag,
-        forced_stale_keys={pipeline.a.relative_path},
+        forced_stale_call_keys={pipeline.a.rule_call.relative_path},
     )
 
-    assert pipeline.a.state == NodeState.STALE
-    assert pipeline.b.state == NodeState.STALE
-    assert {reason["kind"] for reason in plan.reasons[pipeline.a.relative_path]} == {
-        "forced_invalidation"
-    }
-    assert {reason["kind"] for reason in plan.reasons[pipeline.b.relative_path]} == {
-        "parent_not_up_to_date"
-    }
+    assert pipeline.a.rule_call.state == RuleCallState.STALE
+    assert pipeline.b.rule_call.state is None
+    assert plan.reasons[pipeline.b.rule_call.relative_path] == (
+        {"kind": "parent_will_run"},
+    )
 
 
-def test_plan_records_reasons_without_reinvoking_invalidator(tmp_path):
-    """Planning and explanation must share one invalidator observation."""
-
+def test_plan_records_invalidator_reason_from_one_observation(tmp_path):
+    """Planning and explanation share one invalidator observation."""
     calls = 0
 
     def generation(node):
@@ -88,6 +83,7 @@ def test_plan_records_reasons_without_reinvoking_invalidator(tmp_path):
     dag = DAG(tmp_path)
     pipeline = Pipeline(dag)
     pipeline.output = make_tracked(pipeline, value="x")
+    pipeline.finish()
     dag.require([pipeline.output])
     dag.run()
     calls = 0
@@ -95,5 +91,7 @@ def test_plan_records_reasons_without_reinvoking_invalidator(tmp_path):
     plan = plan_execution(dag)
 
     assert calls == 1
-    assert pipeline.output.state == NodeState.UP_TO_DATE
-    assert plan.reasons[pipeline.output.relative_path] == ({"kind": "up_to_date"},)
+    assert pipeline.output.rule_call.state == RuleCallState.UP_TO_DATE
+    assert plan.reasons[pipeline.output.rule_call.relative_path] == (
+        {"kind": "up_to_date"},
+    )

@@ -5,8 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from necroflow import Pipeline, DAG, NodeType, NodeState
-from necroflow.nodes import Node
+from necroflow import Pipeline, DAG, NodeType, RuleCallState
 
 
 class A(NodeType):
@@ -29,10 +28,10 @@ R_signal_c = Rule(
 )
 
 
-def _node(tmp_path, key="rule/fp/out.txt"):
-    n = object.__new__(Node)
-    n.path = tmp_path / key
-    return n
+def _call(tmp_path):
+    pipeline = Pipeline(DAG(tmp_path))
+    node = R_make_a(pipeline, x="x")
+    return node.rule_call
 
 
 def simple_dag(tmp_path):
@@ -48,31 +47,31 @@ def simple_dag(tmp_path):
 
 
 def test_fresh_state_not_compromised(tmp_path):
-    assert not _node(tmp_path).is_compromised
+    assert not _call(tmp_path).is_compromised
 
 
 def test_mark_running_is_compromised(tmp_path):
-    n = _node(tmp_path)
+    n = _call(tmp_path)
     n.mark_running()
     assert n.is_compromised
 
 
 def test_mark_done_up_to_date_not_compromised(tmp_path):
-    n = _node(tmp_path)
+    n = _call(tmp_path)
     n.mark_running()
     n.mark_done("up_to_date")
     assert not n.is_compromised
 
 
 def test_mark_done_failed_is_compromised(tmp_path):
-    n = _node(tmp_path)
+    n = _call(tmp_path)
     n.mark_running()
     n.mark_done("failed")
     assert n.is_compromised
 
 
 def test_mark_done_interrupted_is_compromised(tmp_path):
-    n = _node(tmp_path)
+    n = _call(tmp_path)
     n.mark_running()
     n.mark_done("interrupted")
     assert n.is_compromised
@@ -85,21 +84,21 @@ def test_successful_run_not_compromised(tmp_path):
     dag, P = simple_dag(tmp_path)
     dag.run()
 
-    for n in dag.nodes:
+    for n in dag.calls.values():
         assert not n.is_compromised
 
 
 # --- integration: simulated crash → nodes re-run ---
 
 
-def test_simulated_crash_reruns_node(tmp_path):
+def test_simulated_crash_reruns_call(tmp_path):
     dag, P = simple_dag(tmp_path)
     dag.run()
 
     b_node = next(n for n in dag.nodes if n.rule.__name__ == "make_b")
 
     # simulate crash: overwrite state file directly
-    b_node.state_file.write_text("running")
+    b_node.rule_call.state_file.write_text("running")
 
     mtime_before = b_node.path.stat().st_mtime
     time.sleep(0.05)
@@ -113,7 +112,7 @@ def test_unknown_state_reruns_node_instead_of_trusting_cache(tmp_path):
     dag, pipeline = simple_dag(tmp_path)
     dag.run()
     node = pipeline.b
-    node.state_file.write_text("unknown-state")
+    node.rule_call.state_file.write_text("unknown-state")
     mtime_before = node.path.stat().st_mtime
 
     time.sleep(0.05)
@@ -135,8 +134,8 @@ def test_failed_node_state(tmp_path):
         dag.run()
 
     c_node = next(n for n in dag.nodes if n.rule.__name__ == "fail_c")
-    assert c_node.state == NodeState.FAILED
-    assert c_node.is_compromised
+    assert c_node.rule_call.state == RuleCallState.FAILED
+    assert c_node.rule_call.is_compromised
 
 
 # --- integration: interrupted node (signal) → INTERRUPTED state ---
@@ -152,8 +151,8 @@ def test_interrupted_node_state(tmp_path):
         dag.run()
 
     c_node = next(n for n in dag.nodes if n.rule.__name__ == "signal_c")
-    assert c_node.state == NodeState.INTERRUPTED
-    assert c_node.is_compromised
+    assert c_node.rule_call.state == RuleCallState.INTERRUPTED
+    assert c_node.rule_call.is_compromised
 
 
 # --- integration: retry after failure / interruption ---
@@ -279,7 +278,7 @@ def _sha256_file(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def test_nodetype_invalidator_external_file_change_reruns_node(tmp_path):
+def test_nodetype_invalidator_external_file_change_reruns_call(tmp_path):
     dependency = tmp_path / "tool.bin"
     dependency.write_text("v1")
 
@@ -312,7 +311,7 @@ def test_nodetype_invalidator_external_file_change_reruns_node(tmp_path):
     assert P.out.path.stat().st_mtime > mtime_before
 
 
-def test_nodetype_invalidator_output_file_change_reruns_node(tmp_path):
+def test_nodetype_invalidator_output_file_change_reruns_call(tmp_path):
     def output_hash(node):
         return _sha256_file(node.path)
 
@@ -341,7 +340,7 @@ def test_nodetype_invalidator_output_file_change_reruns_node(tmp_path):
     assert P.out.path.read_text().strip() == "payload"
 
 
-def test_nodetype_invalidator_missing_metadata_reruns_node(tmp_path):
+def test_nodetype_invalidator_missing_metadata_reruns_call(tmp_path):
     def output_hash(node):
         return _sha256_file(node.path)
 

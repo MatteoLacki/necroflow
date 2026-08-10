@@ -76,14 +76,11 @@ accept it and receive Nodes of concrete subclasses, but every declared output
 NodeType must resolve to a non-`None` filename. `Rule` construction rejects
 filename-less outputs immediately; output names are not filename fallbacks.
 
-## Mutable NodeTypes
+## RuleCall cache and mutable Rules
 
-`NodeType.mutable` defaults to `False` and must be boolean on every concrete
-output type. The resolved flag is copied onto the Node. A mutable parent remains
-in the DAG and downstream fingerprint, but newer mtime/content does not stale
-consumers. Missing/stale/forced/compromised/invalidator-changed state still
-propagates. Mutable outputs and their shared rule-call directories are protected
-from autoclean. Writer ordering and transactions remain user responsibilities.
+RuleCall is atomic cache, state, scheduling, execution, report, and cleanup unit. Requesting one co-output activates all declared outputs; only CLI result copying remains Node-selective. Consumer `dependencies.toml` records `consumed_sha256` for every immutable parent Node. Child classification waits for parent settlement: identical rebuilt bytes preserve cache, changed bytes replay. Output hashes use mtime only to invalidate the stored-hash fast path.
+
+`Rule(..., mutable=True)` is allowed only for one output and participates in rule identity. External content-only edits to an unexecuted mutable call do not stale consumers. Rebuilding that call during the current run always replays consumers. Mutable workdirs are never autocleaned.
 
 ## NodeType invalidators
 
@@ -109,6 +106,10 @@ fingerprints. CLI run and outputs commands validate the complete absolute result
 paths against the destination filesystem before execution; copy materialization repeats
 the check defensively. Doctor reports failures as `NF_RESULT_PATH_INVALID`.
 
+## Scheduling
+
+FIFO RuleCall scheduling is built-in and default. Active calls preserve canonical `DAG.calls` insertion order. Custom three-argument schedulers receive ready calls, remaining calls, and available capped resources.
+
 ## Rule retries
 
 `@command(..., repeat=N)` sets the maximum number of command attempts,
@@ -119,7 +120,7 @@ scheduler resource. V3 identity excludes retry policy.
 
 ## CLI forced invalidation
 
-The CLI accepts repeated `--invalidate LABEL` and `--reap NAME` options. `--reap` expands labels from a top-level `reap.toml` table shaped like `name = ["label", ...]`; `--reap-file PATH` overrides the default file. Labels resolve through each expanded Pipeline, then to Node relative paths passed into `run(..., forced_stale_keys=...)`. The executor only marks active requested nodes stale, and then propagates STALE to active descendants. Invalidation does not request extra outputs.
+The CLI accepts repeated `--invalidate LABEL` and `--reap NAME` options. Labels resolve to owning RuleCall paths passed through `run(..., forced_stale_call_keys=...)`. Forced invalidation applies only inside the already requested call closure and does not request extra outputs.
 
 ## Job config validation
 
@@ -129,7 +130,7 @@ The CLI accepts repeatable `--validation PATH.py:FUNCTION` flags. Each validator
 
 ## Execution reports
 
-`run()` returns a `dict[str, ExecutionEvent]` keyed by each Node's stable POSIX relative path; `DAG.run()` stores the same dict as `dag.last_execution_report` and returns it. Successful rule calls write `.rip/run.toml` with start/end timestamps, `duration_seconds`, `exit_code`, and total rule-call output size excluding `.rip`. CLI runs write `results/<job>/execution.toml` after copy finalization, covering each rule call needed by the requested nodes and ancestors. Its `[[rules]]` entries group co-outputs under one execution measurement, and top-level `total_duration_seconds` sums attempted rule-call durations. The run-level summary survives `--autoclean`, while node-local `.rip/run.toml` can disappear with cleaned intermediates. Cached calls are reported as `cached = true` with measured current output size and no new duration. With `--keep-going`, the executor attaches the node-keyed dict to the raised `ExceptionGroup` and the CLI writes rule-call summaries before re-raising.
+`run()` returns `dict[str, RuleCallExecution]` keyed by each RuleCall stable POSIX relative path. Each event nests every declared output Node key/path and owns call-level duration, result size, state, and cache status. `DAG.run()` stores the same normally returned dict as `dag.last_execution_report`. `.rip/run.toml` and CLI `execution.toml` use the same call unit, so co-output time is never double-counted. Cached calls have no new duration. Keep-going exceptions carry the call-keyed report.
 
 ## CLI output roots
 
@@ -155,7 +156,7 @@ Text-file rules do not run a shell command. The executor calls the built-in mate
 
 `necroflow init DIR` copies the packaged canonical workflow from `src/necroflow/templates/canonical`. Keep that template byte-for-byte aligned with `examples/canonical`, which is the browsable reference copy in the repo. The template demonstrates the CLI-first shape: `pipeline.py`, `job.toml`, optional `job_grid.toml`, `schema.py`, `reap.toml`, and small input fixtures.
 
-The CLI has subcommands while preserving legacy direct runs: `necroflow JOB.toml` and `necroflow --nodes-dir nodes JOB.toml` are coerced to `necroflow run ...`. Introspection commands support agent-friendly JSON: `necroflow graph --json JOB.toml`, `necroflow outputs --json JOB.toml`, and `necroflow provenance --json PATH`. `necroflow doctor [--json] JOB.toml` performs preflight checks and emits stable `NF_*` issue codes. `necroflow explain [--json] [--node LABEL] JOB.toml` classifies the requested DAG without executing and reports state, command, resources, `will_run`, and best-effort reasons such as `output_missing`, `up_to_date`, `parent_not_up_to_date`, `parent_content_changed`, `forced_invalidation`, `invalidator_changed`, and `compromised_prior_state`.
+The CLI has subcommands while preserving legacy direct runs: `necroflow JOB.toml` and `necroflow --nodes-dir nodes JOB.toml` are coerced to `necroflow run ...`. Introspection commands support agent-friendly JSON: `necroflow graph --json JOB.toml`, `necroflow outputs --json JOB.toml`, and `necroflow provenance --json PATH`. `necroflow doctor [--json] JOB.toml` performs preflight checks and emits stable `NF_*` issue codes. `necroflow explain [--json] [--node LABEL] JOB.toml` reports ordered RuleCalls with nested output Nodes. Descendants of calls that would run remain unknown (`state` and `will_run` null, reason `parent_will_run`) until real parent bytes exist.
 
 Package version is exposed as `necroflow.__version__`; `pyproject.toml` reads it dynamically via setuptools. Packaged data must include `templates/canonical/*` so `necroflow init` works after installation.
 

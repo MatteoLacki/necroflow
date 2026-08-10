@@ -11,7 +11,6 @@ from necroflow import (
     command,
     output,
 )
-from necroflow.schedulers import _ConnectedComponentState, _build_components
 
 
 class A(NodeType):
@@ -453,46 +452,6 @@ def test_rule_rejects_cooutputs_with_the_same_realized_filename(tmp_path):
 
     with pytest.raises(ValueError, match="declares duplicate output path"):
         rule(Pipeline(DAG(tmp_path)), value="x")
-
-
-def _components(nodes):
-    """Return each connected component's node keys via the scheduler's index.
-
-    The connected-component walk is owned by the default scheduler; these tests
-    guard its grouping semantics, not a separate public helper.
-    """
-    state = _ConnectedComponentState()
-    _build_components(state, nodes)
-    return [set(members) for members in state.members.values()]
-
-
-def test_connected_components_use_only_edges_inside_the_supplied_subgraph(tmp_path):
-    """A shared parent outside the requested subgraph must not connect its children."""
-
-    pipeline = Pipeline(DAG(tmp_path))
-    pipeline.a = R_make_a(pipeline, x="x")
-    pipeline.b = R_make_b(pipeline, pipeline.a)
-    pipeline.c = R_make_c(pipeline, pipeline.a)
-
-    assert _components([pipeline.b, pipeline.c]) == [
-        {pipeline.b.relative_path},
-        {pipeline.c.relative_path},
-    ]
-
-
-def test_connected_components_group_diamonds_and_isolated_nodes(tmp_path):
-    """Connected DAG shapes form one component while isolated nodes remain separate."""
-
-    pipeline = diamond(DAG(tmp_path))
-    pipeline.isolated = R_make_a(pipeline, x="isolated")
-
-    assert {frozenset(component) for component in _components(pipeline.nodes)} == {
-        frozenset(
-            node.relative_path
-            for node in [pipeline.a, pipeline.b, pipeline.c, pipeline.d]
-        ),
-        frozenset([pipeline.isolated.relative_path]),
-    }
 
 
 def test_pipeline_requires_a_dag_owner():

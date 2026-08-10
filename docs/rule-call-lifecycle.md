@@ -410,24 +410,24 @@ controls which canonical subgraphs execute.
 
 ## 11. Execution handoff
 
-`P.finish()` only freezes Pipeline construction. The caller then selects requested labels or sinks and records those endpoint Nodes with `dag.require()`.
+`P.finish()` freezes construction. Callers select labels or sinks, then record endpoint Nodes with `dag.require()`. Requirements from all root Pipelines sharing the DAG accumulate.
 
-`dag.require()` does not traverse ancestors or inspect files. Requirements from all root Pipelines sharing the DAG accumulate.
+Planning begins inside `dag.run()` under the node-store lock. It converts requested Nodes to owning RuleCalls, follows `parent_calls`, and preserves insertion order from `DAG.calls`. Requesting one co-output activates the complete RuleCall; only later CLI result copying remains Node-selective.
 
-Planning begins inside `dag.run()` under the node-store lock. `planning.plan_execution()` constructs the required ancestor closure, classifies each output Node, applies invocation-specific invalidation, and returns the active/orphan partition with captured reasons. It does not delete outputs or execute commands.
-
-See [Executor, Classification, Scheduling, and Cleanup](executor.md) for the exact closure, classification algorithm, state machine, scheduling loop, metadata commit, failures, cleanup, and CLI result copying.
+`planning.plan_execution()` partitions active and orphan RuleCalls. It classifies only calls whose parents are already up to date. Descendants of parents that will run remain unclassified until those parents settle.
 
 ## 12. Commands remain lazy
 
-Missing and stale Nodes become ready only after every parent is up to date. The scheduler orders ready Nodes; the executor retains dependency, resource, submission, and state-transition control.
+Missing and stale RuleCalls become ready after every parent call is up to date. Default FIFO ordering follows canonical RuleCall registration. Custom schedulers receive ready calls, remaining calls, and available resource capacity. Executor retains dependency gates, resource admission, submission, retries, and state transitions.
 
-A submitted rule call runs one representative for its active co-outputs. Callable command realization happens in the worker and is cached on the canonical `RuleCall`.
+One submission runs one complete RuleCall. Callable command realization happens in the worker and is cached on the canonical call. The runner must produce every declared output.
 
 ## 13. Materialization commits cache state
 
-Provisional command success is followed by active output validation, report creation, dependency/hash metadata, ancestor graph writing, and the shared `up_to_date` state.
+After provisional success, executor validates all co-outputs and writes call-level state, report, dependency metadata, output hashes, invalidator tokens, run stats, and ancestor graph. Each immutable parent metadata entry stores the SHA-256 consumed by this call.
 
-Identity, paths, and deduplication are eager. Classification, command realization, filesystem materialization, and result copying happen after construction.
+Child classification happens after parent settlement. A rebuilt immutable parent with identical bytes leaves the child cached; changed bytes replay it. A rebuilt mutable parent always replays consumers, while external content-only edits to an unexecuted mutable parent are ignored.
+
+Identity, paths, interning, and RuleCall order are eager. Cache classification, command realization, materialization, and result copying happen after construction.
 
 [Previous: Rules and Typed Outputs](rules.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)

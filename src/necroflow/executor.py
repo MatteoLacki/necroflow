@@ -1,76 +1,42 @@
-"""Local execution orchestration for a prepared :class:`~necroflow.pipeline.DAG`.
-
-The executor coordinates domains owned by other modules: ``planning.py``
-classifies cache state, ``nodes.py`` persists run state, schedulers order
-eligible work, and rules provide commands and resource requirements. This
-module owns the run lifecycle:
-
-1. Lock the node store and classify the required subgraph.
-2. Promote MISSING/STALE nodes to READY once their parents are UP_TO_DATE.
-3. Let the scheduler prioritise READY nodes, then enforce resource caps here.
-4. Run one representative per rule call; its co-outputs complete together.
-5. Record provenance, reports, failures, and optional cleanup.
-
-The normal state path is MISSING/STALE -> READY -> RUNNING -> UP_TO_DATE.
-UP_TO_DATE nodes are cache hits and never enter the worker pool. A failed or
-interrupted parent causes dependent work to become FAILED without being run.
-ORPHAN nodes are outside the required subgraph and are only touched by
-``autoclean``.
-"""
+"""Local atomic RuleCall execution."""
 
 from __future__ import annotations
 
 import concurrent.futures
 from collections.abc import Callable
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import fcntl
 import inspect
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
-from contextlib import contextmanager
-from typing import TYPE_CHECKING
 
 import tomlkit
 
-from necroflow.ascii_render import write_ancestor_graph
-from necroflow.dag import (
-    DAG,
-    NodeState,
-    resolve_command,
-    write_dependencies,
-)
-from necroflow.planning import ExecutionPlan, plan_execution
-from necroflow.schedulers import (
-    Scheduler,
-    fifo_scheduler,
-    make_connected_component_scheduler,
-)
 from necroflow import logger as _logger
-
-if TYPE_CHECKING:
-    from necroflow.dag import Node
+from necroflow.ascii_render import write_ancestor_graph
+from necroflow.dag import DAG, resolve_command, write_dependencies
+from necroflow.planning import ExecutionPlan, classify_available, plan_execution
+from necroflow.rule_call import RuleCall, RuleCallState
+from necroflow.schedulers import Scheduler, fifo_scheduler
 
 
 @dataclass
-class ExecutionEvent:
-    """One node's cached or attempted outcome.
+class RuleCallExecution:
+    """One RuleCall cache hit or execution attempt."""
 
-    Co-outputs receive separate events even though one command produces them;
-    their timings therefore describe the shared rule-call execution.
-    """
-
-    node_key: str
+    call_key: str
     rule: str
-    output_name: str | None
-    pipeline_label: str | None
-    path: str | None
     state: str
     cached: bool
+    workdir: str
+    output_node_keys: tuple[str, ...]
+    output_paths: tuple[str, ...]
     started_at: str | None = None
     finished_at: str | None = None
     duration_seconds: float | None = None
@@ -79,19 +45,55 @@ class ExecutionEvent:
     output_size_bytes: int | None = None
     output_size_human: str | None = None
 
-    def to_toml_dict(self) -> dict[str, Any]:
-        """Return non-null event fields using execution-summary names."""
+    @classmethod
+    def from_call(
+        cls,
+        call: RuleCall,
+        *,
+        state: str,
+        cached: bool,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+        duration_seconds: float | None = None,
+        exit_code: int | None = None,
+        error: str | None = None,
+        output_size_bytes: int | None = None,
+    ) -> RuleCallExecution:
+        """Build one report event from a canonical RuleCall."""
+        return cls(
+            call_key=call.relative_path.as_posix(),
+            rule=call.rule.__name__,
+            state=state,
+            cached=cached,
+            workdir=str(call.workdir),
+            output_node_keys=tuple(
+                output.relative_path.as_posix() for output in call.outputs
+            ),
+            output_paths=tuple(str(output.path) for output in call.outputs),
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_seconds=duration_seconds,
+            exit_code=exit_code,
+            error=error,
+            output_size_bytes=output_size_bytes,
+            output_size_human=(
+                _human_size(output_size_bytes)
+                if output_size_bytes is not None
+                else None
+            ),
+        )
 
+    def to_toml_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
-            "key": self.node_key,
+            "key": self.call_key,
             "rule": self.rule,
             "state": self.state,
             "cached": self.cached,
+            "workdir": self.workdir,
+            "output_node_keys": list(self.output_node_keys),
+            "output_paths": list(self.output_paths),
         }
         optional = {
-            "output_name": self.output_name,
-            "label": self.pipeline_label,
-            "path": self.path,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "duration_seconds": self.duration_seconds,
@@ -100,19 +102,17 @@ class ExecutionEvent:
             "output_size_bytes": self.output_size_bytes,
             "output_size_human": self.output_size_human,
         }
-        data.update({k: v for k, v in optional.items() if v is not None})
+        data.update(
+            {key: value for key, value in optional.items() if value is not None}
+        )
         return data
 
 
 def _utc_now() -> str:
-    """Return an ISO-8601 UTC timestamp for persisted run metadata."""
-
     return datetime.now(timezone.utc).isoformat()
 
 
 def _human_size(size: int) -> str:
-    """Format an integer byte count using binary units."""
-
     value = float(size)
     units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"]
     for unit in units:
@@ -122,58 +122,17 @@ def _human_size(size: int) -> str:
     return f"{size} B"
 
 
-def _rule_output_size_bytes(output_dir: Path) -> int:
-    """Measure a rule-call directory, excluding its ``.rip`` metadata."""
-
-    if not output_dir.exists():
+def _call_output_size_bytes(call: RuleCall) -> int:
+    if not call.workdir.exists():
         return 0
-    total = 0
-    for path in output_dir.rglob("*"):
-        if ".rip" in path.parts or not path.is_file():
-            continue
-        total += path.stat().st_size
-    return total
-
-
-def _event_for_node(
-    node,
-    *,
-    state: str,
-    cached: bool,
-    started_at: str | None = None,
-    finished_at: str | None = None,
-    duration_seconds: float | None = None,
-    exit_code: int | None = None,
-    error: str | None = None,
-    output_size_bytes: int | None = None,
-) -> ExecutionEvent:
-    """Build an event from a node and one execution's measured outcome."""
-
-    return ExecutionEvent(
-        node_key=node.relative_path.as_posix(),
-        rule=node.rule.__name__ if node.rule else "unknown",
-        output_name=node.output_name,
-        pipeline_label=node.rule_call.dag.label_for(node),
-        path=str(node.path) if node.path is not None else None,
-        state=state,
-        cached=cached,
-        started_at=started_at,
-        finished_at=finished_at,
-        duration_seconds=duration_seconds,
-        exit_code=exit_code,
-        error=error,
-        output_size_bytes=output_size_bytes,
-        output_size_human=(
-            _human_size(output_size_bytes) if output_size_bytes is not None else None
-        ),
+    return sum(
+        path.stat().st_size
+        for path in call.workdir.rglob("*")
+        if path.is_file() and ".rip" not in path.parts
     )
 
 
-def _write_run_stats(node, event: ExecutionEvent) -> None:
-    """Write the last successful rule-call measurements to ``.rip/run.toml``."""
-
-    if node.path is None:
-        return
+def _write_run_stats(call: RuleCall, event: RuleCallExecution) -> None:
     run = {
         "started_at": event.started_at,
         "finished_at": event.finished_at,
@@ -182,303 +141,105 @@ def _write_run_stats(node, event: ExecutionEvent) -> None:
         "output_size_bytes": event.output_size_bytes,
         "output_size_human": event.output_size_human,
     }
-    data = {"run": {k: v for k, v in run.items() if v is not None}}
-    rip = node.path.parent / ".rip"
+    data = {"run": {key: value for key, value in run.items() if value is not None}}
+    rip = call.workdir / ".rip"
     rip.mkdir(parents=True, exist_ok=True)
     (rip / "run.toml").write_text(tomlkit.dumps(data), encoding="utf-8")
 
 
-def _record_cached_events(report: dict[str, ExecutionEvent], active: list) -> None:
-    """Add events for active cache hits, measuring shared directories once."""
-
-    measured_dirs: dict[Path, int] = {}
-    for node in active:
-        if node.state != NodeState.UP_TO_DATE or node.path is None:
+def _record_cached(report: dict[str, RuleCallExecution], calls: list[RuleCall]) -> int:
+    added = 0
+    for call in calls:
+        key = call.relative_path.as_posix()
+        if call.state != RuleCallState.UP_TO_DATE or key in report:
             continue
-        output_dir = node.path.parent
-        size = measured_dirs.setdefault(output_dir, _rule_output_size_bytes(output_dir))
-        event = _event_for_node(
-            node,
+        report[key] = RuleCallExecution.from_call(
+            call,
             state="up_to_date",
             cached=True,
-            output_size_bytes=size,
+            output_size_bytes=_call_output_size_bytes(call),
         )
-        report[event.node_key] = event
-
-
-def _record_success_events(
-    report: dict[str, ExecutionEvent],
-    node,
-    *,
-    active_keys: set,
-    needs_run: set,
-    started_at: str,
-    finished_at: str,
-    duration_seconds: float,
-) -> None:
-    """Record a successful rule call for each active output it produced.
-
-    Cached siblings are omitted because they did not need this execution. All
-    recorded siblings share timing and output-directory size.
-    """
-
-    size = _rule_output_size_bytes(node.path.parent)
-    for conode in node.output_nodes.values():
-        if conode.relative_path not in active_keys:
-            continue
-        if conode is not node and conode.state not in needs_run:
-            continue
-        event = _event_for_node(
-            conode,
-            state="up_to_date",
-            cached=False,
-            started_at=started_at,
-            finished_at=finished_at,
-            duration_seconds=duration_seconds,
-            exit_code=0,
-            output_size_bytes=size,
-        )
-        report[event.node_key] = event
-    _write_run_stats(node, event)
-
-
-def _record_failure_event(
-    report: dict[str, ExecutionEvent],
-    node,
-    *,
-    state: str,
-    started_at: str,
-    finished_at: str,
-    duration_seconds: float,
-    exit_code: int | None,
-    error: str,
-) -> None:
-    """Record the failed representative node for one rule-call attempt."""
-
-    event = _event_for_node(
-        node,
-        state=state,
-        cached=False,
-        started_at=started_at,
-        finished_at=finished_at,
-        duration_seconds=duration_seconds,
-        exit_code=exit_code,
-        error=error,
-    )
-    report[event.node_key] = event
+        added += 1
+    return added
 
 
 @contextmanager
 def _acquire_lock(outdir: Path):
-    """Context manager holding an exclusive fcntl lock on outdir/.rip/necroflow.lock.
-
-    Raises RuntimeError immediately if another necroflow instance holds the lock.
-
-    Only one necroflow instance per outdir is supported. Running two instances
-    against overlapping outdirs (e.g. outdir and outdir/sub) is also unsupported
-    and may corrupt outputs — there is no OS primitive to detect this case.
-    """
     lock_path = outdir / ".rip" / "necroflow.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fh = open(lock_path, "w")
+    handle = open(lock_path, "w")
     try:
-        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        fh.close()
+        handle.close()
         raise RuntimeError(
             f"Another necroflow instance is already running against {outdir}.\n"
-            "Only one instance per outdir is supported. If no instance is running, "
-            f"delete the stale lock manually: {lock_path}"
+            "Only one instance per node store is supported."
         )
     try:
         yield
     finally:
-        fh.close()
+        handle.close()
 
 
-def _remove_rule_output_dir(node) -> bool:
-    """Remove the whole rule-call output directory for node, if it exists."""
-    if node.path is None or node.has_mutable_output:
+def _remove_call_dir(call: RuleCall) -> bool:
+    if call.mutable or not call.workdir.exists():
         return False
-    output_dir = node.path.parent
-    if not output_dir.exists():
-        return False
-    shutil.rmtree(output_dir)
-    _logger.cleaned(node)
-    return True
-
-
-def _remove_output_path(node) -> bool:
-    """Remove only node.path, leaving siblings and side files in the rule-call dir."""
-    if node.mutable or node.path is None or not node.path.exists():
-        return False
-    if node.path.is_dir():
-        shutil.rmtree(node.path)
-    else:
-        node.path.unlink()
-    _logger.cleaned(node)
+    shutil.rmtree(call.workdir)
+    _logger.cleaned(call)
     return True
 
 
 @dataclass
 class _AutocleanPlan:
-    """Reverse-edge bookkeeping for deleting finished intermediates during a run.
-
-    Bundles the state that autoclean's during-run cleanup needs so callers pass
-    one object instead of a bool plus two separate collections at every site.
-    ``enabled`` mirrors ``run()``'s ``autoclean`` flag directly; ``children``
-    and ``final_keys`` stay empty when disabled so downstream code needs no
-    separate None/False check to skip cleanup.
-    """
-
     enabled: bool
-    children: dict[Path, list] = field(default_factory=dict)
+    children: dict[Path, list[RuleCall]] = field(default_factory=dict)
     final_keys: set[Path] = field(default_factory=set)
 
 
-def _build_autoclean_plan(
-    autoclean: bool, active: list, active_keys: set
-) -> _AutocleanPlan:
-    """Return the reverse-edge index autoclean needs to know when a rule call is done.
-
-    A node's ``children`` are its active dependents; a ``final_keys`` entry has
-    none, so its rule-call directory is a final output and never a cleanup
-    candidate.
-    """
-    if not autoclean:
+def _build_autoclean_plan(enabled: bool, active: list[RuleCall]) -> _AutocleanPlan:
+    if not enabled:
         return _AutocleanPlan(enabled=False)
-    children: dict[Path, list] = {n.relative_path: [] for n in active}
-    for n in active:
-        for p in n.parents:
-            if p.relative_path in active_keys:
-                children[p.relative_path].append(n)
-    final_keys = {k for k, kids in children.items() if not kids}
-    return _AutocleanPlan(enabled=True, children=children, final_keys=final_keys)
+    active_keys = {call.relative_path for call in active}
+    children = {call.relative_path: [] for call in active}
+    for call in active:
+        for parent in call.parent_calls:
+            if parent.relative_path in active_keys:
+                children[parent.relative_path].append(call)
+    requested_keys = {
+        node.rule_call.relative_path
+        for call in active[:1]
+        for node in call.dag.required_nodes
+    }
+    final_keys = requested_keys | {
+        key for key, values in children.items() if not values
+    }
+    return _AutocleanPlan(True, children, final_keys)
 
 
-def _can_remove_parent_dir(parent, plan: _AutocleanPlan, active_keys: set) -> bool:
-    """Return True when every active co-output in a rule-call is cleanable."""
-    if parent.has_mutable_output:
-        return False
-    siblings = [
-        n for n in parent.output_nodes.values() if n.relative_path in active_keys
-    ]
-    if not siblings:
-        return False
-    if any(s.relative_path in plan.final_keys for s in siblings):
-        return False
-    return all(
-        all(c.state == NodeState.UP_TO_DATE for c in plan.children[s.relative_path])
-        for s in siblings
-    )
-
-
-def _cleanup_parents(node, plan: _AutocleanPlan, active_keys: set) -> int:
-    """Delete each finished intermediate parent's whole rule-call output directory."""
-    n_cleaned = 0
-    seen_dirs: set[Path] = set()
-    for parent in node.parents:
-        if (
-            parent.relative_path not in active_keys
-            or parent.relative_path in plan.final_keys
-            or parent.path is None
-        ):
+def _cleanup_parents(call: RuleCall, plan: _AutocleanPlan) -> int:
+    if not plan.enabled:
+        return 0
+    cleaned = 0
+    for parent in call.parent_calls:
+        key = parent.relative_path
+        if parent.mutable or key in plan.final_keys:
             continue
-        output_dir = parent.path.parent
-        if output_dir in seen_dirs:
-            continue
-        if _can_remove_parent_dir(parent, plan, active_keys):
-            seen_dirs.add(output_dir)
-            if _remove_rule_output_dir(parent):
-                n_cleaned += 1
-    return n_cleaned
+        if all(
+            child.state == RuleCallState.UP_TO_DATE
+            for child in plan.children.get(key, ())
+        ) and _remove_call_dir(parent):
+            cleaned += 1
+    return cleaned
 
 
 def _clean_orphans(plan: ExecutionPlan, *, autoclean: bool, dry_run: bool) -> int:
-    """Delete planned orphan outputs when autoclean is enabled."""
     if not autoclean or dry_run:
         return 0
-
-    active_dirs = {node.path.parent for node in plan.active if node.path is not None}
-    cleaned_dirs: set[Path] = set()
-    n_cleaned = 0
-    for node in plan.orphans:
-        if node.path is None:
-            continue
-        output_dir = node.path.parent
-        if output_dir in cleaned_dirs:
-            continue
-        if output_dir not in active_dirs:
-            if _remove_rule_output_dir(node):
-                cleaned_dirs.add(output_dir)
-                n_cleaned += 1
-        elif _remove_output_path(node):
-            n_cleaned += 1
-    return n_cleaned
-
-
-def _promote_states(active: list) -> None:
-    """Advance node states one step: MISSING/STALE → READY or FAILED."""
-    blocked = {NodeState.FAILED, NodeState.INTERRUPTED}
-    for n in active:
-        if n.state in (NodeState.MISSING, NodeState.STALE):
-            if any(p.state in blocked for p in n.parents):
-                n.state = NodeState.FAILED
-            elif all(p.state == NodeState.UP_TO_DATE for p in n.parents):
-                n.state = NodeState.READY
-
-
-def _on_job_done(
-    node,
-    active_keys: set,
-    needs_run: set,
-    autoclean_plan: _AutocleanPlan,
-    report: dict[str, ExecutionEvent],
-    started_at: str,
-    finished_at: str,
-    duration_seconds: float,
-) -> int:
-    """Handle a successful job completion. Returns number of intermediate outputs cleaned."""
-    for conode in node.output_nodes.values():
-        if conode.relative_path in active_keys and not conode.path.exists():
-            raise RuntimeError(f"command succeeded but output missing: {conode.path}")
-    _record_success_events(
-        report,
-        node,
-        active_keys=active_keys,
-        needs_run=needs_run,
-        started_at=started_at,
-        finished_at=finished_at,
-        duration_seconds=duration_seconds,
-    )
-    write_dependencies(node)
-    write_ancestor_graph(node)
-    n_cleaned = 0
-    for conode in node.output_nodes.values():
-        if (
-            conode is not node
-            and conode.relative_path in active_keys
-            and conode.state in needs_run
-        ):
-            conode.mark_done("up_to_date")
-            conode.state = NodeState.UP_TO_DATE
-            if autoclean_plan.enabled:
-                n_cleaned += _cleanup_parents(conode, autoclean_plan, active_keys)
-    node.mark_done("up_to_date")
-    node.state = NodeState.UP_TO_DATE
-    if autoclean_plan.enabled:
-        n_cleaned += _cleanup_parents(node, autoclean_plan, active_keys)
-    return n_cleaned
+    return sum(_remove_call_dir(call) for call in plan.orphans)
 
 
 def _validate_scheduler(scheduler: Scheduler) -> None:
-    """Reject callables that cannot be called with the 3-argument protocol.
-
-    The scheduler protocol is scheduler(ready, remaining, available_resources).
-    A legacy 2-argument scheduler would otherwise fail deep inside the run loop
-    after the lock is taken and nodes are classified; failing here names the
-    expected protocol up front.
-    """
     try:
         signature = inspect.signature(scheduler)
     except (TypeError, ValueError):
@@ -488,48 +249,88 @@ def _validate_scheduler(scheduler: Scheduler) -> None:
     except TypeError:
         name = getattr(scheduler, "__name__", type(scheduler).__name__)
         raise TypeError(
-            f"scheduler {name!r} does not match the scheduler protocol: "
-            "scheduler(ready, remaining, available_resources) -> list[Node]"
+            f"scheduler {name!r} does not match protocol: "
+            "scheduler(ready, remaining, available_resources) -> list[RuleCall]"
         ) from None
 
 
 def _validated_schedule(
     scheduler: Scheduler,
-    ready: list[Node],
-    remaining: list[Node],
+    ready: list[RuleCall],
+    remaining: list[RuleCall],
     available_resources: dict[str, int],
-) -> list[Node]:
-    """Return canonical ready nodes selected by a scheduler."""
+) -> list[RuleCall]:
     selected = scheduler(ready, remaining, available_resources)
     if not isinstance(selected, list):
         raise TypeError(
-            f"scheduler must return list[Node], got {type(selected).__name__}"
+            f"scheduler must return list[RuleCall], got {type(selected).__name__}"
         )
-    ready_by_key = {node.relative_path: node for node in ready}
+    ready_by_key = {call.relative_path: call for call in ready}
     seen: set[Path] = set()
-    canonical: list[Node] = []
-    for node in selected:
-        key = getattr(node, "relative_path", None)
+    result: list[RuleCall] = []
+    for call in selected:
+        key = getattr(call, "relative_path", None)
         if key not in ready_by_key:
-            raise ValueError(f"scheduler returned node that is not ready: {key}")
+            raise ValueError(f"scheduler returned RuleCall that is not ready: {key}")
         if key in seen:
-            raise ValueError(f"scheduler returned duplicate node: {key}")
+            raise ValueError(f"scheduler returned duplicate RuleCall: {key}")
         seen.add(key)
-        canonical.append(ready_by_key[key])
-    return canonical
+        result.append(ready_by_key[key])
+    return result
 
 
-def _run_with_retries(node, log_path, runner) -> None:
-    """Run a command at most ``rule.repeat`` times, stopping on success."""
-    max_attempts = node.rule.repeat
-    for attempt in range(1, max_attempts + 1):
+def _run_with_retries(call: RuleCall, log_path: Path, runner) -> None:
+    maximum = call.rule.repeat
+    for attempt in range(1, maximum + 1):
         try:
-            runner(node, log_path)
+            runner(call, log_path)
             return
         except subprocess.CalledProcessError as exc:
-            if attempt == max_attempts:
+            if attempt == maximum:
                 raise
-            _logger.job_retry(node, attempt, max_attempts, exc.returncode)
+            _logger.job_retry(call, attempt, maximum, exc.returncode)
+
+
+def _promote_ready(active: list[RuleCall]) -> None:
+    for call in active:
+        if call.state in {RuleCallState.MISSING, RuleCallState.STALE} and all(
+            parent.state == RuleCallState.UP_TO_DATE for parent in call.parent_calls
+        ):
+            call.state = RuleCallState.READY
+
+
+def _complete_call(
+    call: RuleCall,
+    plan: ExecutionPlan,
+    report: dict[str, RuleCallExecution],
+    *,
+    started_at: str,
+    finished_at: str,
+    duration_seconds: float,
+) -> RuleCallExecution:
+    missing = [output.path for output in call.outputs if not output.path.exists()]
+    if missing:
+        raise RuntimeError(
+            "command succeeded but output missing: " + ", ".join(map(str, missing))
+        )
+    write_dependencies(call, plan.hash_cache)
+    if call.outputs:
+        write_ancestor_graph(call.outputs[0])
+    call.mark_done("up_to_date")
+    call.state = RuleCallState.UP_TO_DATE
+    event = RuleCallExecution.from_call(
+        call,
+        state="up_to_date",
+        cached=False,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_seconds=duration_seconds,
+        exit_code=0,
+        output_size_bytes=_call_output_size_bytes(call),
+    )
+    report[event.call_key] = event
+    _write_run_stats(call, event)
+    return event
 
 
 def run(
@@ -539,228 +340,164 @@ def run(
     keep_going: bool = False,
     autoclean: bool = False,
     dry_run: bool = False,
-    node_runner=None,
-    forced_stale_keys: set[Path] | None = None,
-    on_complete: Callable[[dict[str, ExecutionEvent]], None] | None = None,
-) -> dict[str, ExecutionEvent]:
-    """Run the DAG's required subgraph and return its execution report.
-
-    The report is a dict mapping each cached or attempted Node's stable POSIX
-    relative-path key to its :class:`ExecutionEvent`. Dependency-blocked Nodes
-    have no entry because no cache hit or execution attempt occurred for them.
-    ``DAG.run()`` stores and returns this same dict.
-
-    Cache classification happens before execution. UP_TO_DATE nodes become
-    cached report events, ORPHAN nodes are excluded, and MISSING/STALE nodes run
-    once all parents are UP_TO_DATE. Co-outputs of one rule call may all become
-    READY, but only one representative is submitted and completion marks the
-    siblings together.
-
-    ``resource_caps`` maps resource names to total capacity and defaults to all
-    detected CPUs for ``threads``. Uncapped resource names are ignored. A job
-    exceeding a cap may run alone so an undersized cap cannot deadlock it.
-
-    ``scheduler`` prioritises READY nodes and defaults to a fresh incremental
-    connected-component scheduler for each invocation. Dependency gates,
-    resource admission, worker submission, and state transitions remain
-    executor responsibilities.
-    ``keep_going=False`` re-raises the first attempted-job failure.
-    ``keep_going=True`` continues independent branches and raises an
-    ExceptionGroup containing all attempted-job failures at the end.
-
-    ``autoclean`` removes orphans and completed intermediates. ``dry_run``
-    performs classification and reporting without commands or deletion.
-    ``node_runner`` may replace ``_run_node(node, log_path)`` to intercept
-    subprocess execution. ``forced_stale_keys`` explicitly invalidates matching
-    active cache hits and their descendants for this invocation.
-    ``on_complete(report)`` runs after all attempts while the node-store lock is
-    still held; it is not called for dry runs or fail-fast execution errors.
-
-    The node-store lock is held from classification through the final job so no
-    second executor can observe or mutate partially updated state.
-    """
+    rule_call_runner=None,
+    forced_stale_call_keys: set[Path] | None = None,
+    on_complete: Callable[[dict[str, RuleCallExecution]], None] | None = None,
+) -> dict[str, RuleCallExecution]:
+    """Execute required RuleCalls atomically; return report keyed by call path."""
     if not isinstance(dag, DAG):
         raise TypeError(f"run requires a DAG, got {type(dag).__name__}")
-    if scheduler is None:
-        scheduler = make_connected_component_scheduler()
+    scheduler = fifo_scheduler if scheduler is None else scheduler
     _validate_scheduler(scheduler)
-    _run = node_runner if node_runner is not None else _run_node
+    runner = _run_rule_call if rule_call_runner is None else rule_call_runner
     _logger.setup()
-    caps: dict[str, int] = {"threads": os.cpu_count() or 1}
+    caps = {"threads": os.cpu_count() or 1}
     if resource_caps:
         caps.update(resource_caps)
-    outdir = dag.nodes_dir
-    with _acquire_lock(outdir):
-        # Classify under the execution lock so another process cannot invalidate
-        # the filesystem snapshot before jobs start.
-        plan = plan_execution(
-            dag,
-            forced_stale_keys=forced_stale_keys,
-        )
-        n_cleaned = _clean_orphans(
-            plan,
-            autoclean=autoclean,
-            dry_run=dry_run,
-        )
-        active = plan.active
-        active_keys = plan.active_keys
-        report: dict[str, ExecutionEvent] = {}
-        _record_cached_events(report, active)
+
+    with _acquire_lock(dag.nodes_dir):
+        plan = plan_execution(dag, forced_stale_call_keys=forced_stale_call_keys)
+        n_cleaned = _clean_orphans(plan, autoclean=autoclean, dry_run=dry_run)
+        report: dict[str, RuleCallExecution] = {}
+        n_skipped = _record_cached(report, plan.active)
 
         if dry_run:
-            n_would_run = sum(
-                1 for n in active if n.state in (NodeState.MISSING, NodeState.STALE)
+            would_run = sum(
+                call.state in {RuleCallState.MISSING, RuleCallState.STALE}
+                for call in plan.active
             )
-            n_up_to_date = sum(1 for n in active if n.state == NodeState.UP_TO_DATE)
-            for n in active:
-                if n.state in (NodeState.MISSING, NodeState.STALE):
-                    _logger.dry_run_node(n)
-            _logger.dry_run_summary(n_would_run, n_up_to_date)
+            for call in plan.active:
+                if call.state in {RuleCallState.MISSING, RuleCallState.STALE}:
+                    _logger.dry_run_node(call)
+            _logger.dry_run_summary(would_run, n_skipped)
             return report
 
-        # Resources are reserved exactly while their Future remains in this map
-        # and are released after its result has been handled.
-        running: dict = {}  # future -> (node, start_time, start_wall, job_resources)
+        running: dict = {}
         running_resources: dict[str, int] = {}
-        errors: list = []  # exceptions collected in keep_going mode
-        n_run = n_failed = 0
-        n_skipped = sum(1 for n in active if n.state == NodeState.UP_TO_DATE)
-
-        needs_run = {
-            NodeState.MISSING,
-            NodeState.STALE,
-            NodeState.READY,
-            NodeState.RUNNING,
+        errors: list[Exception] = []
+        executed_call_keys: set[Path] = set()
+        n_run = 0
+        n_failed = 0
+        autoclean_plan = _build_autoclean_plan(autoclean, plan.active)
+        unfinished = {
+            RuleCallState.MISSING,
+            RuleCallState.STALE,
+            RuleCallState.READY,
+            RuleCallState.RUNNING,
         }
-
-        # Autoclean needs reverse edges to know when every consumer of an
-        # intermediate and every co-output sharing its directory is finished.
-        autoclean_plan = _build_autoclean_plan(autoclean, active, active_keys)
 
         try:
             with concurrent.futures.ThreadPoolExecutor(
-                max_workers=len(active) or 1
+                max_workers=len(plan.active) or 1
             ) as pool:
-                while any(n.state in needs_run for n in active):
-                    # Dependency state gates eligibility. The scheduler sees only
-                    # READY nodes and cannot start work ahead of its parents.
-                    _promote_states(active)
-
-                    ready = [n for n in active if n.state == NodeState.READY]
-                    remaining = [n for n in active if n.state in needs_run]
-                    available_resources = {
-                        resource: cap - running_resources.get(resource, 0)
-                        for resource, cap in caps.items()
+                while any(
+                    call.state is None or call.state in unfinished
+                    for call in plan.active
+                ):
+                    classify_available(plan, executed_call_keys=executed_call_keys)
+                    n_skipped += _record_cached(report, plan.active)
+                    _promote_ready(plan.active)
+                    ready = [
+                        call
+                        for call in plan.active
+                        if call.state == RuleCallState.READY
+                    ]
+                    remaining = [
+                        call
+                        for call in plan.active
+                        if call.state is None or call.state in unfinished
+                    ]
+                    available = {
+                        name: cap - running_resources.get(name, 0)
+                        for name, cap in caps.items()
                     }
-                    for node in _validated_schedule(
-                        scheduler, ready, remaining, available_resources
+                    for call in _validated_schedule(
+                        scheduler, ready, remaining, available
                     ):
-                        # Submit one representative when several co-output Nodes
-                        # of the same rule call are simultaneously READY.
-                        coouts = [
-                            c
-                            for c in node.output_nodes.values()
-                            if c.relative_path in active_keys and c is not node
-                        ]
-                        if any(c.state == NodeState.RUNNING for c in coouts):
-                            continue
-                        job_res = node.rule.resources
-                        # The solo fallback prevents a job declaring more than a
-                        # configured cap from stalling forever.
-                        can_run = (not running) or all(
-                            running_resources.get(r, 0) + v <= caps[r]
-                            for r, v in job_res.items()
-                            if r in caps
+                        resources = call.resources
+                        can_run = not running or all(
+                            running_resources.get(name, 0) + amount <= caps[name]
+                            for name, amount in resources.items()
+                            if name in caps
                         )
-                        if can_run:
-                            log_path = node.path.parent / ".rip" / "job.log"
-                            node.mark_running()
-                            node.state = NodeState.RUNNING
-                            _logger.job_start(node)
-                            start = time.monotonic()
-                            start_wall = _utc_now()
-                            future = pool.submit(
-                                _run_with_retries, node, log_path, _run
+                        if not can_run:
+                            continue
+                        log_path = call.workdir / ".rip" / "job.log"
+                        call.mark_running()
+                        call.state = RuleCallState.RUNNING
+                        _logger.job_start(call)
+                        start = time.monotonic()
+                        start_wall = _utc_now()
+                        future = pool.submit(_run_with_retries, call, log_path, runner)
+                        running[future] = (call, start, start_wall, resources, log_path)
+                        for name, amount in resources.items():
+                            running_resources[name] = (
+                                running_resources.get(name, 0) + amount
                             )
-                            running[future] = (node, start, start_wall, job_res)
-                            for r, v in job_res.items():
-                                running_resources[r] = running_resources.get(r, 0) + v
 
-                    # No submitted or existing job means the scheduler made no
-                    # further progress; never call wait() with an empty set.
                     if not running:
                         break
 
-                    # Re-schedule as soon as capacity or dependencies may change.
-                    done_fs, _ = concurrent.futures.wait(
+                    done, _ = concurrent.futures.wait(
                         running, return_when=concurrent.futures.FIRST_COMPLETED
                     )
-                    for f in done_fs:
-                        node, start, start_wall, job_res = running.pop(f)
+                    for future in done:
+                        call, start, start_wall, resources, log_path = running.pop(
+                            future
+                        )
                         elapsed = time.monotonic() - start
                         finished_wall = _utc_now()
                         try:
-                            # Runner return is provisional success; completion also
-                            # validates outputs and commits metadata and state.
-                            f.result()
-                            n_cleaned += _on_job_done(
-                                node,
-                                active_keys,
-                                needs_run,
-                                autoclean_plan,
+                            future.result()
+                            _complete_call(
+                                call,
+                                plan,
                                 report,
-                                start_wall,
-                                finished_wall,
-                                elapsed,
+                                started_at=start_wall,
+                                finished_at=finished_wall,
+                                duration_seconds=elapsed,
                             )
-                            _logger.job_done(node, elapsed)
+                            executed_call_keys.add(call.relative_path)
+                            n_cleaned += _cleanup_parents(call, autoclean_plan)
+                            _logger.job_done(call, elapsed)
                             n_run += 1
                         except Exception as exc:
-                            # Negative process codes represent signals. Other
-                            # exceptions have no meaningful process exit code.
-                            log_path = node.path.parent / ".rip" / "job.log"
-                            if isinstance(exc, subprocess.CalledProcessError):
-                                rc = exc.returncode
-                                if rc < 0:
-                                    node.state = NodeState.INTERRUPTED
-                                    node.mark_done("interrupted")
-                                    state = "interrupted"
-                                else:
-                                    node.state = NodeState.FAILED
-                                    node.mark_done("failed")
-                                    state = "failed"
-                                _record_failure_event(
-                                    report,
-                                    node,
-                                    state=state,
-                                    started_at=start_wall,
-                                    finished_at=finished_wall,
-                                    duration_seconds=elapsed,
-                                    exit_code=rc,
-                                    error=str(exc),
-                                )
-                                _logger.job_failed(node, elapsed, rc, log_path)
+                            exit_code = (
+                                exc.returncode
+                                if isinstance(exc, subprocess.CalledProcessError)
+                                else None
+                            )
+                            interrupted = exit_code is not None and exit_code < 0
+                            call.state = (
+                                RuleCallState.INTERRUPTED
+                                if interrupted
+                                else RuleCallState.FAILED
+                            )
+                            state = "interrupted" if interrupted else "failed"
+                            call.mark_done(state)
+                            event = RuleCallExecution.from_call(
+                                call,
+                                state=state,
+                                cached=False,
+                                started_at=start_wall,
+                                finished_at=finished_wall,
+                                duration_seconds=elapsed,
+                                exit_code=exit_code,
+                                error=str(exc),
+                            )
+                            report[event.call_key] = event
+                            if exit_code is not None:
+                                _logger.job_failed(call, elapsed, exit_code, log_path)
                             else:
-                                node.state = NodeState.FAILED
-                                node.mark_done("failed")
-                                _record_failure_event(
-                                    report,
-                                    node,
-                                    state="failed",
-                                    started_at=start_wall,
-                                    finished_at=finished_wall,
-                                    duration_seconds=elapsed,
-                                    exit_code=None,
-                                    error=str(exc),
-                                )
-                                _logger.job_error(node, elapsed, exc, log_path)
+                                _logger.job_error(call, elapsed, exc, log_path)
                             _logger.job_output(log_path)
                             n_failed += 1
                             if not keep_going:
                                 raise
                             errors.append(exc)
-                        for r, v in job_res.items():
-                            running_resources[r] -= v
+                        finally:
+                            for name, amount in resources.items():
+                                running_resources[name] -= amount
         finally:
             _logger.summary(n_run, n_skipped, n_failed, n_cleaned)
 
@@ -768,45 +505,32 @@ def run(
             on_complete(report)
 
     if errors:
-        exc = ExceptionGroup(
-            "necroflow: some nodes failed",
-            errors,
-        )
-        setattr(exc, "execution_report", report)
-        raise exc
+        error = ExceptionGroup("necroflow: some RuleCalls failed", errors)
+        setattr(error, "execution_report", report)
+        raise error
     return report
 
 
-def _run_node(node, log_path) -> None:
-    """Execute one rule call, capturing command output in ``job.log``.
-
-    Built-in materializers write directly through Python. Other rules resolve
-    to a shell command and use the Pipeline's selected shell when configured.
-    Output validation and state transitions remain in the parent executor
-    thread.
-    """
-
-    node.path.parent.mkdir(parents=True, exist_ok=True)
+def _run_rule_call(call: RuleCall, log_path: Path) -> None:
+    """Execute one RuleCall command or Python materializer."""
+    call.workdir.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "w") as log:
-        materializer = getattr(node.rule, "materializer", None)
+        materializer = call.rule.materializer
         if materializer is not None:
-            materializer(node, log)
+            materializer(call, log)
             return
-        cmd = resolve_command(node)
-        if cmd is None:
+        command = resolve_command(call)
+        if command is None:
             raise RuntimeError(
-                f"rule {node.rule.__name__!r} has neither a command nor a materializer"
+                f"rule {call.rule.__name__!r} has neither a command nor a materializer"
             )
-        shellpath = node.rule_call.shellpath
-        if shellpath is not None:
-            subprocess.run(
-                cmd,
-                shell=True,
-                executable=shellpath,
-                check=True,
-                stdout=log,
-                stderr=log,
-            )
-        else:
-            subprocess.run(cmd, shell=True, check=True, stdout=log, stderr=log)
+        options = {
+            "shell": True,
+            "check": True,
+            "stdout": log,
+            "stderr": log,
+        }
+        if call.shellpath is not None:
+            options["executable"] = call.shellpath
+        subprocess.run(command, **options)

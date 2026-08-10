@@ -1,340 +1,234 @@
-from necroflow.rules import Constraints, Inputs, Outputs, Rule
-import time
-import pytest
+"""RuleCall cache policy regression tests."""
+
+import os
+import shutil
 from pathlib import Path
 
-from necroflow import Pipeline, DAG, NodeType, NodeState
-from necroflow.planning import classify_nodes
+import tomlkit
+
+from necroflow import (
+    DAG,
+    Inputs,
+    NodeType,
+    Outputs,
+    Pipeline,
+    RuleCallState,
+    run,
+)
+from necroflow.planning import plan_execution
+from necroflow.rules import Rule
 
 
-class Fastq(NodeType):
-    filename = "fastq"
+class Source(NodeType):
+    filename = "source.txt"
 
 
-class Bam(NodeType):
-    filename = "bam"
+class Result(NodeType):
+    filename = "result.txt"
 
 
 class Log(NodeType):
-    filename = "log"
+    filename = "result.log"
 
 
-R_raw_fastq = Rule("raw_fastq", Inputs(path=str), Outputs(fastq=Fastq), "touch {fastq}")
-R_align = Rule(
-    "align",
-    Inputs(fastq=Fastq, ref=str),
-    Outputs(bam=Bam, log=Log),
-    "touch {bam} && touch {log}",
+class Bundle(NodeType):
+    filename = "bundle"
+
+
+SOURCE = Rule("source", Inputs(), Outputs(source=Source), "printf stable > {source}")
+CONSUME = Rule(
+    "consume", Inputs(source=Source), Outputs(result=Result), "cp {source} {result}"
 )
-R_sort_bam = Rule("sort_bam", Inputs(bam=Bam), Outputs(bam=Bam), "touch {bam}")
-
-
-def make_pipeline(
-    owner="/tmp/necroflow-test-classify", path="/data/s.fastq", ref="hg38"
-):
-    dag = owner if isinstance(owner, DAG) else DAG(owner)
-    P = Pipeline(dag)
-    P.fastq = R_raw_fastq(P, path=path)
-    P.bam, P.log = R_align(P, P.fastq, ref=ref)
-    P.sorted = R_sort_bam(P, P.bam)
-    return P
-
-
-# --- _node_key / _folder_hash ---
-
-
-def test_cooutputs_distinct_node_keys():
-    P = make_pipeline()
-    assert P.bam.relative_path != P.log.relative_path
-
-
-def test_cooutputs_share_fingerprint():
-    P = make_pipeline()
-    assert P.bam.provenance_hash == P.log.provenance_hash
-
-
-def test_command_change_changes_fingerprint():
-    R2_raw_fastq = Rule(
-        "raw_fastq", Inputs(path=str), Outputs(fastq=Fastq), "touch {fastq}"
-    )
-    R2_align = Rule(
-        "align",
-        Inputs(fastq=Fastq, ref=str),
-        Outputs(bam=Bam),
-        "bwa mem {ref} {fastq} > {bam}",
-    )  # different command
-    R2_sort_bam = Rule("sort_bam", Inputs(bam=Bam), Outputs(bam=Bam), "touch {bam}")
-
-    P1 = make_pipeline()  # uses original R with "touch {bam}"
-    P2 = Pipeline(DAG(P1.nodes_dir))
-    P2.fastq = R2_raw_fastq(P2, path="/data/s.fastq")
-    P2.bam = R2_align(P2, P2.fastq, ref="hg38")
-    P2.sorted = R2_sort_bam(P2, P2.bam)
-
-    assert P1.bam.provenance_hash != P2.bam.provenance_hash
-
-
-def test_dag_contains_all_cooutputs(tmp_path):
-    dag = DAG(outdir=tmp_path)
-    P = make_pipeline(dag)
-    P.finish()
-    dag.require(P.sinks())
-    names = [(n.rule.__name__, n.output_name) for n in dag.nodes]
-    assert ("align", "bam") in names
-    assert ("align", "log") in names
-
-
-# --- classify_nodes states ---
-
-
-def test_missing(tmp_path):
-    dag = DAG(outdir=tmp_path)
-    P = make_pipeline(dag)
-    dag.require([P.sorted])
-    classify_nodes(dag.nodes, dag.required_nodes)
-    states = {n.output_name: n.state for n in dag.nodes}
-    assert states["fastq"] == NodeState.MISSING
-    # both align[bam] and sort_bam[bam] have output_name="bam"; check by rule name instead
-    missing_rules = {n.rule.__name__ for n in dag.nodes if n.state == NodeState.MISSING}
-    assert missing_rules == {"raw_fastq", "align", "sort_bam"}
-    assert states["log"] is None  # outside required subgraph, no output yet
-
-
-def test_up_to_date_after_run(tmp_path):
-    dag = DAG(outdir=tmp_path)
-    P = make_pipeline(dag)
-    dag.require([P.sorted])
-    dag.run()
-    classify_nodes(dag.nodes, dag.required_nodes)
-    for n in dag.required_nodes:
-        assert n.state == NodeState.UP_TO_DATE
-
-
-def test_stale_direct(tmp_path):
-    dag = DAG(outdir=tmp_path)
-    P = make_pipeline(dag)
-    dag.require([P.sorted])
-    dag.run()
-
-    raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
-    time.sleep(0.05)
-    raw_node.path.write_bytes(b"updated content")  # content change → different hash
-
-    classify_nodes(dag.nodes, dag.required_nodes)
-    align_bam = next(
-        n for n in dag.nodes if n.rule.__name__ == "align" and n.output_name == "bam"
-    )
-    assert align_bam.state == NodeState.STALE
-
-
-def test_stale_transitive(tmp_path):
-    dag = DAG(outdir=tmp_path)
-    P = make_pipeline(dag)
-    dag.require([P.sorted])
-    dag.run()
-
-    raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
-    time.sleep(0.05)
-    raw_node.path.write_bytes(b"updated content")  # content change → different hash
-
-    classify_nodes(dag.nodes, dag.required_nodes)
-    sort_node = next(n for n in dag.nodes if n.rule.__name__ == "sort_bam")
-    assert sort_node.state == NodeState.STALE
-
-
-def test_orphan(tmp_path):
-    dag = DAG(outdir=tmp_path)
-    P = make_pipeline(dag)
-    dag.require([P.sorted])
-    dag.run()
-
-    # rebuild dag requesting only raw_fastq — align/sort outputs become orphans
-    dag2 = DAG(outdir=tmp_path)
-    P2 = make_pipeline(dag2)
-    dag2.require([P2.fastq])
-    classify_nodes(dag2.nodes, dag2.required_nodes)
-
-    orphans = [n for n in dag2.nodes if n.state == NodeState.ORPHAN]
-    orphan_rules = {n.rule.__name__ for n in orphans}
-    assert "align" in orphan_rules
-    assert "sort_bam" in orphan_rules
-
-
-def test_reruns_stale_nodes(tmp_path):
-    dag = DAG(outdir=tmp_path)
-    P = make_pipeline(dag)
-    dag.require([P.sorted])
-    dag.run()
-
-    raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
-    time.sleep(0.05)
-    raw_node.path.write_bytes(b"updated content")  # content change → different hash
-
-    dag.run()
-
-    classify_nodes(dag.nodes, dag.required_nodes)
-    for n in dag.required_nodes:
-        assert n.state == NodeState.UP_TO_DATE
-
-
-def test_skips_up_to_date_on_rerun(tmp_path, capsys):
-    dag = DAG(outdir=tmp_path)
-    P = make_pipeline(dag)
-    dag.require([P.sorted])
-    dag.run()
-
-    # second run: record mtimes, re-execute, confirm paths unchanged
-    mtimes_before = {n.output_name: n.path.stat().st_mtime for n in dag.required_nodes}
-    time.sleep(0.05)
-    dag.run()
-    mtimes_after = {n.output_name: n.path.stat().st_mtime for n in dag.required_nodes}
-    assert mtimes_before == mtimes_after
-
-
-def test_content_unchanged_parent_not_stale(tmp_path):
-    """Touch parent (mtime changes, content same) — child must stay UP_TO_DATE."""
-    dag = DAG(outdir=tmp_path)
-    P = make_pipeline(dag)
-    dag.require([P.sorted])
-    dag.run()
-
-    raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
-    time.sleep(0.05)
-    raw_node.path.touch()  # mtime newer but content unchanged
-
-    classify_nodes(dag.nodes, dag.required_nodes)
-    align_bam = next(
-        n for n in dag.nodes if n.rule.__name__ == "align" and n.output_name == "bam"
-    )
-    assert align_bam.state == NodeState.UP_TO_DATE
-
-
-class MutableDatabase(NodeType):
-    filename = "state.sqlite3"
-    mutable = True
-
-
-class MutationReceipt(NodeType):
-    filename = "mutation.done"
-
-
-R_create_database = Rule(
-    "create_database",
-    Inputs(seed=str),
-    Outputs(database=MutableDatabase),
-    "echo {seed} > {database}",
+PAIR = Rule(
+    "pair",
+    Inputs(),
+    Outputs(result=Result, log=Log),
+    "touch {result} {log}",
 )
-R_mutate_database = Rule(
-    "mutate_database",
-    Inputs(database=MutableDatabase),
-    Outputs(receipt=MutationReceipt),
-    "echo mutation >> {database}; touch {receipt}",
+BUNDLE_SOURCE = Rule(
+    "bundle_source",
+    Inputs(),
+    Outputs(bundle=Bundle),
+    "mkdir {bundle}; printf a > {bundle}/a; printf b > {bundle}/b",
+)
+BUNDLE_CONSUME = Rule(
+    "bundle_consume",
+    Inputs(bundle=Bundle),
+    Outputs(result=Result),
+    "cat {bundle}/a {bundle}/b > {result}",
 )
 
 
-def test_mutable_parent_content_change_does_not_stale_consumer(tmp_path):
-    """In-place changes to a mutable parent must not invalidate its consumer.
+def _pipeline(outdir: Path, *, source_rule=SOURCE):
+    dag = DAG(outdir)
+    pipeline = Pipeline(dag)
+    pipeline.source = source_rule(pipeline)
+    pipeline.result = CONSUME(pipeline, pipeline.source)
+    pipeline.finish()
+    dag.require([pipeline.result])
+    return pipeline
 
-    Stateful inputs such as SQLite databases may change after their producing
-    rule completes. Their identity and dependency edge remain significant, but
-    byte-level mutations are intentionally outside downstream cache validity.
-    """
+
+def test_requesting_one_cooutput_activates_and_materializes_whole_call(tmp_path):
+    """One selected Node activates every declared output of its RuleCall."""
     dag = DAG(tmp_path)
     pipeline = Pipeline(dag)
-    pipeline.database = R_create_database(pipeline, seed="initial")
-    pipeline.receipt = R_mutate_database(pipeline, pipeline.database)
-    dag.require([pipeline.receipt])
-    dag.run()
+    outputs = PAIR(pipeline)
+    pipeline.result = outputs.result
+    pipeline.finish()
+    dag.require([pipeline.result])
 
-    time.sleep(0.05)
-    pipeline.database.path.write_text("externally changed\n")
+    plan = plan_execution(dag)
+    assert plan.active == [outputs.result.rule_call]
+    report = run(dag)
 
-    classify_nodes(dag.nodes, dag.required_nodes)
-
-    assert pipeline.database.mutable is True
-    assert pipeline.receipt.state == NodeState.UP_TO_DATE
-
-
-def test_missing_mutable_parent_replays_consumer(tmp_path):
-    """Rebuilding a missing mutable parent must replay dependent mutations.
-
-    Mutability suppresses only content-based invalidation. Missing or otherwise
-    stale state still propagates so cached side effects can be reconstructed.
-    """
-    dag = DAG(tmp_path)
-    pipeline = Pipeline(dag)
-    pipeline.database = R_create_database(pipeline, seed="initial")
-    pipeline.receipt = R_mutate_database(pipeline, pipeline.database)
-    dag.require([pipeline.receipt])
-    dag.run()
-    pipeline.database.path.unlink()
-
-    dag.run()
-
-    assert pipeline.database.path.read_text() == "initial\nmutation\n"
-    assert pipeline.receipt.state == NodeState.UP_TO_DATE
+    assert outputs.result.path.exists()
+    assert outputs.log.path.exists()
+    event = report[outputs.result.rule_call.relative_path.as_posix()]
+    assert set(event.output_node_keys) == {
+        outputs.result.relative_path.as_posix(),
+        outputs.log.relative_path.as_posix(),
+    }
 
 
-def _database_generation(node):
-    return Path(node.config["generation"]).read_text()
+def test_forced_parent_same_bytes_keeps_immutable_child_cached(tmp_path):
+    """Rebuilt parent with identical bytes does not invalidate consumer."""
+    first = _pipeline(tmp_path)
+    run(first.dag)
+    second = _pipeline(tmp_path)
 
-
-class GenerationTrackedDatabase(NodeType):
-    filename = "tracked.sqlite3"
-    mutable = True
-    invalidator = _database_generation
-
-
-def test_mutable_parent_invalidator_still_propagates_stale(tmp_path):
-    """Mutable content does not disable explicit generation invalidators.
-
-    A stable token can distinguish an allowed row mutation from replacement of
-    the database generation, which must replay dependent mutation rules.
-    """
-    generation = tmp_path / "generation"
-    generation.write_text("one")
-    create = Rule(
-        "create_tracked_database",
-        Inputs(generation=str),
-        Outputs(database=GenerationTrackedDatabase),
-        "touch {database}",
+    report = run(
+        second.dag,
+        forced_stale_call_keys={second.source.rule_call.relative_path},
     )
-    consume = Rule(
-        "consume_tracked_database",
-        Inputs(database=GenerationTrackedDatabase),
-        Outputs(receipt=MutationReceipt),
-        "touch {receipt}",
+
+    assert report[second.source.rule_call.relative_path.as_posix()].cached is False
+    assert report[second.result.rule_call.relative_path.as_posix()].cached is True
+
+
+def test_forced_parent_changed_bytes_replays_immutable_child(tmp_path):
+    """Consumed SHA disagreement invalidates consumer after parent settles."""
+    first = _pipeline(tmp_path)
+    run(first.dag)
+    second = _pipeline(tmp_path)
+
+    def changed_runner(call, log_path):
+        if call.rule.__name__ == "source":
+            call.outputs[0].path.write_text("changed")
+        else:
+            shutil.copyfile(call.parents[0].path, call.outputs[0].path)
+
+    report = run(
+        second.dag,
+        forced_stale_call_keys={second.source.rule_call.relative_path},
+        rule_call_runner=changed_runner,
     )
-    dag = DAG(tmp_path / "nodes")
-    pipeline = Pipeline(dag)
-    pipeline.database = create(pipeline, generation=str(generation))
-    pipeline.receipt = consume(pipeline, pipeline.database)
-    dag.require([pipeline.receipt])
-    dag.run()
 
-    generation.write_text("two")
-    classify_nodes(dag.nodes, dag.required_nodes)
-
-    assert pipeline.database.state == NodeState.STALE
-    assert pipeline.receipt.state == NodeState.STALE
+    assert report[second.result.rule_call.relative_path.as_posix()].cached is False
+    assert second.result.path.read_text() == "changed"
 
 
-@pytest.mark.parametrize("trigger", ["forced", "compromised"])
-def test_mutable_parent_explicit_staleness_replays_consumer(tmp_path, trigger):
-    """Forced and compromised mutable parents must still stale consumers."""
+def test_external_parent_edit_invalidates_hash_fast_path(tmp_path):
+    """Newer parent mtime invalidates stored hash and exposes changed bytes."""
+    first = _pipeline(tmp_path)
+    run(first.dag)
+    hash_file = first.source.rule_call.workdir / ".rip" / "source.txt.hash"
+    first.source.path.write_text("external")
+    newer = hash_file.stat().st_mtime_ns + 1_000_000
+    os.utime(first.source.path, ns=(newer, newer))
+
+    second = _pipeline(tmp_path)
+    plan = plan_execution(second.dag)
+
+    assert second.source.rule_call.state == RuleCallState.UP_TO_DATE
+    assert second.result.rule_call.state == RuleCallState.STALE
+    assert plan.reasons[second.result.rule_call.relative_path][0]["kind"] == (
+        "parent_content_changed"
+    )
+
+
+def test_directory_entry_rename_invalidates_stored_hash_fast_path(tmp_path):
+    """Directory metadata changes must invalidate hash trust even if file mtimes do not."""
+    first_dag = DAG(tmp_path)
+    first_pipeline = Pipeline(first_dag)
+    first_pipeline.bundle = BUNDLE_SOURCE(first_pipeline)
+    first_pipeline.result = BUNDLE_CONSUME(first_pipeline, first_pipeline.bundle)
+    first_pipeline.finish()
+    first_dag.require([first_pipeline.result])
+    run(first_dag)
+
+    first_pipeline.bundle.path.joinpath("a").rename(
+        first_pipeline.bundle.path / "renamed"
+    )
+
+    second_dag = DAG(tmp_path)
+    second_pipeline = Pipeline(second_dag)
+    second_pipeline.bundle = BUNDLE_SOURCE(second_pipeline)
+    second_pipeline.result = BUNDLE_CONSUME(second_pipeline, second_pipeline.bundle)
+    second_pipeline.finish()
+    second_dag.require([second_pipeline.result])
+    plan_execution(second_dag)
+
+    assert second_pipeline.bundle.rule_call.state == RuleCallState.UP_TO_DATE
+    assert second_pipeline.result.rule_call.state == RuleCallState.STALE
+
+
+def test_mutable_edit_is_ignored_but_mutable_rebuild_replays_consumer(tmp_path):
+    """Mutable bytes are ignored; executing mutable producer replays consumer."""
+    mutable_source = Rule(
+        "mutable_source",
+        Inputs(),
+        Outputs(source=Source),
+        "printf stable > {source}",
+        mutable=True,
+    )
+    first = _pipeline(tmp_path, source_rule=mutable_source)
+    run(first.dag)
+    first.source.path.write_text("external")
+    second = _pipeline(tmp_path, source_rule=mutable_source)
+    plan = plan_execution(second.dag)
+    assert second.result.rule_call.state == RuleCallState.UP_TO_DATE
+
+    third = _pipeline(tmp_path, source_rule=mutable_source)
+    report = run(
+        third.dag,
+        forced_stale_call_keys={third.source.rule_call.relative_path},
+    )
+    assert report[third.result.rule_call.relative_path.as_posix()].cached is False
+
+
+def test_missing_consumed_hash_marks_consumer_stale(tmp_path):
+    """Missing consumed SHA is unsafe, so consumer must rerun."""
+    first = _pipeline(tmp_path)
+    run(first.dag)
+    metadata_path = first.result.rule_call.workdir / ".rip" / "dependencies.toml"
+    metadata = tomlkit.parse(metadata_path.read_text())
+    del metadata["parents"][0]["consumed_sha256"]
+    metadata_path.write_text(tomlkit.dumps(metadata))
+
+    second = _pipeline(tmp_path)
+    plan = plan_execution(second.dag)
+    assert second.result.rule_call.state == RuleCallState.STALE
+    assert plan.reasons[second.result.rule_call.relative_path][0]["kind"] == (
+        "consumed_hash_missing"
+    )
+
+
+def test_missing_one_cooutput_marks_whole_call_missing(tmp_path):
+    """Partial cooutput cache cannot satisfy atomic RuleCall."""
     dag = DAG(tmp_path)
     pipeline = Pipeline(dag)
-    pipeline.database = R_create_database(pipeline, seed="initial")
-    pipeline.receipt = R_mutate_database(pipeline, pipeline.database)
-    dag.require([pipeline.receipt])
-    dag.run()
-    before = pipeline.receipt.path.stat().st_mtime_ns
-    time.sleep(0.05)
+    outputs = PAIR(pipeline)
+    pipeline.finish()
+    dag.require([outputs.result])
+    run(dag)
+    outputs.log.path.unlink()
 
-    if trigger == "forced":
-        dag.run(forced_stale_keys={pipeline.database.relative_path})
-    else:
-        pipeline.database.state_file.write_text("running")
-        dag.run()
+    second_dag = DAG(tmp_path)
+    second_pipeline = Pipeline(second_dag)
+    second = PAIR(second_pipeline)
+    second_pipeline.finish()
+    second_dag.require([second.result])
+    plan_execution(second_dag)
 
-    assert pipeline.receipt.path.stat().st_mtime_ns > before
+    assert second.result.rule_call.state == RuleCallState.MISSING

@@ -6,8 +6,9 @@ necroflow
 │   ├── NodeType typed file/artifact classes
 │   ├── NodeType subtype families for format contracts
 │   ├── NodeType union inputs for alternative type contracts
-│   ├── mutable NodeTypes with cache-neutral in-place content changes
-│   ├── Node objects with parents, config, command, output path, state
+│   ├── mutable single-output Rules with cache-neutral external edits
+│   ├── Node typed output/edge/result selectors
+│   ├── RuleCall atomic identity, cache, state, execution, report, cleanup
 │   ├── Module-level rule declarations
 │   │   ├── shell command API: @command(...)
 │   │   ├── built-in decorators: @text_file / @symlink_file
@@ -19,7 +20,7 @@ necroflow
 │   │   ├── ordered tuple[NodeType, ...] variadic inputs
 │   │   ├── optional inclusive Many(min=..., max=...) bounds
 │   │   ├── multi-output rules
-│   │   ├── co-output execution once per rule call
+│   │   ├── atomic co-output caching and execution per RuleCall
 │   │   ├── Constraints: threads, ram, custom resources
 │   │   ├── repeat=N subprocess retry attempts
 │   │   └── built-in text_file rules for generated config files
@@ -62,7 +63,8 @@ necroflow
 │   ├── explicit shellpath included in command fingerprints
 │   ├── path length validation
 │   ├── destination-filesystem result-path preflight before copying
-│   ├── output content hashes
+│   ├── output content hashes with mtime-gated stored-hash fast path
+│   ├── consumed immutable-parent SHA-256 metadata
 │   ├── invalidator tokens on NodeType
 │   └── .rip metadata directories
 │
@@ -73,9 +75,8 @@ necroflow
 │   │   ├── ram/custom resource caps
 │   │   └── SI/binary resource parsing
 │   ├── scheduler protocol
-│   │   └── ready nodes, remaining nodes, and available capped resources
-│   ├── connected-component scheduler
-│   ├── FIFO scheduler
+│   │   └── ready RuleCalls, remaining RuleCalls, available capped resources
+│   ├── FIFO scheduler default using RuleCall insertion order
 │   ├── custom schedulers
 │   │   └── Python callables can implement resource-aware ordering policies
 │   ├── dry-run mode
@@ -85,7 +86,7 @@ necroflow
 │   ├── missing-output detection
 │   ├── job logs
 │   ├── execution reports
-│   │   ├── .rip/run.toml node-local runtime stats
+│   │   ├── .rip/run.toml RuleCall-local runtime stats
 │   │   ├── results/<job>/execution.toml per-run summaries
 │   │   └── duration and output-size accounting
 │   ├── output/provenance graph writing
@@ -96,8 +97,7 @@ necroflow
 │
 ├── CLI
 │   ├── --scheduler selector
-│   │   ├── connected-components default
-│   │   ├── fifo
+│   │   ├── fifo default
 │   │   └── local Python callable
 │   ├── legacy/default run form: necroflow job.toml
 │   ├── explicit run subcommand
@@ -113,7 +113,7 @@ necroflow
 │   ├── doctor subcommand
 │   │   └── stable NF_* preflight issue codes
 │   ├── explain subcommand
-│   │   └── state, command, resources, and why-run reasons
+│   │   └── ordered RuleCalls, nested outputs, tri-state why-run reasons
 │   ├── output root options
 │   │   ├── --nodes-dir
 │   │   ├── --results-dir
@@ -155,7 +155,7 @@ necroflow
 │   ├── manifest.toml with paths, origin node keys, and content hashes
 │   ├── provenance-aware gc with pipeline-collection scripts
 │   ├── execution.toml for requested rule calls, outputs, and total runtime
-│   ├── dependencies.toml
+│   ├── dependencies.toml with consumed parent hashes
 │   ├── content hash files
 │   ├── invalidation token files
 │   ├── job.log

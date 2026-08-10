@@ -16,9 +16,8 @@ from pathlib import Path
 
 import pytest
 import tomlkit
-from necroflow import NodeState, NodeType, Pipeline, DAG, run, output
-import necroflow.schedulers as schedulers
-from necroflow import fifo_scheduler, make_connected_component_scheduler, output
+from necroflow import RuleCallState, NodeType, Pipeline, DAG, run, output
+from necroflow import fifo_scheduler, output
 
 
 def run_pipeline(pipeline, **kwargs):
@@ -116,10 +115,10 @@ def test_repeat_retries_failed_command_until_success(tmp_path):
         attempts += 1
         if attempts < 3:
             raise subprocess.CalledProcessError(1, "flaky")
-        node.path.parent.mkdir(parents=True, exist_ok=True)
-        node.path.touch()
+        node.workdir.mkdir(parents=True, exist_ok=True)
+        node.outputs[0].path.touch()
 
-    run_pipeline(P, node_runner=flaky_runner)
+    run_pipeline(P, rule_call_runner=flaky_runner)
 
     assert attempts == 3
     assert P.out.path.exists()
@@ -162,10 +161,10 @@ def test_repeat_stops_after_first_success(tmp_path):
     def successful_runner(node, log_path):
         nonlocal attempts
         attempts += 1
-        node.path.parent.mkdir(parents=True, exist_ok=True)
-        node.path.touch()
+        node.workdir.mkdir(parents=True, exist_ok=True)
+        node.outputs[0].path.touch()
 
-    run_pipeline(P, node_runner=successful_runner)
+    run_pipeline(P, rule_call_runner=successful_runner)
 
     assert attempts == 1
 
@@ -188,7 +187,7 @@ def test_repeat_does_not_retry_non_process_errors(tmp_path):
         raise RuntimeError("runner bug")
 
     with pytest.raises(RuntimeError, match="runner bug"):
-        run_pipeline(P, node_runner=broken_runner)
+        run_pipeline(P, rule_call_runner=broken_runner)
 
     assert attempts == 1
 
@@ -211,11 +210,11 @@ def test_repeat_raises_last_command_failure_after_limit(tmp_path):
         raise subprocess.CalledProcessError(7, "always_fails")
 
     with pytest.raises(subprocess.CalledProcessError) as caught:
-        run_pipeline(P, node_runner=failing_runner)
+        run_pipeline(P, rule_call_runner=failing_runner)
 
     assert caught.value.returncode == 7
     assert attempts == 3
-    assert P.out.state == NodeState.FAILED
+    assert P.out.rule_call.state == RuleCallState.FAILED
 
 
 def test_run_handles_outdir_with_spaces(tmp_path):
@@ -277,12 +276,14 @@ def test_invalid_shellpath_fails_before_outputs(tmp_path):
     assert not list(tmp_path.rglob("a.txt"))
 
 
-def test_pipeline_shellpath_can_be_combined_with_node_runner(tmp_path):
+def test_pipeline_shellpath_can_be_combined_with_rule_call_runner(tmp_path):
     shell = shutil.which("sh") or "/bin/sh"
     P = Pipeline(DAG(tmp_path), shellpath=shell)
     P.out = R_make_a(P, x="x")
 
-    run_pipeline(P, node_runner=lambda node, log_path: node.path.touch())
+    run_pipeline(
+        P, rule_call_runner=lambda node, log_path: node.outputs[0].path.touch()
+    )
     assert P.out.path.exists()
 
 
@@ -332,7 +333,7 @@ def test_run_idempotent(tmp_path):
     assert P.b.path.stat().st_mtime == mtime_b
 
 
-def test_forced_stale_parent_propagates_to_child(tmp_path):
+def test_forced_parent_same_bytes_keeps_child_cached(tmp_path):
     import time
 
     P = Pipeline(DAG(tmp_path))
@@ -343,13 +344,13 @@ def test_forced_stale_parent_propagates_to_child(tmp_path):
     mtime_b = P.b.path.stat().st_mtime
 
     time.sleep(0.05)
-    run_pipeline(P, forced_stale_keys={P.a.relative_path})
+    run_pipeline(P, forced_stale_call_keys={P.a.rule_call.relative_path})
 
     assert P.a.path.stat().st_mtime > mtime_a
-    assert P.b.path.stat().st_mtime > mtime_b
+    assert P.b.path.stat().st_mtime == mtime_b
 
 
-def test_compromised_parent_propagates_to_child(tmp_path):
+def test_compromised_parent_same_bytes_keeps_child_cached(tmp_path):
     import time
 
     P = Pipeline(DAG(tmp_path))
@@ -358,13 +359,13 @@ def test_compromised_parent_propagates_to_child(tmp_path):
     run_pipeline(P)
     mtime_a = P.a.path.stat().st_mtime
     mtime_b = P.b.path.stat().st_mtime
-    P.a.state_file.write_text("running")
+    P.a.rule_call.state_file.write_text("running")
 
     time.sleep(0.05)
     run_pipeline(P)
 
     assert P.a.path.stat().st_mtime > mtime_a
-    assert P.b.path.stat().st_mtime > mtime_b
+    assert P.b.path.stat().st_mtime == mtime_b
 
 
 def test_conditional_pipeline(tmp_path):
@@ -546,14 +547,6 @@ def test_fifo_scheduler(tmp_path):
     assert P.b.path.exists() and P.c.path.exists()
 
 
-def test_connected_component_scheduler(tmp_path):
-    P = Pipeline(DAG(tmp_path))
-    P.a = R_make_a(P, x="x")
-    P.b = R_make_b(P, P.a)
-    run_pipeline(P, scheduler=make_connected_component_scheduler())
-    assert P.b.path.exists()
-
-
 def test_scheduler_receives_available_resources(tmp_path):
     seen = []
 
@@ -638,7 +631,7 @@ def test_scheduler_must_return_a_list_of_ready_nodes(tmp_path):
         return [foreign]
 
     cases["list"] = (not_a_list, TypeError, "must return list")
-    cases["duplicate"] = (duplicate, ValueError, "duplicate node")
+    cases["duplicate"] = (duplicate, ValueError, "duplicate RuleCall")
     cases["non-ready"] = (non_ready, ValueError, "not ready")
     cases["foreign"] = (foreign_node, ValueError, "not ready")
 
@@ -649,187 +642,6 @@ def test_scheduler_must_return_a_list_of_ready_nodes(tmp_path):
 
         with pytest.raises(error_type, match=message):
             run_pipeline(pipeline, scheduler=scheduler)
-
-
-# ── connected-component scheduler ordering ────────────────────────────────────
-
-
-class Step(NodeType):
-    filename = "s"  # reused across all chain rules below
-
-
-Rchain_c2_s1 = Rule("c2_s1", Inputs(x=str), Outputs(s=Step), "touch {s}")
-Rchain_c2_s2 = Rule("c2_s2", Inputs(s=Step), Outputs(s=Step), "touch {s}")
-Rchain_c3_s1 = Rule("c3_s1", Inputs(x=str), Outputs(s=Step), "touch {s}")
-Rchain_c3_s2 = Rule("c3_s2", Inputs(s=Step), Outputs(s=Step), "touch {s}")
-Rchain_c3_s3 = Rule("c3_s3", Inputs(s=Step), Outputs(s=Step), "touch {s}")
-Rchain_c4_s1 = Rule("c4_s1", Inputs(x=str), Outputs(s=Step), "touch {s}")
-Rchain_c4_s2 = Rule("c4_s2", Inputs(s=Step), Outputs(s=Step), "touch {s}")
-Rchain_c4_s3 = Rule("c4_s3", Inputs(s=Step), Outputs(s=Step), "touch {s}")
-Rchain_c4_s4 = Rule("c4_s4", Inputs(s=Step), Outputs(s=Step), "touch {s}")
-
-
-def _recording(sched):
-    """Return (scheduler_fn, started_list). started_list records rule name of
-    first node returned per scheduler call (= submission order with threads=1)."""
-    started = []
-
-    def fn(ready, remaining, available_resources):
-        result = sched(ready, remaining, available_resources)
-        if result:
-            started.append(result[0].rule.__name__)
-        return result
-
-    return fn, started
-
-
-def test_scheduler_exhausts_smallest_chain_first(tmp_path):
-    """Three independent chains of sizes 2, 3, 4: with threads=1 the scheduler
-    must finish the size-2 chain before starting the size-3, and the size-3
-    before the size-4."""
-    P = Pipeline(DAG(tmp_path))
-    P.c2a = Rchain_c2_s1(P, x="c2")
-    P.c2b = Rchain_c2_s2(P, P.c2a)
-    P.c3a = Rchain_c3_s1(P, x="c3")
-    P.c3b = Rchain_c3_s2(P, P.c3a)
-    P.c3c = Rchain_c3_s3(P, P.c3b)
-    P.c4a = Rchain_c4_s1(P, x="c4")
-    P.c4b = Rchain_c4_s2(P, P.c4a)
-    P.c4c = Rchain_c4_s3(P, P.c4b)
-    P.c4d = Rchain_c4_s4(P, P.c4c)
-
-    fn, started = _recording(make_connected_component_scheduler())
-    run_pipeline(P, scheduler=fn, resource_caps={"threads": 1})
-
-    chain2 = {"c2_s1", "c2_s2"}
-    chain3 = {"c3_s1", "c3_s2", "c3_s3"}
-    chain4 = {"c4_s1", "c4_s2", "c4_s3", "c4_s4"}
-    idx = {name: i for i, name in enumerate(started)}
-    assert max(idx[n] for n in chain2) < min(idx[n] for n in chain3)
-    assert max(idx[n] for n in chain3) < min(idx[n] for n in chain4)
-
-
-def test_connected_component_scheduler_builds_index_once(tmp_path, monkeypatch):
-    """Incremental scheduling must build the complete component index only once."""
-    build_calls = 0
-    original_build = schedulers._build_components
-
-    def recording_build(state, nodes):
-        nonlocal build_calls
-        build_calls += 1
-        original_build(state, nodes)
-
-    monkeypatch.setattr(schedulers, "_build_components", recording_build)
-    P = Pipeline(DAG(tmp_path))
-    P.a = R_make_a(P, x="x")
-    P.b = R_make_b(P, P.a)
-
-    run_pipeline(
-        P,
-        scheduler=make_connected_component_scheduler(),
-        resource_caps={"threads": 1},
-    )
-
-    assert build_calls == 1
-
-
-def test_default_scheduler_has_fresh_state_for_each_run(tmp_path):
-    """Repeated run calls must not inherit connected-component state."""
-
-    def run_once(nodes_dir):
-        P = Pipeline(DAG(nodes_dir))
-        P.c2a = Rchain_c2_s1(P, x="c2")
-        P.c2b = Rchain_c2_s2(P, P.c2a)
-        P.c3a = Rchain_c3_s1(P, x="c3")
-        P.c3b = Rchain_c3_s2(P, P.c3a)
-        P.c3c = Rchain_c3_s3(P, P.c3b)
-        P.c4a = Rchain_c4_s1(P, x="c4")
-        P.c4b = Rchain_c4_s2(P, P.c4a)
-        P.c4c = Rchain_c4_s3(P, P.c4b)
-        P.c4d = Rchain_c4_s4(P, P.c4c)
-        started = []
-
-        def recording_runner(node, log_path):
-            started.append(node.rule.__name__)
-            node.path.touch()
-
-        run_pipeline(
-            P,
-            resource_caps={"threads": 1},
-            node_runner=recording_runner,
-        )
-        return started
-
-    expected = [
-        "c2_s1",
-        "c2_s2",
-        "c3_s1",
-        "c3_s2",
-        "c3_s3",
-        "c4_s1",
-        "c4_s2",
-        "c4_s3",
-        "c4_s4",
-    ]
-
-    assert run_once(tmp_path / "first") == expected
-    assert run_once(tmp_path / "second") == expected
-
-
-class FA(NodeType):
-    filename = "a"
-
-
-class FB(NodeType):
-    filename = "b"
-
-
-class FC(NodeType):
-    filename = "c"
-
-
-class FD(NodeType):
-    filename = "d"
-
-
-class FE(NodeType):
-    filename = "e"
-
-
-class FF(NodeType):
-    filename = "f"
-
-
-class FG(NodeType):
-    filename = "g"
-
-
-Rfork_ra = Rule("ra", Inputs(x=str), Outputs(a=FA), "touch {a}")
-Rfork_rb = Rule("rb", Inputs(a=FA), Outputs(b=FB), "touch {b}")
-Rfork_rc = Rule("rc", Inputs(b=FB), Outputs(c=FC), "touch {c}")
-Rfork_rd = Rule("rd", Inputs(b=FB), Outputs(d=FD), "touch {d}")
-Rfork_re = Rule("re", Inputs(c=FC), Outputs(e=FE), "touch {e}")
-Rfork_rf = Rule("rf", Inputs(d=FD), Outputs(f=FF), "touch {f}")
-Rfork_rg = Rule("rg", Inputs(f=FF), Outputs(g=FG), "touch {g}")
-
-
-def test_scheduler_fork_prefers_smaller_branch(tmp_path):
-    """DAG: A->B->(C->E | D->F->G). After A and B complete the graph splits into
-    C->E (size 2) and D->F->G (size 3). With threads=1 the scheduler must
-    complete C->E entirely before starting D."""
-    P = Pipeline(DAG(tmp_path))
-    P.a = Rfork_ra(P, x="x")
-    P.b = Rfork_rb(P, P.a)
-    P.c = Rfork_rc(P, P.b)
-    P.d = Rfork_rd(P, P.b)
-    P.e = Rfork_re(P, P.c)
-    P.f = Rfork_rf(P, P.d)
-    P.g = Rfork_rg(P, P.f)
-
-    fn, started = _recording(make_connected_component_scheduler())
-    run_pipeline(P, scheduler=fn, resource_caps={"threads": 1})
-
-    assert started == ["ra", "rb", "rc", "re", "rd", "rf", "rg"]
 
 
 # ── thread budget ─────────────────────────────────────────────────────────────
@@ -863,8 +675,8 @@ def test_autoclean_deletes_orphan(tmp_path):
     assert not b_path.exists()
 
 
-def test_autoclean_removes_only_orphaned_cooutput_from_active_directory(tmp_path):
-    """Cleaning one orphaned co-output must preserve its requested sibling directory."""
+def test_autoclean_keeps_all_outputs_of_active_call(tmp_path):
+    """Unrequested sibling belongs to active call and remains cached."""
 
     first = Pipeline(DAG(tmp_path))
     first.a, first.b = R_make_ab(first, x="x")
@@ -877,7 +689,7 @@ def test_autoclean_removes_only_orphaned_cooutput_from_active_directory(tmp_path
     dag.run(autoclean=True)
 
     assert second.a.path.exists()
-    assert not second.b.path.exists()
+    assert second.b.path.exists()
     assert second.a.path.parent.exists()
 
 
@@ -900,10 +712,13 @@ def test_autoclean_preserves_mutable_intermediate(tmp_path):
 
     class MutableStore(NodeType):
         filename = "state.sqlite3"
-        mutable = True
 
     create = Rule(
-        "create_store", Inputs(seed=str), Outputs(store=MutableStore), "touch {store}"
+        "create_store",
+        Inputs(seed=str),
+        Outputs(store=MutableStore),
+        "touch {store}",
+        mutable=True,
     )
     consume = Rule(
         "consume_store", Inputs(store=MutableStore), Outputs(b=B), "touch {b}"
@@ -916,41 +731,6 @@ def test_autoclean_preserves_mutable_intermediate(tmp_path):
 
     assert pipeline.store.path.exists()
     assert pipeline.result.path.exists()
-
-
-def test_autoclean_preserves_orphaned_directory_with_mutable_cooutput(tmp_path):
-    """A mutable co-output protects its complete shared rule-call directory.
-
-    Orphan cleanup normally removes whole rule-call directories. Deleting such
-    a directory through an ordinary sibling must not erase mutable state.
-    """
-
-    class MutableStore(NodeType):
-        filename = "state.sqlite3"
-        mutable = True
-
-    class StoreLog(NodeType):
-        filename = "store.log"
-
-    create = Rule(
-        "create_store",
-        Inputs(seed=str),
-        Outputs(store=MutableStore, log=StoreLog),
-        "touch {store} {log}",
-    )
-    first = Pipeline(DAG(tmp_path))
-    first.store, first.log = create(first, seed="x")
-    first.dag.require([first.store])
-    first.dag.run()
-
-    second = Pipeline(DAG(tmp_path))
-    second.store, second.log = create(second, seed="x")
-    second.a = R_make_a(second, x="independent")
-    second.dag.require([second.a])
-    second.dag.run(autoclean=True)
-
-    assert second.store.path.exists()
-    assert second.log.path.exists()
 
 
 def test_autoclean_false_leaves_orphan(tmp_path):
@@ -1416,7 +1196,7 @@ def test_run_returns_report_and_writes_run_stats_with_output_size(tmp_path):
     report = run_pipeline(P)
 
     assert isinstance(report, dict)
-    event = report.get(P.a.relative_path.as_posix())
+    event = report.get(P.a.rule_call.relative_path.as_posix())
     assert event is not None
     assert event.cached is False
     assert event.state == "up_to_date"
@@ -1441,7 +1221,7 @@ def test_run_report_marks_cached_nodes_and_measures_size(tmp_path):
 
     cached_report = run_pipeline(P)
 
-    event = cached_report.get(P.a.relative_path.as_posix())
+    event = cached_report.get(P.a.rule_call.relative_path.as_posix())
     assert event is not None
     assert event.cached is True
     assert event.duration_seconds is None

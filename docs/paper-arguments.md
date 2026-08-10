@@ -75,14 +75,13 @@ This document condenses the manuscript arguments into a review-oriented outline.
 
 - The executor runs the required dependency closure for selected targets on a local machine. (`sec:impl:executor`)
 - It respects declared resource requirements and configured capacity, allowing concurrent independent work when resources permit. (`sec:impl:executor`)
-- A multi-output rule is executed once for its logical node, avoiding duplicate work for sibling targets. (`sec:impl:executor`)
+- A multi-output RuleCall is one atomic cache and execution unit, avoiding partial sibling state. (`sec:impl:executor`)
 - The executor can continue independent work after failures and can clean incomplete outputs, supporting iterative local development. (`sec:impl:executor`)
 
 ## 12. Scheduling
 
 - FIFO scheduling provides a simple default that follows graph readiness. (`sec:impl:schedulers`)
-- A connected-components scheduler is offered to favor locality within related regions of the graph. (`sec:impl:schedulers`)
-- Schedulers receive ready and remaining nodes plus the available capped resources, allowing projects to implement resource-aware policies in Python. (`sec:impl:schedulers`)
+- Schedulers receive ready and remaining RuleCalls plus the available capped resources, allowing projects to implement resource-aware policies in Python. (`sec:impl:schedulers`)
 - Snakemake offers greedy and ILP scheduler plugins aimed at global resource use, runtime, and temporary-file disk use; Necroflow keeps optimization optional because development-stage pipelines rarely have reliable runtime estimates. (`sec:impl:schedulers`)
 - The scheduling discussion is deliberately practical and local-first rather than a claim of global cluster optimization. (`sec:impl:schedulers`, `sec:discussion`)
 

@@ -11,7 +11,6 @@ import tomlkit
 from necroflow.ascii_render import _node_label, render_ascii
 from necroflow.nodes import (
     Node,
-    NodeState,
     NodeType,
     NodeTypeMeta,
 )
@@ -75,22 +74,20 @@ def _content_hash(path: Path) -> str:
     return h.hexdigest()
 
 
-def _accumulated_config(node: Node, _visited: dict[Path, dict] | None = None) -> dict:
-    """Merge node.config over every ancestor's, nearest wins.
-
-    ``_visited`` memoizes by relative_path so a diamond ancestor is walked
-    once per call instead of once per path reaching it.
-    """
+def _accumulated_config(
+    call: RuleCall, _visited: dict[Path, dict] | None = None
+) -> dict:
+    """Merge call config over every ancestor config, nearest wins."""
     if _visited is None:
         _visited = {}
-    cached = _visited.get(node.relative_path)
+    cached = _visited.get(call.relative_path)
     if cached is not None:
         return cached
     config = {}
-    for parent in node.parents:
+    for parent in call.parent_calls:
         config.update(_accumulated_config(parent, _visited))
-    config.update(node.config)
-    _visited[node.relative_path] = config
+    config.update(call.config)
+    _visited[call.relative_path] = config
     return config
 
 
@@ -125,15 +122,27 @@ def _has_changed_invalidation(node: Node) -> bool:
     return not token_path.exists() or token_path.read_text() != token
 
 
-def write_dependencies(node: Node) -> None:
-    """Write dependencies.toml, content hashes, and invalidation tokens.
-
-    Call after the job succeeds. Co-outputs share a directory, so calling this for
-    any one of them writes metadata for all siblings via node.output_nodes.
-    """
+def _parent_metadata(parent: Node, hash_cache: dict[Path, str]) -> dict:
     data = {
-        "rule": node.rule.__name__ if node.rule else "unknown",
-        "config": _accumulated_config(node),
+        "node_key": parent.relative_path.as_posix(),
+        "call_key": parent.rule_call.relative_path.as_posix(),
+        "mutable": parent.rule_call.mutable,
+    }
+    if not parent.rule_call.mutable:
+        data["consumed_sha256"] = current_output_hash(parent, hash_cache)
+    return data
+
+
+def write_dependencies(
+    call: RuleCall, hash_cache: dict[Path, str] | None = None
+) -> None:
+    """Persist call lineage, consumed parent hashes, output hashes, invalidators."""
+    if hash_cache is None:
+        hash_cache = {}
+    data = {
+        "rule": call.rule.__name__,
+        "mutable": call.mutable,
+        "config": _accumulated_config(call),
         "outputs": [
             {
                 "name": output.output_name,
@@ -141,57 +150,71 @@ def write_dependencies(node: Node) -> None:
                 "type": (
                     f"{output.node_type.__module__}.{output.node_type.__qualname__}"
                 ),
-                "mutable": output.mutable,
             }
-            for output in node.output_nodes.values()
+            for output in call.outputs
         ],
-        "parents": [
-            {
-                "node_key": parent.relative_path.as_posix(),
-                "mutable": parent.mutable,
-            }
-            for parent in node.parents
-        ],
-    }
-    if node.rule_call is not None:
-        data["identity"] = {
+        "parents": [_parent_metadata(parent, hash_cache) for parent in call.parents],
+        "identity": {
             "format": IDENTITY_FORMAT,
-            "rule_hash": node.rule_hash,
-            "provenance_hash": node.provenance_hash,
-        }
-    if node.rule_call.shellpath is not None:
-        data["execution"] = {"shellpath": node.rule_call.shellpath}
-    if node.command is not None:
+            "rule_hash": call.rule_hash,
+            "provenance_hash": call.provenance_hash,
+        },
+    }
+    if call.shellpath is not None:
+        data["execution"] = {"shellpath": call.shellpath}
+    if call.command is not None:
         command_data = {
-            "kind": "python" if callable(node.command) else "shell",
-            "realized": resolve_command(node),
+            "kind": "python" if callable(call.command) else "shell",
+            "realized": resolve_command(call),
         }
-        if callable(node.command):
-            _tree, source_path = command_ast(node.command)
-            command_data["source"] = os.path.relpath(
-                source_path, node.rule_call.dag.nodes_dir
-            )
+        if callable(call.command):
+            _tree, source_path = command_ast(call.command)
+            command_data["source"] = os.path.relpath(source_path, call.dag.nodes_dir)
             command_data["python"] = python_identity()
         else:
-            command_data["template"] = node.command
+            command_data["template"] = call.command
         data["command"] = command_data
-    rip = node.path.parent / ".rip"
+    rip = call.workdir / ".rip"
     rip.mkdir(parents=True, exist_ok=True)
     (rip / "dependencies.toml").write_text(tomlkit.dumps(data))
-    for onode in node.output_nodes.values():
-        if onode.path is not None and onode.path.exists():
-            (rip / (onode.path.name + ".hash")).write_text(_content_hash(onode.path))
-            token = _invalidation_token(onode)
+    for output in call.outputs:
+        if output.path.exists():
+            digest = _content_hash(output.path)
+            (rip / (output.path.name + ".hash")).write_text(digest)
+            hash_cache[output.relative_path] = digest
+            token = _invalidation_token(output)
             if token is not None:
-                _invalidation_file(onode).write_text(token)
+                _invalidation_file(output).write_text(token)
 
 
-def _output_mtime(path: Path) -> float:
-    """Mtime of a node output. For directories, returns the max mtime of all files inside."""
+def _output_mtime(path: Path) -> int:
+    """Newest output mtime; directory entries detect rename and deletion."""
     if path.is_dir():
-        mtimes = [f.stat().st_mtime for f in path.rglob("*") if f.is_file()]
-        return max(mtimes) if mtimes else path.stat().st_mtime
-    return path.stat().st_mtime
+        entries = [path]
+        entries.extend(
+            entry
+            for entry in path.rglob("*")
+            if ".rip" not in entry.relative_to(path).parts
+        )
+        return max(entry.stat().st_mtime_ns for entry in entries)
+    return path.stat().st_mtime_ns
+
+
+def current_output_hash(node: Node, memo: dict[Path, str]) -> str:
+    """Return current bytes hash, trusting stored hash while mtime proves safety."""
+    cached = memo.get(node.relative_path)
+    if cached is not None:
+        return cached
+    hash_file = node.rule_call.workdir / ".rip" / (node.path.name + ".hash")
+    digest = None
+    if hash_file.exists() and _output_mtime(node.path) <= hash_file.stat().st_mtime_ns:
+        stored = hash_file.read_text().strip()
+        if len(stored) == 64 and all(char in "0123456789abcdef" for char in stored):
+            digest = stored
+    if digest is None:
+        digest = _content_hash(node.path)
+    memo[node.relative_path] = digest
+    return digest
 
 
 class _ShellArguments:
@@ -227,23 +250,17 @@ def _quote_command_substitution(value: Any) -> Any:
     return shlex.quote(str(value))
 
 
-def resolve_command(node: Node) -> str | None:
-    """Format node.command with input/output paths and config values.
-
-    Substitutions: {input_name} -> parent.path, {output_name} -> node.path, {config_key} -> value.
-    """
-    if node.command is None:
+def resolve_command(call: RuleCall) -> str | None:
+    """Resolve one RuleCall command from input, output, config, resource paths."""
+    if call.command is None:
         return None
-    call = node.rule_call
     if call._realized_command is not None:
         return call._realized_command
-    if callable(node.command):
-        if call is None:
-            raise RuntimeError("callable command is missing its RuleCall")
-        result = node.command(call.command_args())
+    if callable(call.command):
+        result = call.command(call.command_args())
         if not isinstance(result, str) or not result.strip():
             raise TypeError(
-                f"Python command callback {node.command.__qualname__!r} must return "
+                f"Python command callback {call.command.__qualname__!r} must return "
                 f"a non-empty shell string, got {result!r}"
             )
         call._realized_command = result
@@ -253,21 +270,20 @@ def resolve_command(node: Node) -> str | None:
         name: _ShellArguments(value) if isinstance(value, tuple) else value
         for name, value in command_inputs.items()
     }
-    subs.update(node.config)
+    subs.update(call.config)
     command_constraints = {
-        "threads": node.rule.constraints.get("threads", node.rule.resources["threads"])
+        "threads": call.rule.constraints.get("threads", call.rule.resources["threads"])
     }
-    command_constraints.update(node.rule.constraints)
+    command_constraints.update(call.rule.constraints)
     for name, value in command_constraints.items():
         subs.setdefault(name, value)
     subs["constraint"] = _ConstraintFormatter(command_constraints)
-    for oname, onode in node.output_nodes.items():
-        subs[oname] = onode.path
-    subs["workdir"] = node.path.parent
-    quoted = {k: _quote_command_substitution(v) for k, v in subs.items()}
-    result = node.command.format(**quoted)
-    if call is not None:
-        call._realized_command = result
+    for output_name, output in call.output_nodes.items():
+        subs[output_name] = output.path
+    subs["workdir"] = call.workdir
+    quoted = {key: _quote_command_substitution(value) for key, value in subs.items()}
+    result = call.command.format(**quoted)
+    call._realized_command = result
     return result
 
 

@@ -29,7 +29,7 @@ def job_start(node) -> None:
         else 1
     )
     thread_str = f" [{threads} threads]" if threads > 1 else ""
-    _log.info("start  %s → %s%s", desc, node.path, thread_str)
+    _log.info("start  %s → %s%s", desc, node.workdir, thread_str)
 
 
 def job_retry(node, failed_attempt: int, max_attempts: int, returncode: int) -> None:
@@ -81,12 +81,12 @@ def job_output(log_path) -> None:
 
 
 def cleaned(node) -> None:
-    _log.info("clean  %s", node.path)
+    _log.info("clean  %s", node.workdir)
 
 
 def dry_run_node(node) -> None:
     desc = node.rule.__name__ if node.rule else "?"
-    _log.info("would-run  %-8s  %s → %s", node.state.name, desc, node.path)
+    _log.info("would-run  %-8s  %s → %s", node.state.name, desc, node.workdir)
 
 
 def dry_run_summary(n_would_run: int, n_up_to_date: int) -> None:

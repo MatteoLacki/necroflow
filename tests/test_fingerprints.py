@@ -21,7 +21,7 @@ from necroflow import (
     output,
     resolve_command,
 )
-from necroflow.planning import classify_nodes
+from necroflow.planning import plan_execution
 from necroflow.rules import Rule
 from necroflow.fingerprints import (
     FingerprintValueError,
@@ -121,7 +121,7 @@ def test_command_args_are_resolved_named_immutable_views(tmp_path):
         Constraints(threads=3),
     )
     result = rule(pipeline, source, force=True)
-    realized = resolve_command(result)
+    realized = resolve_command(result.rule_call)
 
     assert (
         realized
@@ -148,8 +148,8 @@ def test_callable_command_is_realized_once_per_rule_call(tmp_path):
     )
     pipeline = Pipeline(DAG(tmp_path))
     outputs = rule(pipeline, label="x")
-    first = resolve_command(outputs.result)
-    assert resolve_command(outputs.log) == first
+    first = resolve_command(outputs.result.rule_call)
+    assert resolve_command(outputs.log.rule_call) == first
     assert CALL_COUNT == 1
     assert outputs.result.path.is_absolute()
 
@@ -201,7 +201,7 @@ def test_callable_command_must_return_nonempty_string(tmp_path):
     result = rule(Pipeline(DAG(tmp_path)), label="x")
 
     with pytest.raises(TypeError, match="must return a non-empty shell string"):
-        resolve_command(result)
+        resolve_command(result.rule_call)
 
 
 def test_lambda_command_with_unique_source_is_supported(tmp_path):
@@ -212,7 +212,7 @@ def test_lambda_command_with_unique_source_is_supported(tmp_path):
         LAMBDA_COMMAND,
     )
     result = rule(Pipeline(DAG(tmp_path)), label="x")
-    assert resolve_command(result) == f"touch {result.path}"
+    assert resolve_command(result.rule_call) == f"touch {result.path}"
 
 
 def test_callable_command_decorator_uses_declared_rule_shape(tmp_path):
@@ -222,7 +222,7 @@ def test_callable_command_decorator_uses_declared_rule_shape(tmp_path):
 
     assert result.rule.__name__ == "decorated_dynamic"
     assert result.rule.constraints == {"threads": 2}
-    assert resolve_command(result).endswith(
+    assert resolve_command(result.rule_call).endswith(
         f"{shlex.quote(str(source.path))} {shlex.quote(str(result.path))}"
     )
 
@@ -443,10 +443,10 @@ def test_v2_fingerprint_cache_is_not_reused(tmp_path):
     node = _source_rule()(pipeline, text="x")
     dag.require([node])
 
-    classify_nodes(dag.nodes, dag.required_nodes)
+    plan_execution(dag)
 
     assert len(node.path.relative_to(tmp_path).parts) == 4
-    assert node.state.value == "missing"
+    assert node.rule_call.state.value == "missing"
 
 
 def test_constraints_and_repeat_remain_outside_framework_hashes(tmp_path):

@@ -1,231 +1,226 @@
-"""Invocation-local cache classification for DAG execution."""
+"""Invocation-local RuleCall cache classification."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from necroflow.dag import (
-    DAG,
-    _content_hash,
-    _has_changed_invalidation,
-    _output_mtime,
-)
-from necroflow.nodes import Node, NodeState, _topo_sort
+import tomlkit
+
+from necroflow.dag import DAG, _has_changed_invalidation, current_output_hash
+from necroflow.rule_call import RuleCall, RuleCallState
 
 Reason = dict[str, object]
 
 
 @dataclass
 class ExecutionPlan:
-    """One invocation's classified Nodes and their recorded reasons."""
+    """Required RuleCalls, orphan calls, cache evidence, and hash memo."""
 
-    active: list[Node]
-    orphans: list[Node]
-    reasons: dict[Path, tuple[Reason, ...]]
+    active: list[RuleCall]
+    orphans: list[RuleCall]
+    reasons: dict[Path, tuple[Reason, ...]] = field(default_factory=dict)
+    hash_cache: dict[Path, str] = field(default_factory=dict)
+    forced_call_keys: set[Path] = field(default_factory=set)
+    include_advisories: bool = False
 
     @property
     def active_keys(self) -> set[Path]:
-        return {node.relative_path for node in self.active}
+        return {call.relative_path for call in self.active}
 
 
-def _parent_content_changed(node: Node, parent: Node) -> bool:
-    """Return whether a newer parent differs from its stored successful hash."""
-    if node.path is None or parent.path is None or not parent.path.exists():
-        return False
-    if _output_mtime(parent.path) <= _output_mtime(node.path):
-        return False
-    hash_file = parent.path.parent / ".rip" / (parent.path.name + ".hash")
-    return not (
-        hash_file.exists()
-        and _content_hash(parent.path) == hash_file.read_text().strip()
+def _required_call_keys(dag: DAG) -> set[Path]:
+    required: set[Path] = set()
+    frontier = [node.rule_call for node in dag.required_nodes]
+    while frontier:
+        call = frontier.pop()
+        if call.relative_path in required:
+            continue
+        required.add(call.relative_path)
+        frontier.extend(call.parent_calls)
+    return required
+
+
+def _dependencies(call: RuleCall) -> list[dict] | None:
+    path = call.workdir / ".rip" / "dependencies.toml"
+    if not path.exists():
+        return None
+    try:
+        data = tomlkit.parse(path.read_text())
+        parents = data.get("parents")
+    except Exception:
+        return None
+    if not isinstance(parents, list) or not all(
+        isinstance(parent, dict) for parent in parents
+    ):
+        return None
+    return parents
+
+
+def _valid_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
     )
 
 
-def classify_nodes(
-    nodes: list[Node], required_nodes: list[Node]
-) -> tuple[dict[Path, Path], set[Path]]:
-    """Classify base cache state and return evidence used for stale decisions."""
-    required: dict[Path, Node] = {}
-    frontier = list(required_nodes)
-    while frontier:
-        node = frontier.pop()
-        if node.relative_path in required:
-            continue
-        required[node.relative_path] = node
-        frontier.extend(
-            parent for parent in node.parents if parent.relative_path not in required
-        )
+def _mutable_parent_changed(parent, plan: ExecutionPlan) -> bool:
+    hash_file = parent.rule_call.workdir / ".rip" / (parent.path.name + ".hash")
+    if not hash_file.exists():
+        return False
+    stored = hash_file.read_text().strip()
+    return _valid_sha256(stored) and (
+        current_output_hash(parent, plan.hash_cache) != stored
+    )
 
-    for node in nodes:
-        if node.relative_path not in required:
-            node.state = (
-                NodeState.ORPHAN
-                if node.path is not None and node.path.exists()
-                else None
+
+def classify_call(
+    plan: ExecutionPlan,
+    call: RuleCall,
+    *,
+    executed_call_keys: set[Path] | None = None,
+) -> RuleCallState:
+    """Classify one call after every parent has settled."""
+    executed = executed_call_keys or set()
+    reasons: list[Reason] = []
+    missing = [str(output.path) for output in call.outputs if not output.path.exists()]
+    if missing:
+        call.state = RuleCallState.MISSING
+        plan.reasons[call.relative_path] = (
+            {"kind": "output_missing", "paths": missing},
+        )
+        return call.state
+
+    if call.relative_path in plan.forced_call_keys:
+        reasons.append({"kind": "forced_invalidation"})
+    if call.is_compromised:
+        reasons.append({"kind": "compromised_prior_state"})
+    for output in call.outputs:
+        if _has_changed_invalidation(output):
+            reasons.append(
+                {
+                    "kind": "invalidator_changed",
+                    "output_key": output.relative_path.as_posix(),
+                }
             )
 
-    changed_parents: dict[Path, Path] = {}
-    changed_invalidators: set[Path] = set()
-    for node in _topo_sort(list(required.values())):
-        if node.path is None or not node.path.exists():
-            node.state = NodeState.MISSING
-            continue
-
-        stale = any(
-            parent.state in (NodeState.MISSING, NodeState.STALE)
-            for parent in node.parents
-            if parent.state is not None
-        )
-        if not stale:
-            for parent in node.parents:
-                if parent.mutable:
+    metadata = _dependencies(call) if call.parents else []
+    if call.parents and metadata is None:
+        reasons.append({"kind": "dependency_metadata_missing_or_invalid"})
+    elif metadata is not None:
+        if len(metadata) != len(call.parents):
+            reasons.append({"kind": "dependency_metadata_mismatch"})
+        else:
+            for parent, recorded in zip(call.parents, metadata):
+                parent_key = parent.relative_path.as_posix()
+                if recorded.get("node_key") != parent_key:
+                    reasons.append(
+                        {
+                            "kind": "dependency_metadata_mismatch",
+                            "parent_key": parent_key,
+                        }
+                    )
                     continue
-                if _parent_content_changed(node, parent):
-                    changed_parents[node.relative_path] = parent.relative_path
-                    stale = True
-                    break
+                if parent.rule_call.mutable:
+                    if parent.rule_call.relative_path in executed:
+                        reasons.append(
+                            {
+                                "kind": "mutable_parent_rebuilt",
+                                "parent_key": parent_key,
+                            }
+                        )
+                    elif plan.include_advisories and _mutable_parent_changed(
+                        parent, plan
+                    ):
+                        reasons.append(
+                            {
+                                "kind": "mutable_parent_content_ignored",
+                                "parent_key": parent_key,
+                                "advisory": True,
+                            }
+                        )
+                    continue
+                consumed = recorded.get("consumed_sha256")
+                if not _valid_sha256(consumed):
+                    reasons.append(
+                        {"kind": "consumed_hash_missing", "parent_key": parent_key}
+                    )
+                    continue
+                current = current_output_hash(parent, plan.hash_cache)
+                if current != consumed:
+                    reasons.append(
+                        {
+                            "kind": "parent_content_changed",
+                            "parent_key": parent_key,
+                            "consumed_sha256": consumed,
+                            "current_sha256": current,
+                        }
+                    )
 
-        if _has_changed_invalidation(node):
-            changed_invalidators.add(node.relative_path)
-            stale = True
+    stale_reasons = [reason for reason in reasons if not reason.get("advisory")]
+    if stale_reasons:
+        call.state = RuleCallState.STALE
+        plan.reasons[call.relative_path] = tuple(reasons)
+    else:
+        call.state = RuleCallState.UP_TO_DATE
+        plan.reasons[call.relative_path] = (
+            {"kind": "up_to_date"},
+            *reasons,
+        )
+    return call.state
 
-        node.state = NodeState.STALE if stale else NodeState.UP_TO_DATE
 
-    return changed_parents, changed_invalidators
-
-
-def _propagate_stale(active: list[Node], active_keys: set[Path]) -> None:
-    """Propagate explicit STALE state into active cached descendants."""
+def classify_available(
+    plan: ExecutionPlan, *, executed_call_keys: set[Path] | None = None
+) -> list[RuleCall]:
+    """Classify unclassified calls whose parents are all up to date."""
+    classified: list[RuleCall] = []
+    blocked = {RuleCallState.FAILED, RuleCallState.INTERRUPTED}
     changed = True
     while changed:
         changed = False
-        for node in active:
-            if node.state != NodeState.UP_TO_DATE:
+        for call in plan.active:
+            if call.state is not None:
                 continue
-            if any(
-                parent.relative_path in active_keys and parent.state == NodeState.STALE
-                for parent in node.parents
-            ):
-                node.state = NodeState.STALE
+            if any(parent.state in blocked for parent in call.parent_calls):
+                call.state = RuleCallState.FAILED
+                plan.reasons[call.relative_path] = ({"kind": "dependency_failed"},)
+                classified.append(call)
                 changed = True
-
-
-def _parent_reason(node: Node, parent: Node, kind: str) -> Reason:
-    reason: Reason = {
-        "kind": kind,
-        "parent_key": parent.relative_path.as_posix(),
-        "parent_label": parent.rule_call.dag.label_for(parent),
-    }
-    if kind == "parent_not_up_to_date":
-        reason["parent_state"] = parent.state.value if parent.state else None
-    return reason
-
-
-def _reasons_for(
-    node: Node,
-    *,
-    forced: set[Path],
-    compromised: set[Path],
-    changed_parents: dict[Path, Path],
-    changed_invalidators: set[Path],
-    include_advisories: bool,
-) -> tuple[Reason, ...]:
-    if node.state == NodeState.MISSING:
-        return ({"kind": "output_missing", "path": str(node.path)},)
-
-    if node.state == NodeState.UP_TO_DATE:
-        reasons: list[Reason] = [{"kind": "up_to_date"}]
-        if include_advisories:
-            for parent in node.parents:
-                if not parent.mutable:
-                    continue
-                try:
-                    if _parent_content_changed(node, parent):
-                        reasons.append(
-                            _parent_reason(
-                                node, parent, "mutable_parent_content_ignored"
-                            )
-                        )
-                except OSError as exc:
-                    reasons.append(
-                        {
-                            "kind": "parent_check_error",
-                            "parent_key": parent.relative_path.as_posix(),
-                            "error": str(exc),
-                        }
-                    )
-        return tuple(reasons)
-
-    reasons = []
-    if node.relative_path in forced:
-        reasons.append({"kind": "forced_invalidation"})
-    if node.relative_path in compromised:
-        reasons.append({"kind": "compromised_prior_state"})
-    if node.relative_path in changed_invalidators:
-        reasons.append({"kind": "invalidator_changed"})
-
-    changed_parent = changed_parents.get(node.relative_path)
-    for parent in node.parents:
-        if parent.state in (NodeState.MISSING, NodeState.STALE):
-            reasons.append(_parent_reason(node, parent, "parent_not_up_to_date"))
-        elif parent.relative_path == changed_parent:
-            reasons.append(_parent_reason(node, parent, "parent_content_changed"))
-
-    if node.state == NodeState.STALE and not reasons:
-        reasons.append({"kind": "stale"})
-    return tuple(reasons)
+            elif all(
+                parent.state == RuleCallState.UP_TO_DATE for parent in call.parent_calls
+            ):
+                classify_call(plan, call, executed_call_keys=executed_call_keys)
+                classified.append(call)
+                changed = True
+    return classified
 
 
 def plan_execution(
     dag: DAG,
     *,
-    forced_stale_keys: set[Path] | None = None,
+    forced_stale_call_keys: set[Path] | None = None,
     include_advisories: bool = False,
 ) -> ExecutionPlan:
-    """Classify one execution snapshot without deleting or executing outputs."""
-    nodes = list(dag.nodes)
-    changed_parents, changed_invalidators = classify_nodes(nodes, dag.required_nodes)
-
-    active = [
-        node
-        for node in nodes
-        if node.state is not None and node.state != NodeState.ORPHAN
+    """Build call closure and classify only calls with settled parents."""
+    required = _required_call_keys(dag)
+    active = [call for key, call in dag.calls.items() if key in required]
+    orphans = [
+        call
+        for key, call in dag.calls.items()
+        if key not in required and call.workdir.exists()
     ]
-    active_keys = {node.relative_path for node in active}
-
-    forced: set[Path] = set()
-    if forced_stale_keys:
-        for node in active:
-            if (
-                node.relative_path in forced_stale_keys
-                and node.state == NodeState.UP_TO_DATE
-            ):
-                node.state = NodeState.STALE
-                forced.add(node.relative_path)
-        _propagate_stale(active, active_keys)
-
-    compromised: set[Path] = set()
-    for node in active:
-        if node.state == NodeState.UP_TO_DATE and node.is_compromised:
-            node.state = NodeState.STALE
-            compromised.add(node.relative_path)
-    if compromised:
-        _propagate_stale(active, active_keys)
-
-    reasons = {
-        node.relative_path: _reasons_for(
-            node,
-            forced=forced,
-            compromised=compromised,
-            changed_parents=changed_parents,
-            changed_invalidators=changed_invalidators,
-            include_advisories=include_advisories,
-        )
-        for node in active
-    }
-    return ExecutionPlan(
+    for call in dag.calls.values():
+        call.state = RuleCallState.ORPHAN if call in orphans else None
+    plan = ExecutionPlan(
         active=active,
-        orphans=[node for node in nodes if node.state == NodeState.ORPHAN],
-        reasons=reasons,
+        orphans=orphans,
+        forced_call_keys=set(forced_stale_call_keys or ()),
+        include_advisories=include_advisories,
     )
+    classify_available(plan)
+    for call in active:
+        if call.state is None:
+            plan.reasons[call.relative_path] = ({"kind": "parent_will_run"},)
+    return plan

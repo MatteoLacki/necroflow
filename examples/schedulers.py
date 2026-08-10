@@ -1,16 +1,11 @@
-"""Scheduler comparison — fifo vs connected_component on a diamond DAG.
-
-fifo_scheduler submits nodes in registration order (topological).
-connected_component_scheduler (default) prioritises the smallest
-remaining connected component, finishing pipelines early rather than
-interleaving them.
+"""Scheduler example — built-in FIFO vs custom reverse-ready order.
 
 Run:
     python examples/schedulers.py
 """
 
 from pathlib import Path
-from necroflow import DAG, NodeType, Pipeline, command, fifo_scheduler, output
+from necroflow import DAG, NodeType, Pipeline, command, output
 
 
 class Text(NodeType):
@@ -62,22 +57,27 @@ def diamond(P, word: str) -> None:
 
 OUTDIR = Path("/tmp/schedulers_example")
 
-# default scheduler
+# FIFO is default.
 dag1 = DAG(OUTDIR / "default")
 for word in ["hello", "world"]:
     pipeline = Pipeline(dag1)
     diamond(pipeline, word)
     pipeline.finish()
     dag1.require(pipeline.sinks())
-print("--- connected_component_scheduler (default) ---")
+print("--- fifo_scheduler (default) ---")
 dag1.run()
 
-# fifo scheduler
-dag2 = DAG(OUTDIR / "fifo")
+
+def reverse_ready(ready, remaining, available_resources):
+    """Prefer most recently registered ready RuleCall."""
+    return list(reversed(ready))
+
+
+dag2 = DAG(OUTDIR / "reverse")
 for word in ["hello", "world"]:
     pipeline = Pipeline(dag2)
     diamond(pipeline, word)
     pipeline.finish()
     dag2.require(pipeline.sinks())
-print("--- fifo_scheduler ---")
-dag2.run(scheduler=fifo_scheduler)
+print("--- reverse_ready (custom) ---")
+dag2.run(scheduler=reverse_ready)

@@ -3,23 +3,11 @@ from __future__ import annotations
 import inspect
 from collections import deque
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
 from necroflow.contexts import NamedValues
 from necroflow.rule_call import RuleCall, _safe_path_component
-
-
-class NodeState(Enum):
-    MISSING = "missing"
-    STALE = "stale"
-    UP_TO_DATE = "up_to_date"
-    ORPHAN = "orphan"
-    READY = "ready"
-    RUNNING = "running"
-    FAILED = "failed"
-    INTERRUPTED = "interrupted"
 
 
 class NodeTypeMeta(type):
@@ -42,13 +30,10 @@ class NodeType(metaclass=NodeTypeMeta):
     class SortedBam(Bam): filename = "sorted.bam"
 
     Filename-less subclasses are input-only type contracts. Every Rule output
-    must use a NodeType whose filename resolves to a string. Set
-    ``mutable = True`` for persistent state whose in-place content changes must
-    not stale consumers; missing or explicitly stale mutable Nodes still propagate.
+    must use a NodeType whose filename resolves to a string.
     """
 
     filename: str | None = None
-    mutable: bool = False
     invalidator = None
 
 
@@ -59,7 +44,6 @@ class Node:
     relative_path: Path
     path: Path
     rule_call: RuleCall
-    state: NodeState | None = None
     info: str | None = None
 
     def __post_init__(self):
@@ -67,10 +51,6 @@ class Node:
             doc = self.node_type.__doc__
             if doc:
                 self.info = doc.strip()
-
-    @property
-    def mutable(self) -> bool:
-        return self.node_type.mutable
 
     @property
     def parents(self) -> list[Node]:
@@ -93,36 +73,12 @@ class Node:
         return self.rule_call.output_nodes
 
     @property
-    def has_mutable_output(self) -> bool:
-        """Return whether this rule-call directory contains mutable state."""
-
-        return any(node.mutable for node in self.output_nodes.values())
-
-    @property
     def rule_hash(self) -> str:
         return self.rule_call.rule_hash
 
     @property
     def provenance_hash(self) -> str:
         return self.rule_call.provenance_hash
-
-    @property
-    def state_file(self) -> Path:
-        return self.path.parent / ".rip" / "state"
-
-    @property
-    def is_compromised(self) -> bool:
-        return (
-            self.state_file.exists()
-            and self.state_file.read_text().strip() != "up_to_date"
-        )
-
-    def mark_running(self) -> None:
-        self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        self.state_file.write_text("running")
-
-    def mark_done(self, state: str) -> None:
-        self.state_file.write_text(state)
 
     @classmethod
     def make_outputs(

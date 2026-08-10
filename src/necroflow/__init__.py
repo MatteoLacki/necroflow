@@ -3,7 +3,6 @@ __version__ = "0.0.4"
 from necroflow.dag import (
     DAG,
     Node,
-    NodeState,
     NodeType,
     resolve_command,
     write_dependencies,
@@ -21,17 +20,18 @@ from necroflow.rules import (
     text_file_rule,
 )
 from necroflow.pipeline import Pipeline
-from necroflow.executor import run
-from necroflow.schedulers import (
-    fifo_scheduler,
-    make_connected_component_scheduler,
-)
+from necroflow.rule_call import RuleCall, RuleCallState
+from necroflow.executor import RuleCallExecution, run
+from necroflow.schedulers import fifo_scheduler
 from necroflow.config import JobConfig, iter_job_configs
 from necroflow.contexts import CommandArgs, NamedValues
 
 __all__ = [
     "__version__",
     "Node",
+    "RuleCall",
+    "RuleCallState",
+    "RuleCallExecution",
     "NodeType",
     "Inputs",
     "Many",
@@ -45,12 +45,10 @@ __all__ = [
     "text_file_rule",
     "resolve_command",
     "write_dependencies",
-    "NodeState",
     "Pipeline",
     "DAG",
     "run",
     "fifo_scheduler",
-    "make_connected_component_scheduler",
     "JobConfig",
     "iter_job_configs",
     "CommandArgs",

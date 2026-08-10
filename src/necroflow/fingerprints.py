@@ -263,7 +263,6 @@ def _parent_identity(call: RuleCall) -> list[dict[str, Any]]:
                             "rule_hash": item.rule_hash,
                             "provenance_hash": item.provenance_hash,
                             "output": item.output_name or "",
-                            **({"mutable": True} if item.mutable else {}),
                         }
                         for item in parent
                     ],
@@ -276,19 +275,19 @@ def _parent_identity(call: RuleCall) -> list[dict[str, Any]]:
                     "rule_hash": parent.rule_hash,
                     "provenance_hash": parent.provenance_hash,
                     "output": parent.output_name or "",
-                    **({"mutable": True} if parent.mutable else {}),
                 }
             )
     return parents
 
 
 def _rule_hash(
-    *, rule_name, command, recipe_identity, input_types, output_types
+    *, rule_name, command, recipe_identity, mutable, input_types, output_types
 ) -> str:
     identity = {
         "domain": RULE_HASH_DOMAIN,
         "rule": rule_name,
         "command": _command_identity(command, recipe_identity),
+        "mutable": mutable,
         "input_types": {
             name: _type_name(annotation) for name, annotation in input_types.items()
         },
@@ -296,7 +295,6 @@ def _rule_hash(
             name: {
                 "type": _type_name(annotation),
                 "filename": annotation.filename,
-                "mutable": annotation.mutable,
             }
             for name, annotation in output_types.items()
         },
@@ -311,6 +309,7 @@ def rule_hash(call: RuleCall) -> str:
         rule_name=call.rule.__name__,
         command=call.command,
         recipe_identity=call.rule.recipe_identity,
+        mutable=call.mutable,
         input_types=call.rule.inputs.specs,
         output_types=call.rule.outputs.specs,
     )
@@ -323,6 +322,7 @@ def declared_rule_hash(rule) -> str:
         rule_name=rule.__name__,
         command=rule.command,
         recipe_identity=rule.recipe_identity,
+        mutable=rule.mutable,
         input_types=rule.inputs.specs,
         output_types=rule.outputs.specs,
     )

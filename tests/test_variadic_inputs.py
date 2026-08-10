@@ -13,13 +13,13 @@ from necroflow import (
     DAG,
     Inputs,
     Many,
-    NodeState,
+    RuleCallState,
     NodeType,
     output,
     Outputs,
     Pipeline,
 )
-from necroflow.planning import classify_nodes
+from necroflow.planning import plan_execution
 from necroflow.dag import resolve_command
 from necroflow.rules import Rule
 
@@ -34,7 +34,6 @@ class OtherBam(NodeType):
 
 class MutableBam(NodeType):
     filename = "mutable.bam"
-    mutable = True
 
 
 class Reference(NodeType):
@@ -61,12 +60,19 @@ def variadic_command(args: CommandArgs) -> str:
     return f"merge {inputs} > {shlex.quote(str(args.outputs.merged))}"
 
 
-def _source(pipeline: Pipeline, label: str, node_type: type[NodeType] = Bam):
+def _source(
+    pipeline: Pipeline,
+    label: str,
+    node_type: type[NodeType] = Bam,
+    *,
+    mutable: bool = False,
+):
     return Rule(
         "source",
         Inputs(label=str),
         Outputs(source=node_type),
         "touch {source}",
+        mutable=mutable,
     )(pipeline, label=label)
 
 
@@ -86,12 +92,12 @@ def test_plain_variadic_tuple_accepts_zero_or_more_nodes(tmp_path):
 
     assert result.rule_call.inputs.bams == (first, second)
     assert result.parents == [first, second]
-    assert resolve_command(result) == (
+    assert resolve_command(result.rule_call) == (
         f"merge {shlex.quote(str(first.path))} {shlex.quote(str(second.path))} "
         f"> {result.path}"
     )
     assert empty.parents == []
-    assert resolve_command(empty) == f"merge  > {empty.path}"
+    assert resolve_command(empty.rule_call) == f"merge  > {empty.path}"
 
 
 def test_decorated_rule_accepts_variadic_tuple(tmp_path):
@@ -117,7 +123,7 @@ def test_variadic_static_command_quotes_each_path_independently(tmp_path):
 
     result = merge(pipeline, (first, second))
 
-    assert resolve_command(result) == (
+    assert resolve_command(result.rule_call) == (
         f"merge {shlex.quote(str(first.path))} {shlex.quote(str(second.path))} "
         f"> {shlex.quote(str(result.path))}"
     )
@@ -137,7 +143,7 @@ def test_callable_command_receives_tuple_of_resolved_paths(tmp_path):
     )
 
     result = merge(pipeline, (first, second))
-    resolve_command(result)
+    resolve_command(result.rule_call)
 
     assert LAST_COMMAND_ARGS is not None
     assert LAST_COMMAND_ARGS.inputs.bams == (first.path, second.path)
@@ -297,7 +303,7 @@ def test_variadic_union_applies_mutability_per_concrete_parent(tmp_path):
     dag = DAG(tmp_path)
     pipeline = Pipeline(dag)
     ordinary = _source(pipeline, "ordinary")
-    mutable = _source(pipeline, "mutable", MutableBam)
+    mutable = _source(pipeline, "mutable", MutableBam, mutable=True)
     merge = Rule(
         "mutable_union_merge",
         Inputs(bams=tuple[Bam | MutableBam, ...]),
@@ -310,13 +316,13 @@ def test_variadic_union_applies_mutability_per_concrete_parent(tmp_path):
 
     time.sleep(0.05)
     mutable.path.write_text("changed")
-    classify_nodes(dag.nodes, dag.required_nodes)
-    assert result.state == NodeState.UP_TO_DATE
+    plan_execution(dag)
+    assert result.rule_call.state == RuleCallState.UP_TO_DATE
 
     time.sleep(0.05)
     ordinary.path.write_text("changed")
-    classify_nodes(dag.nodes, dag.required_nodes)
-    assert result.state == NodeState.STALE
+    plan_execution(dag)
+    assert result.rule_call.state == RuleCallState.STALE
 
 
 def test_variadic_fingerprint_tracks_order_grouping_and_many_bounds(tmp_path):

@@ -235,6 +235,7 @@ class Rule(Generic[_ReturnT]):
         constraints: Constraints | None = None,
         info: str | None = None,
         repeat: int = 1,
+        mutable: bool = False,
         recipe_identity: str | None = None,
         materializer: Callable | None = None,
         input_defaults: Mapping[str, Any] | None = None,
@@ -243,7 +244,12 @@ class Rule(Generic[_ReturnT]):
         self.__name__ = name
         self.inputs = inputs
         self._validate_outputs(name, outputs)
+        if not isinstance(mutable, bool):
+            raise TypeError(f"mutable must be bool, got {type(mutable).__name__}")
+        if mutable and len(outputs.specs) != 1:
+            raise TypeError(f"mutable Rule {name!r} must declare exactly one output")
         self.outputs = outputs
+        self.mutable = mutable
         self.command = command
         self.recipe_identity = recipe_identity
         self.materializer = materializer
@@ -302,12 +308,6 @@ class Rule(Generic[_ReturnT]):
                 raise TypeError(
                     f"Rule {name!r}: output {output_name!r} NodeType "
                     f"{output_type.__name__} must define filename"
-                )
-            if not isinstance(output_type.mutable, bool):
-                raise TypeError(
-                    f"Rule {name!r}: output {output_name!r} NodeType "
-                    f"{output_type.__name__}.mutable must be bool, "
-                    f"got {type(output_type.mutable).__name__}"
                 )
 
     def _validated_input_defaults(
@@ -664,6 +664,7 @@ def command(
     name: str | None = None,
     doc: str | None = None,
     repeat: int = 1,
+    mutable: bool = False,
     **constraints,
 ):
     """Create a factory rule or return the decorator-sugar adapter.
@@ -709,6 +710,7 @@ def command(
             constraints=factory_constraints,
             info=doc,
             repeat=repeat,
+            mutable=mutable,
             input_defaults=input_defaults,
         )
     if name is not None or doc is not None:
@@ -728,6 +730,7 @@ def command(
                 constraints=Constraints(**constraints) if constraints else None,
                 info=info,
                 repeat=repeat,
+                mutable=mutable,
                 input_defaults=input_defaults,
             ),
         )
@@ -784,9 +787,11 @@ def _make_text_file_rule(
         f"input={input_name}:output={oname}"
     )
 
-    def materializer(node, log) -> None:
+    def materializer(call, log) -> None:
         """Write the configured text value to the compiled output path."""
-        node.path.write_text(node.config[input_name], encoding=encoding)
+        call.output_nodes[oname].path.write_text(
+            call.config[input_name], encoding=encoding
+        )
 
     return Rule(
         name=name,

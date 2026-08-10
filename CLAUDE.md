@@ -27,7 +27,7 @@ disagrees with the code, the code wins (and this file should be fixed).
 | Adding/editing a rule (placeholders, typed outputs, mistakes) | `.claude/skills/add-a-rule/SKILL.md` |
 | Node re-ran or cached unexpectedly | `.claude/skills/debug-stale-classification/SKILL.md` |
 | Writing a custom scheduler | `.claude/skills/write-a-scheduler/SKILL.md` |
-| Built-in scheduler internals (connected-component algorithm, cost tradeoffs) | `docs/schedulers.md` |
+| Scheduler protocol and FIFO policy | `docs/schedulers.md` |
 | Doctor preflight checks, findings, side effects, and limits | `docs/doctor.md` |
 
 Skills under `.claude/skills/` are auto-loaded by Claude Code; other agents should read them
@@ -76,12 +76,13 @@ These have been true since the June refactors and are load-bearing design decisi
 
 - **Filesystem is state, no databases.** Run state is plain text in `.rip/state`
   (`running` / `up_to_date` / `failed` / `interrupted`); a leftover `running` after a crash,
-  or any unrecognized state value, marks the node compromised and forces a re-run.
+  or any unrecognized state value, marks the RuleCall compromised and forces a re-run.
   The concurrency lock is `fcntl.flock` on
   `.rip/necroflow.lock` — one instance per node store.
-- **Content-addressed, not time-addressed.** Staleness uses an mtime fast path, then falls back
-  to the stored SHA-256 content hash (`.rip/{filename}.hash`). A parent that re-ran but produced
-  identical output must NOT invalidate children.
+- **Content-addressed, not time-addressed.** Each consumer records `consumed_sha256` for
+  every immutable parent output in `dependencies.toml`. Current hashes use an mtime-gated fast path
+  through `.rip/{filename}.hash`; externally edited outputs are rehashed. A rebuilt parent with
+  identical bytes must NOT invalidate consumers.
 - **Split hashes name directories.** Fingerprint v3 uses framed canonical values and paths
   `{rule}/{rule_hash}/{provenance_hash}/{filename}`. The local rule hash covers recipe
   structure; the provenance hash covers config, shell, and parent lineage. Co-outputs share
@@ -90,17 +91,18 @@ These have been true since the June refactors and are load-bearing design decisi
 - **Identity via `node.relative_path`, never `id()`.** It is a `Path` relative to
   `dag.nodes_dir` and is stable across node-store roots. Use it for adjacency, visited sets,
   requested outputs, and executor bookkeeping; serialize it with `.as_posix()` in JSON.
-- **Co-outputs run once.** All outputs of one rule call are produced by a single submission; the
-  siblings are marked done together.
+- **RuleCalls are atomic.** Requesting any output activates, caches, executes, reports, retains, and
+  cleans the complete RuleCall. One submission produces and validates every declared co-output.
+  Only explicitly requested Nodes are copied into `results/`.
 - **`repeat` counts command attempts.** `repeat=N` makes one scheduler submission
   and runs the selected command runner at most `N` times, stopping at the first
   success. Only process failures are retried; the default `repeat=1` makes one
   attempt. Retry policy remains outside fingerprints.
 - **Exit 0 with a missing declared output is a failure.** The executor checks `path.exists()`
   after every job.
-- **`.rip/` per-output metadata**: `dependencies.toml` (accumulated ancestor config),
-  `{filename}.hash`, `job.log`, `state`, `run.toml` (timings/size), `graph.txt` (ancestor
-  render), `{filename}.invalidation` (NodeType invalidator token, when set).
+- **`.rip/` per-RuleCall metadata**: `dependencies.toml` (lineage plus consumed immutable
+  parent hashes), `{filename}.hash`, `job.log`, `state`, `run.toml` (call timings/size), `graph.txt`
+  (ancestor render), `{filename}.invalidation` (NodeType invalidator token, when set).
 - **Canonicalization is eager; labels are explicit.** Every `Pipeline(dag, ...)` references a
   shared DAG. A rule call fingerprints and interns its `RuleCall` immediately; equivalent calls
   return identical Node objects. Attribute/item assignment records qualified Pipeline-local labels.
@@ -124,10 +126,10 @@ These have been true since the June refactors and are load-bearing design decisi
 - **Filename-less NodeTypes are input-only.** A `NodeType` with `filename = None` may be
   used as a fixed, union, or variadic input contract, but every Rule output must resolve to an
   explicit filename. Rule declaration rejects filename-less outputs; output names are not fallbacks.
-- **Mutable NodeTypes ignore content changes only.** `NodeType.mutable` defaults to `False`
-  and is copied to each output Node. Mutable parents retain identity, ordering, provenance, and
-  failure propagation, but newer changed bytes do not stale consumers. Missing, stale, forced,
-  compromised, and invalidator-changed parents still propagate. Autoclean preserves mutable state.
+- **Mutable Rules ignore external content-only edits.** `Rule(..., mutable=True)` is allowed only
+  for a single-output RuleCall. Mutable parents retain identity, ordering, provenance, and failure
+  propagation. Rebuilding a mutable parent during the current run forces consumers to rerun; external
+  byte edits alone do not. Autoclean preserves mutable RuleCall state.
 - **Variadic Node inputs retain groups.** `tuple[NodeType, ...]` accepts an ordered
   tuple, while `Annotated[tuple[NodeType, ...], Many(...)]` applies inclusive size
   bounds. RuleCall/fingerprint/command contexts retain named tuple groups;
@@ -142,52 +144,46 @@ These have been true since the June refactors and are load-bearing design decisi
 ## Scheduler protocol (current — 3 arguments)
 
 ```python
-def my_scheduler(ready: list[Node], remaining: list[Node],
-                 available_resources: dict[str, int]) -> list[Node]:
-    """Return ready nodes in priority order; the executor submits from the front."""
+def my_scheduler(ready: list[RuleCall], remaining: list[RuleCall],
+                 available_resources: dict[str, int]) -> list[RuleCall]:
+    """Return ready calls in priority order; executor submits from front."""
 ```
 
-- `ready` — nodes whose parents are all done, not yet running
-- `remaining` — all not-yet-done, not-yet-running nodes (superset of ready)
+- `ready` — calls whose parent calls are all done, not yet running
+- `remaining` — all not-yet-done, not-yet-running calls (superset of ready)
 - `available_resources` — remaining capacity for capped resources, e.g. `{"threads": 12}`
-- The return value must be a `list` containing only currently ready nodes, with no duplicates;
-  `run()` rejects invalid selections before submission.
-- Plain callables and callable objects both work; `run()` rejects wrong-arity schedulers
-  up front with a `TypeError` naming this protocol.
-- Built-ins in `src/necroflow/schedulers.py`: `make_connected_component_scheduler()` creates the default
-  incremental smallest-component-first scheduler; `fifo_scheduler` uses registration order.
-  CLI: `--scheduler connected-components | fifo | file.py:callable`.
+- Return value must be a `list` containing only currently ready calls, without duplicates.
+- Plain callables and callable objects work; wrong arity fails before node-store mutation.
+- `fifo_scheduler` is sole built-in and default; order follows canonical RuleCall registration.
+  CLI: `--scheduler fifo | file.py:callable`.
 
-## `run()` — check the docstring for details
+## `run()` — check docstring for details
 
 `necroflow.executor.run(dag, resource_caps=None, scheduler=None, keep_going=False,
-autoclean=False, dry_run=False, node_runner=None, forced_stale_keys=None,
+autoclean=False, dry_run=False, rule_call_runner=None, forced_stale_call_keys=None,
 on_complete=None)
--> dict[str, ExecutionEvent]`
+-> dict[str, RuleCallExecution]`
 
-The dict is keyed by `node.relative_path.as_posix()`. `DAG.run()` forwards
-all kwargs and stores the same dict as `dag.last_execution_report`.
-Full semantics: the `run()` docstring and `docs/executor.md`.
+Dict keyed by `call.relative_path.as_posix()`. `DAG.run()` forwards all kwargs and stores same
+dict as `dag.last_execution_report`. Full semantics: `run()` docstring and `docs/executor.md`.
 
 ## File map
 
 ```
 src/necroflow/
-  nodes.py           — Node, NodeState, NodeType/NodeTypeMeta, topo sort,
-                       per-node state files
-  rule_call.py       — concrete rule invocation, shared identity and command state
+  nodes.py           — Node, NodeType/NodeTypeMeta, topo sort
+  rule_call.py       — concrete invocation, RuleCallState, shared identity and state
   contexts.py        — immutable NamedValues and CommandArgs public views
   fingerprints.py    — canonical v3 rule/provenance hashes and callable AST identity
   rules.py           — Rule internals plus command, text-file, and symlink-file declarations,
                        parse_resource with SI/binary suffixes
-  schedulers.py      — Scheduler protocol, fifo_scheduler, incremental scheduler factory
+  schedulers.py      — RuleCall Scheduler protocol and fifo_scheduler
   dag.py             — path-length checks, resolve_command, write_dependencies,
                        content hashing, the DAG registry/executor class
-  planning.py        — required closure, cache classification, forced/compromised
-                       invalidation, active/orphan partition, classification reasons
+  planning.py        — RuleCall closure, lazy consumed-hash classification, reasons
   pipeline.py        — Pipeline (prefixed views, labels, finish)
   ascii_render.py    — render_ascii, _node_label, write_ancestor_graph
-  executor.py        — run(), resource caps, lock, ExecutionEvent, autoclean, keep_going
+  executor.py        — atomic RuleCall run(), reports, resources, lock, cleanup, failures
   logger.py          — thread-safe job logging
   config.py          — job TOML loading and grid expansion (iter_job_configs, JobConfig)
   grid.py            — __grid TOML expansion and deterministic result labels

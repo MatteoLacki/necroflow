@@ -44,12 +44,11 @@ from necroflow import (
     DAG,
     Node,
     Pipeline,
+    RuleCallState,
     fifo_scheduler,
-    make_connected_component_scheduler,
 )
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import (
-    NodeState,
     _check_path_limits,
     _content_hash,
     parse_resource,
@@ -81,18 +80,13 @@ def _load_validators(specs: list[str]) -> list[Callable]:
 
 
 def _load_scheduler(spec: str) -> Callable:
-    if spec == "connected-components":
-        return make_connected_component_scheduler()
-    builtins = {
-        "fifo": fifo_scheduler,
-    }
-    if spec in builtins:
-        return builtins[spec]
+    if spec == "fifo":
+        return fifo_scheduler
     try:
         return load_callable(spec, kind="scheduler")
     except Exception as exc:
         raise SystemExit(
-            "error: --scheduler must be connected-components, fifo, or "
+            "error: --scheduler must be fifo or "
             f"path.py:function; got {spec!r}: {exc}"
         ) from exc
 
@@ -146,7 +140,7 @@ def _resolve_invalidation_keys(pipeline, labels: list[str]) -> set[Path]:
     missing = [label for label in labels if label not in pipeline.labels]
     if missing:
         raise SystemExit(f"error: invalidation labels not found in pipeline: {missing}")
-    return {pipeline[label].relative_path for label in labels}
+    return {pipeline[label].rule_call.relative_path for label in labels}
 
 
 def _resolve_request(pipeline, labels: list[str] | None) -> list[_RequestedOutput]:
@@ -218,7 +212,7 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
 
     dag = DAG(nodes_dir)
     combos: list[_Combo] = []
-    forced_stale_keys: set[Path] = set()
+    forced_stale_call_keys: set[Path] = set()
     shellpath = _normalize_arg_shellpath(args)
 
     for job_path_str in args.jobs:
@@ -246,7 +240,7 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
                     )
                 pipeline.finish()
                 request = _resolve_request(pipeline, job_config.request_labels)
-                forced_stale_keys.update(
+                forced_stale_call_keys.update(
                     _resolve_invalidation_keys(pipeline, invalidation_labels)
                 )
                 dag.require(binding.node for binding in request)
@@ -256,7 +250,7 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
         except Exception as exc:
             raise SystemExit(f"error: {exc}") from exc
 
-    return dag, combos, forced_stale_keys
+    return dag, combos, forced_stale_call_keys
 
 
 def _normalize_arg_shellpath(args) -> str | None:
@@ -321,8 +315,12 @@ def _node_json(node, *, nodes_dir: Path | None = None) -> dict:
         "output_name": node.output_name,
         "rule": node.rule.__name__ if node.rule else "unknown",
         "node_type": node.node_type.__name__ if node.node_type else None,
-        "mutable": node.mutable,
-        "state": node.state.value if isinstance(node.state, NodeState) else node.state,
+        "mutable": node.rule_call.mutable,
+        "state": (
+            node.rule_call.state.value
+            if isinstance(node.rule_call.state, RuleCallState)
+            else node.rule_call.state
+        ),
         "path": str(node.path) if node.path is not None else None,
         "resources": dict(getattr(node.rule, "resources", {})) if node.rule else {},
         "constraints": dict(getattr(node.rule, "constraints", {})) if node.rule else {},
@@ -342,7 +340,7 @@ def _edge_json(nodes: list) -> list[dict]:
         {
             "from": parent.relative_path.as_posix(),
             "to": node.relative_path.as_posix(),
-            "mutable": parent.mutable,
+            "mutable": parent.rule_call.mutable,
         }
         for node in nodes
         for parent in node.parents
@@ -414,37 +412,56 @@ def _provenance_payload(path: Path) -> dict:
 
 def _explain_payload(args) -> dict:
     nodes_dir, _results_dir = _resolve_roots(args)
-    dag, combos, forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    dag, combos, forced_stale_call_keys = _build_dag_from_jobs(
+        args, nodes_dir=nodes_dir
+    )
     plan = plan_execution(
         dag,
-        forced_stale_keys=forced_stale_keys,
+        forced_stale_call_keys=forced_stale_call_keys,
         include_advisories=True,
     )
     active = plan.active
+    active_keys = plan.active_keys
     labels = {
         label: pipeline[label]
         for _job_label, pipeline, _request in combos
         for label in pipeline.labels
-        if pipeline[label] in active
+        if pipeline[label].rule_call.relative_path in active_keys
     }
     if args.node:
         if args.node not in labels:
             raise SystemExit(f"error: explain label not found: {args.node}")
-        wanted = {labels[args.node].relative_path}
-        active = [node for node in active if node.relative_path in wanted]
-    nodes = []
-    for node in sorted(active, key=lambda n: n.relative_path):
-        command = None
+        wanted = labels[args.node].rule_call.relative_path
+        active = [call for call in active if call.relative_path == wanted]
+    calls = []
+    for call in active:
         try:
-            command = resolve_command(node)
+            command = resolve_command(call)
         except Exception as exc:
             command = f"<error: {exc}>"
-        nodes.append(
+        state = call.state.value if call.state is not None else None
+        if call.state in {RuleCallState.MISSING, RuleCallState.STALE}:
+            will_run = True
+        elif call.state == RuleCallState.UP_TO_DATE:
+            will_run = False
+        else:
+            will_run = None
+        calls.append(
             {
-                **_node_json(node, nodes_dir=nodes_dir),
-                "will_run": node.state in (NodeState.MISSING, NodeState.STALE),
+                "key": call.relative_path.as_posix(),
+                "rule": call.rule.__name__,
+                "mutable": call.mutable,
+                "state": state,
+                "will_run": will_run,
+                "workdir": str(call.workdir),
+                "resources": dict(call.resources),
+                "constraints": dict(call.rule.constraints),
+                "config": dict(call.config),
                 "command": command,
-                "reasons": plan.reasons[node.relative_path],
+                "reasons": plan.reasons[call.relative_path],
+                "outputs": [
+                    _node_json(output, nodes_dir=nodes_dir) for output in call.outputs
+                ],
             }
         )
     return {
@@ -457,7 +474,7 @@ def _explain_payload(args) -> dict:
             }
             for label, _pipeline, request in combos
         ],
-        "nodes": nodes,
+        "calls": calls,
     }
 
 
@@ -493,7 +510,9 @@ def _doctor_payload(args) -> dict:
             )
         )
     try:
-        dag, combos, forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+        dag, combos, forced_stale_call_keys = _build_dag_from_jobs(
+            args, nodes_dir=nodes_dir
+        )
     except SystemExit as exc:
         message = str(exc).removeprefix("error: ")
         code = "NF_PIPELINE_IMPORT_FAILED"
@@ -572,7 +591,9 @@ def _doctor_payload(args) -> dict:
 
 def _run(args) -> None:
     nodes_dir, results_dir = _resolve_roots(args)
-    dag, combos, forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    dag, combos, forced_stale_call_keys = _build_dag_from_jobs(
+        args, nodes_dir=nodes_dir
+    )
     _preflight_result_paths(results_dir, combos)
 
     def materialize(report):
@@ -585,7 +606,7 @@ def _run(args) -> None:
         keep_going=args.keep_going,
         autoclean=args.autoclean,
         dry_run=args.dry_run,
-        forced_stale_keys=forced_stale_keys,
+        forced_stale_call_keys=forced_stale_call_keys,
         on_complete=None if args.dry_run else materialize,
     )
 
@@ -601,7 +622,9 @@ def _gc(args) -> None:
 
 def _graph(args) -> None:
     nodes_dir, _results_dir = _resolve_roots(args)
-    dag, combos, _forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    dag, combos, _forced_stale_call_keys = _build_dag_from_jobs(
+        args, nodes_dir=nodes_dir
+    )
     if args.json:
         _emit_json(_graph_payload(dag, combos, nodes_dir=nodes_dir))
         return
@@ -618,7 +641,9 @@ def _graph(args) -> None:
 
 def _outputs(args) -> None:
     nodes_dir, results_dir = _resolve_roots(args)
-    dag, combos, _forced_stale_keys = _build_dag_from_jobs(args, nodes_dir=nodes_dir)
+    dag, combos, _forced_stale_call_keys = _build_dag_from_jobs(
+        args, nodes_dir=nodes_dir
+    )
     _preflight_result_paths(results_dir, combos)
     if args.json:
         _emit_json(
@@ -675,18 +700,22 @@ def _explain(args) -> None:
     if args.json:
         _emit_json(payload)
         return
-    for node in payload["nodes"]:
-        label = node.get("label") or node.get("output_name") or node["key"]
-        print(f"{label}")
-        print(f"  state: {node.get('state')}")
-        print(f"  will_run: {str(node.get('will_run')).lower()}")
-        print(f"  rule: {node.get('rule')}")
-        print(f"  path: {node.get('path')}")
-        if node.get("resources"):
-            resources = " ".join(f"{k}={v}" for k, v in node["resources"].items())
+    for call in payload["calls"]:
+        print(call["rule"])
+        print("  state:", call.get("state"))
+        print("  will_run:", str(call.get("will_run")).lower())
+        print("  key:", call["key"])
+        print("  workdir:", call["workdir"])
+        if call.get("resources"):
+            resources = " ".join(
+                f"{key}={value}" for key, value in call["resources"].items()
+            )
             print(f"  resources: {resources}")
-        for reason in node.get("reasons", []):
-            print(f"  reason: {reason['kind']}")
+        for output in call["outputs"]:
+            label = output.get("label") or output.get("output_name")
+            print(f"  output: {label} -> {output.get("path")}")
+        for reason in call.get("reasons", []):
+            print("  reason:", reason["kind"])
 
 
 def _init(args) -> None:
@@ -721,37 +750,31 @@ def _requested_with_ancestors(request: list[_RequestedOutput]) -> list:
     return list(seen.values())
 
 
-def _write_execution_summaries(
-    results_dir: Path,
-    combos: list[_Combo],
-    report,
-) -> None:
+def _write_execution_summaries(results_dir: Path, combos: list[_Combo], report) -> None:
     if report is None:
         return
     for label, pipeline, request in combos:
         data = tomlkit.document()
         rules_array = tomlkit.aot()
-        rule_nodes: dict[Path, list[Node]] = {}
-        for node in sorted(
-            _requested_with_ancestors(request), key=lambda n: n.relative_path
-        ):
-            rule_nodes.setdefault(node.rule_call.relative_path, []).append(node)
-
+        wanted = {
+            node.rule_call.relative_path for node in _requested_with_ancestors(request)
+        }
+        calls = [call for key, call in pipeline.dag.calls.items() if key in wanted]
         total_duration = 0.0
-        for rule_key, nodes in rule_nodes.items():
-            events = [
-                event
-                for node in nodes
-                if (event := report.get(node.relative_path.as_posix())) is not None
-            ]
-            if not events:
+        for call in calls:
+            event = report.get(call.relative_path.as_posix())
+            if event is None:
                 continue
-            event = next((event for event in events if not event.cached), events[0])
             values = event.to_toml_dict()
-            for node_field in ("key", "rule", "output_name", "label", "path"):
-                values.pop(node_field, None)
+            for field_name in (
+                "key",
+                "rule",
+                "output_node_keys",
+                "output_paths",
+            ):
+                values.pop(field_name, None)
             values = {
-                "key": rule_key.as_posix(),
+                "key": call.relative_path.as_posix(),
                 "name": event.rule,
                 **values,
             }
@@ -760,9 +783,8 @@ def _write_execution_summaries(
             table = tomlkit.table()
             for key, value in values.items():
                 table[key] = value
-
             outputs = tomlkit.aot()
-            for node in nodes:
+            for node in call.outputs:
                 output = tomlkit.table()
                 output["key"] = node.relative_path.as_posix()
                 output["name"] = node.output_name
@@ -1078,9 +1100,9 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_run_options(run_parser)
     run_parser.add_argument(
         "--scheduler",
-        default="connected-components",
+        default="fifo",
         metavar="NAME|PATH.py:FUNCTION",
-        help="Scheduling policy: connected-components (default), fifo, or a local Python callable.",
+        help="Scheduling policy: fifo (default) or a local Python callable.",
     )
     run_parser.set_defaults(func=_run)
 

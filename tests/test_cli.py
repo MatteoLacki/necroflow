@@ -31,13 +31,16 @@ class Log(NodeType):
 
 class MutableOut(NodeType):
     filename = "mutable.txt"
-    mutable = True
 
 
 R_step1 = Rule("step1", Inputs(v=str), Outputs(out=Out), "echo {v} > {out}")
 R_step2 = Rule("step2", Inputs(out=Out), Outputs(log=Log), "cat {out} > {log}")
 R_mutable_step1 = Rule(
-    "mutable_step1", Inputs(v=str), Outputs(out=MutableOut), "echo {v} > {out}"
+    "mutable_step1",
+    Inputs(v=str),
+    Outputs(out=MutableOut),
+    "echo {v} > {out}",
+    mutable=True,
 )
 R_mutable_step2 = Rule(
     "mutable_step2", Inputs(out=MutableOut), Outputs(log=Log), "touch {log}"
@@ -358,7 +361,7 @@ def test_iter_job_configs_rejects_missing_job_file(tmp_path):
         list(iter_job_configs(missing))
 
 
-def test_main_invalidate_parent_reruns_parent_and_child(tmp_path, factory_file):
+def test_main_invalidate_parent_same_bytes_keeps_child_cached(tmp_path, factory_file):
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
     outdir = tmp_path / "out"
@@ -372,7 +375,7 @@ def test_main_invalidate_parent_reruns_parent_and_child(tmp_path, factory_file):
     main(["--outdir", str(outdir), "--invalidate", "a", str(job)])
 
     assert a_path.stat().st_mtime > a_mtime
-    assert b_path.stat().st_mtime > b_mtime
+    assert b_path.stat().st_mtime == b_mtime
 
 
 def test_main_invalidate_child_reruns_only_child(tmp_path, factory_file):
@@ -1029,7 +1032,9 @@ def test_main_path_request_creates_nested_result_and_manifest(
         ]
     )
     payload = _json_stdout(capsys)
-    assert [node["label"] for node in payload["nodes"]] == ["dataset/config"]
+    assert [
+        output["label"] for call in payload["calls"] for output in call["outputs"]
+    ] == ["dataset/config"]
 
 
 @pytest.mark.parametrize(
@@ -1995,6 +2000,12 @@ def test_explain_text_prints_state_and_reasons(tmp_path, factory_file, capsys):
     assert "resources: threads=1" in output
 
 
+def _explain_by_label(payload):
+    return {
+        output["label"]: call for call in payload["calls"] for output in call["outputs"]
+    }
+
+
 def test_explain_json_reports_stale_causes(tmp_path, factory_file, capsys):
     """Explain must distinguish forced, compromised, and changed-parent staleness."""
 
@@ -2005,7 +2016,7 @@ def test_explain_json_reports_stale_causes(tmp_path, factory_file, capsys):
     capsys.readouterr()
 
     main(["explain", "--json", "--invalidate", "b", "--outdir", str(outdir), str(job)])
-    forced = {node["label"]: node for node in _json_stdout(capsys)["nodes"]}
+    forced = _explain_by_label(_json_stdout(capsys))
     assert {reason["kind"] for reason in forced["b"]["reasons"]} == {
         "forced_invalidation"
     }
@@ -2013,7 +2024,7 @@ def test_explain_json_reports_stale_causes(tmp_path, factory_file, capsys):
     b_output = _real_output(outdir, "b.txt")
     (b_output.parent / ".rip" / "state").write_text("running")
     main(["explain", "--json", "--outdir", str(outdir), str(job)])
-    compromised = {node["label"]: node for node in _json_stdout(capsys)["nodes"]}
+    compromised = _explain_by_label(_json_stdout(capsys))
     assert "compromised_prior_state" in {
         reason["kind"] for reason in compromised["b"]["reasons"]
     }
@@ -2022,7 +2033,7 @@ def test_explain_json_reports_stale_causes(tmp_path, factory_file, capsys):
     time.sleep(0.05)
     _real_output(outdir, "a.txt").write_text("changed")
     main(["explain", "--json", "--outdir", str(outdir), str(job)])
-    changed = {node["label"]: node for node in _json_stdout(capsys)["nodes"]}
+    changed = _explain_by_label(_json_stdout(capsys))
     assert "parent_content_changed" in {
         reason["kind"] for reason in changed["b"]["reasons"]
     }
@@ -2038,9 +2049,9 @@ def test_explain_reports_ignored_mutable_parent_content(tmp_path):
     time.sleep(0.05)
     pipeline.mutable.path.write_text("changed")
     plan = plan_execution(pipeline.dag, include_advisories=True)
-    reasons = plan.reasons[pipeline.log.relative_path]
+    reasons = plan.reasons[pipeline.log.rule_call.relative_path]
 
-    assert pipeline.log.state.value == "up_to_date"
+    assert pipeline.log.rule_call.state.value == "up_to_date"
     assert "mutable_parent_content_ignored" in {reason["kind"] for reason in reasons}
 
 
@@ -2051,7 +2062,7 @@ def test_explain_json_reports_missing_and_up_to_date(tmp_path, factory_file, cap
 
     main(["explain", "--json", "--outdir", str(outdir), str(job)])
     missing = _json_stdout(capsys)
-    by_label = {node["label"]: node for node in missing["nodes"]}
+    by_label = _explain_by_label(missing)
     assert by_label["a"]["will_run"] is True
     assert by_label["a"]["reasons"][0]["kind"] == "output_missing"
 
@@ -2059,7 +2070,7 @@ def test_explain_json_reports_missing_and_up_to_date(tmp_path, factory_file, cap
     capsys.readouterr()
     main(["explain", "--json", "--outdir", str(outdir), str(job)])
     cached = _json_stdout(capsys)
-    by_label = {node["label"]: node for node in cached["nodes"]}
+    by_label = _explain_by_label(cached)
     assert by_label["a"]["will_run"] is False
     assert by_label["a"]["reasons"][0]["kind"] == "up_to_date"
 
@@ -2081,4 +2092,6 @@ def test_explain_json_node_filter(tmp_path, factory_file, capsys):
     )
 
     payload = _json_stdout(capsys)
-    assert [node["label"] for node in payload["nodes"]] == ["b"]
+    assert [
+        output["label"] for call in payload["calls"] for output in call["outputs"]
+    ] == ["b"]

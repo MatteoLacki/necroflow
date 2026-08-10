@@ -265,32 +265,57 @@ def test_filename_less_nodetype_remains_a_valid_input_contract(tmp_path):
     assert consumed.parents == [dataset]
 
 
-def test_mutable_flag_propagates_from_output_type_to_node(tmp_path):
-    """Mutability is declared on NodeType and frozen onto each compiled Node."""
+def test_mutable_flag_belongs_to_rule_call(tmp_path):
+    """Mutability is runtime cache policy on a RuleCall, not a NodeType contract."""
 
-    class MutableState(NodeType):
-        mutable = True
-
-    class Database(MutableState):
+    class Database(NodeType):
         filename = "state.sqlite3"
 
     pipeline = Pipeline(DAG(tmp_path))
     database = Rule(
-        "database", Inputs(), Outputs(database=Database), "touch {database}"
+        "database",
+        Inputs(),
+        Outputs(database=Database),
+        "touch {database}",
+        mutable=True,
     )(pipeline)
 
-    assert database.mutable is True
+    assert database.rule_call.mutable is True
 
 
 def test_rule_rejects_non_boolean_mutable_declaration():
-    """Invalid mutability declarations must fail while the rule is declared."""
+    """Invalid Rule mutability policy must fail during declaration."""
 
     class Database(NodeType):
         filename = "state.sqlite3"
-        mutable = "yes"
 
-    with pytest.raises(TypeError, match=r"Database\.mutable must be bool, got str"):
-        Rule("database", Inputs(), Outputs(database=Database), "touch {database}")
+    with pytest.raises(TypeError, match=r"mutable must be bool, got str"):
+        Rule(
+            "database",
+            Inputs(),
+            Outputs(database=Database),
+            "touch {database}",
+            mutable="yes",
+        )
+
+
+def test_mutable_rule_rejects_multiple_outputs():
+    """A mutable RuleCall cannot safely rematerialize ordinary co-outputs."""
+
+    class Database(NodeType):
+        filename = "state.sqlite3"
+
+    class Log(NodeType):
+        filename = "state.log"
+
+    with pytest.raises(TypeError, match="mutable Rule.*exactly one output"):
+        Rule(
+            "database",
+            Inputs(),
+            Outputs(database=Database, log=Log),
+            "touch {database} {log}",
+            mutable=True,
+        )
 
 
 def test_mutability_changes_the_rule_contract_and_consumer_provenance(tmp_path):
@@ -300,6 +325,13 @@ def test_mutability_changes_the_rule_contract_and_consumer_provenance(tmp_path):
         filename = "state.sqlite3"
 
     create = Rule("database", Inputs(), Outputs(database=Database), "touch {database}")
+    mutable_create = Rule(
+        "database",
+        Inputs(),
+        Outputs(database=Database),
+        "touch {database}",
+        mutable=True,
+    )
     consume = Rule(
         "consume", Inputs(database=Database), Outputs(txt=Txt), "touch {txt}"
     )
@@ -307,13 +339,9 @@ def test_mutability_changes_the_rule_contract_and_consumer_provenance(tmp_path):
     ordinary_database = create(ordinary_pipeline)
     ordinary_result = consume(ordinary_pipeline, ordinary_database)
 
-    Database.mutable = True
-    try:
-        mutable_pipeline = Pipeline(DAG(tmp_path / "mutable"))
-        mutable_database = create(mutable_pipeline)
-        mutable_result = consume(mutable_pipeline, mutable_database)
-    finally:
-        Database.mutable = False
+    mutable_pipeline = Pipeline(DAG(tmp_path / "mutable"))
+    mutable_database = mutable_create(mutable_pipeline)
+    mutable_result = consume(mutable_pipeline, mutable_database)
 
     assert mutable_database.rule_hash != ordinary_database.rule_hash
     assert mutable_database.provenance_hash != ordinary_database.provenance_hash
@@ -389,14 +417,14 @@ def test_resolve_command_input_substitution(tmp_path):
     P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hi")
     upper, _ = R_to_upper(P, txt, n=2)
-    cmd = resolve_command(upper)
+    cmd = resolve_command(upper.rule_call)
     assert str(txt.path) in cmd
 
 
 def test_resolve_command_config_substitution(tmp_path):
     P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hello")
-    cmd = resolve_command(txt)
+    cmd = resolve_command(txt.rule_call)
     assert "hello" in cmd
 
 
@@ -410,7 +438,7 @@ def test_resolve_command_quotes_string_config_for_shell_commands(tmp_path):
     )
     txt = r_filter_txt(P, filter="a > b")
 
-    assert resolve_command(txt) == f"tool --filter 'a > b' > {txt.path}"
+    assert resolve_command(txt.rule_call) == f"tool --filter 'a > b' > {txt.path}"
 
 
 def test_resolve_command_scalar_config_stays_bare_when_shell_safe(tmp_path):
@@ -420,7 +448,7 @@ def test_resolve_command_scalar_config_stays_bare_when_shell_safe(tmp_path):
     )
     txt = r_number_txt(P, n=5)
 
-    assert resolve_command(txt) == f"tool -n 5 > {txt.path}"
+    assert resolve_command(txt.rule_call) == f"tool -n 5 > {txt.path}"
 
 
 def test_list_commands_are_rejected():
@@ -437,7 +465,7 @@ def test_resolve_command_output_substitution(tmp_path):
     P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hi")
     upper, log = R_to_upper(P, txt, n=1)
-    cmd = resolve_command(upper)
+    cmd = resolve_command(upper.rule_call)
     assert str(upper.path) in cmd
     assert str(log.path) in cmd
 
@@ -448,7 +476,7 @@ R_no_command = Rule("no_command", Inputs(word=str), Outputs(txt=Txt), None)
 def test_resolve_command_none_for_no_command(tmp_path):
     P = Pipeline(DAG(tmp_path))
     txt = R_no_command(P, word="hi")
-    assert resolve_command(txt) is None
+    assert resolve_command(txt.rule_call) is None
 
 
 def test_resolve_command_direct_constraint_placeholders(tmp_path):
@@ -463,7 +491,7 @@ def test_resolve_command_direct_constraint_placeholders(tmp_path):
     txt = r_constrained(P, word="hi")
 
     assert (
-        resolve_command(txt)
+        resolve_command(txt.rule_call)
         == f"tool --threads 8 --ram 4Gi --gpu 2 --word hi > {txt.path}"
     )
 
@@ -478,7 +506,7 @@ def test_resolve_command_threads_defaults_to_one(tmp_path):
     )
     txt = r_default_threads(P, word="hi")
 
-    assert resolve_command(txt) == f"tool --threads 1 > {txt.path}"
+    assert resolve_command(txt.rule_call) == f"tool --threads 1 > {txt.path}"
 
 
 def test_resolve_command_preserves_escaped_shell_braces(tmp_path):
@@ -491,7 +519,10 @@ def test_resolve_command_preserves_escaped_shell_braces(tmp_path):
     )
     txt = r_brace(P, word="hi")
 
-    assert resolve_command(txt) == f"printf '%s\n' {{left,right}} hi > {txt.path}"
+    assert (
+        resolve_command(txt.rule_call)
+        == f"printf '%s\n' {{left,right}} hi > {txt.path}"
+    )
 
 
 def test_resolve_command_substitutes_union_typed_input(tmp_path):
@@ -512,7 +543,7 @@ def test_resolve_command_substitutes_union_typed_input(tmp_path):
 
     src = R_make_txt(P, word="hi")
     doc = read_either(P, src)
-    cmd = resolve_command(doc)
+    cmd = resolve_command(doc.rule_call)
     assert str(src.path) in cmd
     assert str(doc.path) in cmd
 
@@ -528,7 +559,7 @@ def test_constraint_placeholder_forces_constraint_when_config_name_collides(tmp_
     )
     txt = r_colliding_threads(P, threads=2)
 
-    assert resolve_command(txt) == f"tool --arg 2 --scheduler 8 > {txt.path}"
+    assert resolve_command(txt.rule_call) == f"tool --arg 2 --scheduler 8 > {txt.path}"
 
 
 def test_unknown_constraint_placeholder_is_rejected():
@@ -625,14 +656,14 @@ def test_content_hash_streams_directory_files_in_bounded_chunks(tmp_path, monkey
 
 def test_accumulated_config_single_node():
     txt = R_make_txt(P, word="hello")
-    cfg = _accumulated_config(txt)
+    cfg = _accumulated_config(txt.rule_call)
     assert cfg["word"] == "hello"
 
 
 def test_accumulated_config_multi_hop():
     txt = R_make_txt(P, word="hello")
     upper, _ = R_to_upper(P, txt, n=5)
-    cfg = _accumulated_config(upper)
+    cfg = _accumulated_config(upper.rule_call)
     assert cfg["word"] == "hello"
     assert cfg["n"] == 5
 
@@ -643,7 +674,7 @@ def test_accumulated_config_diamond_visits_shared_ancestor_once():
     branch_a, _ = R_to_upper(P, root, n=2)
     branch_b, _ = R_to_upper(P, root, n=3)
     joined = R_join_upper(P, branch_a, branch_b)
-    cfg = _accumulated_config(joined)
+    cfg = _accumulated_config(joined.rule_call)
     assert cfg["word"] == "hello"
     assert cfg["n"] == 3
 
@@ -656,7 +687,7 @@ def test_write_dependencies_creates_file(tmp_path):
     txt = R_make_txt(P, word="hi")
     txt.path.parent.mkdir(parents=True, exist_ok=True)
     txt.path.touch()
-    write_dependencies(txt)
+    write_dependencies(txt.rule_call)
     assert (txt.path.parent / ".rip" / "dependencies.toml").exists()
 
 
@@ -665,7 +696,7 @@ def test_write_dependencies_content(tmp_path):
     txt = R_make_txt(P, word="hi")
     txt.path.parent.mkdir(parents=True, exist_ok=True)
     txt.path.touch()
-    write_dependencies(txt)
+    write_dependencies(txt.rule_call)
     content = (txt.path.parent / ".rip" / "dependencies.toml").read_text()
     assert "make_txt" in content
     assert "hi" in content
