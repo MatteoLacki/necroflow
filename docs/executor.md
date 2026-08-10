@@ -222,6 +222,149 @@ CLI result paths remain Node-level selections. After successful execution, only 
 
 `execution.toml` uses RuleCall report entries, so duration is never attached to an individual Node and co-output runtime is never double-counted.
 
+## Worked execution example
+
+Consider five RuleCalls registered in this order:
+
+```text
+source
+├── analyze → (data, log) ──→ report  [requested]
+├── checksum                         [requested]
+└── unused                           [not requested]
+
+registration order: source, analyze, checksum, report, unused
+```
+
+The caller requests two output Nodes:
+
+```python
+dag.require([P.report, P.checksum])
+dag.run()
+```
+
+### Planning
+
+The planner follows owning RuleCalls and their parents from the requested Nodes:
+
+```text
+active:   source, analyze, checksum, report
+inactive: unused
+```
+
+If `unused` has an existing workdir, it enters `plan.orphans`; otherwise it is
+ignored. `analyze` remains one atomic call containing both `data` and `log`, even
+though only `data` feeds `report`.
+
+Assume every active output is initially missing. Classification begins as:
+
+```text
+source    → MISSING
+analyze   → unknown; parent will run
+checksum  → unknown; parent will run
+report    → unknown; parent will run
+```
+
+Classification is lazy: consumers wait for final parent bytes before deciding
+whether their cached result remains valid.
+
+### First scheduler pass
+
+The executor promotes `source` from `MISSING` to `READY`. The scheduler receives:
+
+```python
+ready = [source]
+remaining = [source, analyze, checksum, report]
+```
+
+FIFO returns `[source]`. The executor checks resources, writes
+`source/.rip/state = "running"`, and submits
+`rule_call_runner(source, log_path)`.
+
+After runner success, the executor validates every declared output, writes
+dependency metadata, hashes and invalidator tokens, writes the ancestor graph
+and successful state, creates one `RuleCallExecution`, and writes `run.toml`.
+
+### Newly available children
+
+Once `source` is `UP_TO_DATE`, its children become classifiable:
+
+```text
+analyze   → MISSING → READY
+checksum  → MISSING → READY
+report    → unknown; analyze must settle
+```
+
+The next FIFO input is:
+
+```python
+ready = [analyze, checksum]
+```
+
+The executor may submit both concurrently when resources permit. A custom
+scheduler may reverse them, but cannot select `report` before it is ready.
+
+`analyze` executes once and must produce both `data` and `log`. Both outputs are
+validated and hashed together. Its metadata records the exact source bytes it
+consumed:
+
+```toml
+[[parents]]
+node_key = "source/<rule_hash>/<provenance_hash>/raw.txt"
+call_key = "source/<rule_hash>/<provenance_hash>"
+mutable = false
+consumed_sha256 = "<64 lowercase hexadecimal characters>"
+```
+
+There is one call-level duration and one `RuleCallExecution`, containing both
+output Node keys.
+
+After `analyze` settles, `report` becomes classifiable. Its output is missing,
+so it moves through `MISSING → READY → RUNNING → UP_TO_DATE`.
+
+For CLI runs, only `report` and `checksum` are copied into `results/`.
+`analyze.data` and `analyze.log` remain together in the node store by default.
+With `autoclean=True`, the intermediate `analyze` workdir may be removed after
+`report` succeeds, and an existing `unused` orphan workdir is removed. Atomic
+co-outputs are never cleaned separately.
+
+### Fully cached second run
+
+On the next run, classification proceeds parent-first:
+
+```text
+source   → UP_TO_DATE
+analyze  → source current SHA == consumed SHA → UP_TO_DATE
+checksum → source current SHA == consumed SHA → UP_TO_DATE
+report   → data current SHA == consumed SHA   → UP_TO_DATE
+```
+
+No runner is called. The report contains four cached `RuleCallExecution`
+entries without new durations. Current hashes use the stored hash while output
+mtime proves it safe; a newer output is rehashed. Hashes are memoized for the
+invocation.
+
+### Rebuilt parent
+
+If `source` is forced stale and rebuilds identical bytes, child classification
+happens after source completion:
+
+```text
+analyze consumed SHA == rebuilt source SHA  → cached
+checksum consumed SHA == rebuilt source SHA → cached
+report                                      → cached
+```
+
+Process history alone does not invalidate immutable consumers. If source bytes
+change, `analyze` and `checksum` become stale. `report` waits for `analyze`, then
+reruns only when the resulting `data` bytes disagree with its consumed hash.
+
+For a mutable source, an external byte edit without source execution is ignored.
+Executing the mutable source during this run makes its consumers stale.
+
+If `analyze` fails, `report` becomes dependency-failed without submission and
+receives no execution event. With `keep_going=True`, independent `checksum` may
+still finish; otherwise the first failure aborts the run.
+
 ## Precise boundaries
 
 - Node = typed output, dependency edge, result selector.
