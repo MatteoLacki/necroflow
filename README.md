@@ -12,30 +12,47 @@
 
 Python pipeline framework inspired by Snakemake. Define rules, wire them into pipelines, run with automatic parallelism and caching. All in Python. All safe. All readable.
 
-For a compact overview of the current software surface, see [features.txt](features.txt).
-
-A local browser GUI for visualising pipelines and launching runs is available at [necroflow_gui](https://github.com/MatteoLacki/necroflow_gui).
+Compact overview of the current software surface, see [features.txt](features.txt).
 
 See [COMPARISON.md](COMPARISON.md) for a detailed comparison with Snakemake, Nextflow, Luigi, CWL/WDL, and Prefect/Airflow across 20 axes.
 
-## Core ideas
+## Define a pipeline
 
-- **Rules** describe how to produce outputs from inputs — shell command templates with typed I/O and lint-clean `name = output(NodeType)` declarations.
-- **Pipelines** wire rule calls together for a single config; prefixed subpipeline views make reusable loop-generated outputs requestable.
-- **DAG** runs many pipelines at once, deduplicating shared upstream work across samples automatically.
-- **Paths** are derived from a lineage-derived fingerprint of the full input chain — same inputs always produce the same path, different inputs produce different paths. The filesystem is the cache.
+A command-line run points at a Python pipeline factory. Rules describe typed outputs and shell commands; the factory wires rule calls into a pipeline.
 
-## Install
+```python
+# pipeline.py
+from necroflow import DAG, NodeType, Pipeline, command, symlink_file, output
 
-```bash
-cd necroflow
-make venv
-source .venv/bin/activate
+class Fastq(NodeType):
+    filename = "reads.fastq.gz"
+
+class Bam(NodeType):
+    filename = "aligned.bam"
+
+class Counts(NodeType):
+    filename = "counts.txt"
+
+@symlink_file
+def raw_fastq(path: str):
+    fastq = output(Fastq)
+    return fastq
+
+@command("bwa mem {ref} {fastq} > {bam}", threads=4)
+def align(fastq: Fastq, ref: str):
+    bam = output(Bam)
+    return bam
+
+@command("featureCounts -a {gene_model} {bam} -o {counts}")
+def count(bam: Bam, gene_model: str):
+    counts = output(Counts)
+    return counts
+
+def rna_pipeline(P: Pipeline, config: dict) -> None:
+    P.fastq = raw_fastq(P, path=config["path"])
+    P.bam = align(P, P.fastq, ref=config["ref"])
+    P.counts = count(P, P.bam, gene_model=config["gene_model"])
 ```
-
-## Platform support
-
-necroflow supports POSIX systems (Linux and macOS). We do not offer native Windows support because POSIX commands are the reproducible execution target for workflows. On Windows, use [Windows Subsystem for Linux (WSL)](https://learn.microsoft.com/windows/wsl/) to run necroflow in a POSIX environment.
 
 ## Reusable subpipelines
 
@@ -59,39 +76,24 @@ def cohort_pipeline(P: Pipeline, config: dict) -> None:
 
 The resulting labels include `samples/A/bam` and `samples/A/counts`. Prefixes are request/result names only and never enter fingerprints. The CLI calls `P.finish()` after a successful factory return. Direct Python callers must finish the root before selecting `P.sinks()`; finishing freezes the root and every subpipeline view.
 
-## Define a pipeline
+## Core ideas
 
-A command-line run points at a Python pipeline factory. Rules describe typed outputs and shell commands; the factory wires rule calls into a pipeline.
+- **Rules** describe how to produce outputs from inputs — shell command templates with typed I/O and lint-clean `name = output(NodeType)` declarations.
+- **Pipelines** wire rule calls together for a single config; prefixed subpipeline views make reusable loop-generated outputs requestable.
+- **DAG** runs many pipelines at once, deduplicating shared upstream work across samples automatically.
+- **Paths** are derived from a lineage-derived fingerprint of the full input chain — same inputs always produce the same path, different inputs produce different paths. The filesystem is the cache.
 
-```python
-# pipeline.py
-from necroflow import DAG, NodeType, Pipeline, command, symlink_file, output
+## Install
 
-class Fastq(NodeType):
-    filename = "reads.fastq.gz"
-
-class Bam(NodeType):
-    filename = "aligned.bam"
-
-class Counts(NodeType):
-    filename = "counts.txt"
-@symlink_file
-def raw_fastq(path: str):
-    fastq = output(Fastq)
-    return fastq
-@command("bwa mem {ref} {fastq} > {bam}", threads=4)
-def align(fastq: Fastq, ref: str):
-    bam = output(Bam)
-    return bam
-@command("featureCounts -a {gene_model} {bam} -o {counts}")
-def count(bam: Bam, gene_model: str):
-    counts = output(Counts)
-    return counts
-def rna_pipeline(P: Pipeline, config: dict) -> None:
-    P.fastq = raw_fastq(P, path=config["path"])
-    P.bam = align(P, P.fastq, ref=config["ref"])
-    P.counts = count(P, P.bam, gene_model=config["gene_model"])
+```bash
+cd necroflow
+make venv
+source .venv/bin/activate
 ```
+
+## Platform support
+
+necroflow supports POSIX systems (Linux and macOS). We do not offer native Windows support because POSIX commands are the reproducible execution target for workflows. On Windows, use [Windows Subsystem for Linux (WSL)](https://learn.microsoft.com/windows/wsl/) to run necroflow in a POSIX environment.
 
 ## Compose pipeline fragments
 
