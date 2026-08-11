@@ -713,7 +713,7 @@ def _explain(args) -> None:
             print(f"  resources: {resources}")
         for output in call["outputs"]:
             label = output.get("label") or output.get("output_name")
-            print(f"  output: {label} -> {output.get("path")}")
+            print(f"  output: {label} -> {output.get('path')}")
         for reason in call.get("reasons", []):
             print("  reason:", reason["kind"])
 
