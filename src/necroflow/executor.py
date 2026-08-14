@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 import inspect
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import time
 from typing import Any
@@ -159,14 +158,6 @@ def _record_cached(report: dict[str, RuleCallExecution], calls: list[RuleCall]) 
     return added
 
 
-def _remove_call_dir(call: RuleCall) -> bool:
-    if call.mutable or not call.workdir.exists():
-        return False
-    shutil.rmtree(call.workdir)
-    _logger.cleaned(call)
-    return True
-
-
 @dataclass
 class _AutocleanPlan:
     enabled: bool
@@ -202,10 +193,14 @@ def _cleanup_parents(call: RuleCall, plan: _AutocleanPlan) -> int:
         key = parent.relative_path
         if parent.mutable or key in plan.final_keys:
             continue
-        if all(
-            child.state == RuleCallState.UP_TO_DATE
-            for child in plan.children.get(key, ())
-        ) and _remove_call_dir(parent):
+        if (
+            all(
+                child.state == RuleCallState.UP_TO_DATE
+                for child in plan.children.get(key, ())
+            )
+            and parent.remove_workdir()
+        ):
+            _logger.cleaned(parent)
             cleaned += 1
     return cleaned
 
@@ -213,7 +208,10 @@ def _cleanup_parents(call: RuleCall, plan: _AutocleanPlan) -> int:
 def _clean_orphans(plan: ExecutionPlan, *, autoclean: bool, dry_run: bool) -> int:
     if not autoclean or dry_run:
         return 0
-    return sum(_remove_call_dir(call) for call in plan.orphans)
+    cleaned = [call for call in plan.orphans if call.remove_workdir()]
+    for call in cleaned:
+        _logger.cleaned(call)
+    return len(cleaned)
 
 
 def _validate_scheduler(scheduler: Scheduler) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -165,6 +166,13 @@ class RuleCall:
             for path in self.workdir.rglob("*")
             if path.is_file() and ".rip" not in path.parts
         )
+
+    def remove_workdir(self) -> bool:
+        """Delete this call's workdir unless it is mutable or already absent."""
+        if self.mutable or not self.workdir.exists():
+            return False
+        shutil.rmtree(self.workdir)
+        return True
 
     def _accumulated_config(self, visited: dict[Path, dict] | None = None) -> dict:
         """Merge this call config over every ancestor config, nearest wins."""
