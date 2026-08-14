@@ -446,7 +446,7 @@ def test_cooutputs_run_once(tmp_path):
     run_pipeline(P)
     assert P.a.path.exists() and P.b.path.exists()
     # both co-outputs share a directory; only one job.log should exist
-    assert (P.a.path.parent / ".rip" / "job.log").exists()
+    assert P.a.rule_call.log_path().exists()
     assert P.a.path.parent == P.b.path.parent
 
 

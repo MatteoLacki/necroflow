@@ -10,7 +10,6 @@ import inspect
 import os
 from pathlib import Path
 import subprocess
-import time
 from typing import Any
 
 import tomlkit
@@ -254,11 +253,11 @@ def _validated_schedule(
     return result
 
 
-def _run_with_retries(call: RuleCall, log_path: Path, runner) -> None:
+def _run_with_retries(call: RuleCall, runner) -> None:
     maximum = call.rule.repeat
     for attempt in range(1, maximum + 1):
         try:
-            runner(call, log_path)
+            runner(call, call.log_path())
             return
         except subprocess.CalledProcessError as exc:
             if attempt == maximum:
@@ -317,12 +316,15 @@ def run(
     forced_stale_call_keys: set[Path] | None = None,
     on_complete: Callable[[dict[str, RuleCallExecution]], None] | None = None,
 ) -> dict[str, RuleCallExecution]:
-    """Execute required RuleCalls atomically; return report keyed by call path."""
+    """Execute required RuleCalls atomically; return report keyed by call path.
+
+    • forced_stale_call_keys is a set of canonical RuleCall.relative_path values forced to rerun despite valid cache.
+    """
     if not isinstance(dag, DAG):
         raise TypeError(f"run requires a DAG, got {type(dag).__name__}")
     scheduler = fifo_scheduler if scheduler is None else scheduler
     _validate_scheduler(scheduler)
-    runner = _run_rule_call if rule_call_runner is None else rule_call_runner
+    runner = RuleCall.run if rule_call_runner is None else rule_call_runner
     _logger.setup()
     caps = {"threads": os.cpu_count() or 1}
     if resource_caps:
@@ -387,23 +389,20 @@ def run(
                     for call in _validated_schedule(
                         scheduler, ready, remaining, available
                     ):
-                        resources = call.resources
                         can_run = not running or all(
                             running_resources.get(name, 0) + amount <= caps[name]
-                            for name, amount in resources.items()
+                            for name, amount in call.resources.items()
                             if name in caps
                         )
                         if not can_run:
                             continue
-                        log_path = call.workdir / ".rip" / "job.log"
                         call.mark_running()
                         call.state = RuleCallState.RUNNING
                         _logger.job_start(call)
-                        start = time.monotonic()
                         start_wall = _utc_now()
-                        future = pool.submit(_run_with_retries, call, log_path, runner)
-                        running[future] = (call, start, start_wall, resources, log_path)
-                        for name, amount in resources.items():
+                        future = pool.submit(_run_with_retries, call, runner)
+                        running[future] = (call, start_wall)
+                        for name, amount in call.resources.items():
                             running_resources[name] = (
                                 running_resources.get(name, 0) + amount
                             )
@@ -415,14 +414,11 @@ def run(
                         running, return_when=concurrent.futures.FIRST_COMPLETED
                     )
                     for future in done:
-                        call, start, start_wall, resources, log_path = running.pop(
-                            future
-                        )
-                        elapsed = time.monotonic() - start
+                        call, start_wall = running.pop(future)
                         finished_wall = _utc_now()
                         try:
                             future.result()
-                            _complete_call(
+                            event = _complete_call(
                                 call,
                                 plan,
                                 report,
@@ -431,7 +427,7 @@ def run(
                             )
                             executed_call_keys.add(call.relative_path)
                             n_cleaned += _cleanup_parents(call, autoclean_plan)
-                            _logger.job_done(call, elapsed)
+                            _logger.job_done(call, event.duration_seconds())
                             n_run += 1
                         except Exception as exc:
                             exit_code = (
@@ -458,16 +454,26 @@ def run(
                             )
                             report[event.call_key] = event
                             if exit_code is not None:
-                                _logger.job_failed(call, elapsed, exit_code, log_path)
+                                _logger.job_failed(
+                                    call,
+                                    event.duration_seconds(),
+                                    exit_code,
+                                    call.log_path(),
+                                )
                             else:
-                                _logger.job_error(call, elapsed, exc, log_path)
-                            _logger.job_output(log_path)
+                                _logger.job_error(
+                                    call,
+                                    event.duration_seconds(),
+                                    exc,
+                                    call.log_path(),
+                                )
+                            _logger.job_output(call.log_path())
                             n_failed += 1
                             if not keep_going:
                                 raise
                             errors.append(exc)
                         finally:
-                            for name, amount in resources.items():
+                            for name, amount in call.resources.items():
                                 running_resources[name] -= amount
         finally:
             _logger.summary(n_run, n_skipped, n_failed, n_cleaned)
@@ -480,28 +486,3 @@ def run(
         setattr(error, "execution_report", report)
         raise error
     return report
-
-
-def _run_rule_call(call: RuleCall, log_path: Path) -> None:
-    """Execute one RuleCall command or Python materializer."""
-    call.workdir.mkdir(parents=True, exist_ok=True)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "w") as log:
-        materializer = call.rule.materializer
-        if materializer is not None:
-            materializer(call, log)
-            return
-        command = call.resolve()
-        if command is None:
-            raise RuntimeError(
-                f"rule {call.rule.__name__!r} has neither a command nor a materializer"
-            )
-        options = {
-            "shell": True,
-            "check": True,
-            "stdout": log,
-            "stderr": log,
-        }
-        if call.shellpath is not None:
-            options["executable"] = call.shellpath
-        subprocess.run(command, **options)

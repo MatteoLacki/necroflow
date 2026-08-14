@@ -152,7 +152,7 @@ Resources remain reserved across retries.
 
 ## Runner and retries
 
-`rule_call_runner(call, log_path)` executes one complete call. Default runner invokes a Python materializer or realizes and runs one shell command. Output and error go to `<workdir>/.rip/job.log`.
+`rule_call_runner(call, log_path)` executes one complete call. The default is `RuleCall.run(log_path)`, which invokes a Python materializer or realizes and runs one shell command. Output and error go to `<workdir>/.rip/job.log`.
 
 `repeat=N` permits at most N command attempts within one scheduler submission. Only `subprocess.CalledProcessError` retries. Materializer errors, missing outputs, runner bugs, and metadata errors do not.
 

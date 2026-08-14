@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import shlex
 import shutil
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -14,8 +16,11 @@ import tomlkit
 from necroflow.contexts import CommandArgs, NamedValues
 from necroflow.fingerprints import (
     IDENTITY_FORMAT,
+    PROVENANCE_HASH_DOMAIN,
+    _rule_identity,
+    canonical_bytes,
     command_ast,
-    compute_identity,
+    hash_rule_identity,
     python_identity,
 )
 from necroflow.fs import _content_hash
@@ -111,11 +116,64 @@ class RuleCall:
                 continue
             seen.add(parent_call.relative_path)
             self.parent_calls.append(parent_call)
-        self.rule_identity, self.rule_hash, self.provenance_hash = compute_identity(
-            self
+        self.rule_identity, self.rule_hash, self.provenance_hash = (
+            self.compute_identity()
         )
         rule_component = _safe_path_component(self.rule.__name__, kind="rule name")
         self.relative_path = Path(rule_component) / self.provenance_hash
+
+    def compute_identity(self) -> tuple[dict[str, Any], str, str]:
+        """Return this call's canonical recipe and two identity hashes."""
+        rule_identity = _rule_identity(
+            rule_name=self.rule.__name__,
+            command=self.command,
+            recipe_identity=self.rule.recipe_identity,
+            mutable=self.mutable,
+            input_types=self.rule.inputs.specs,
+            output_types=self.rule.outputs.specs,
+        )
+        rule_hash = hash_rule_identity(rule_identity)
+        return rule_identity, rule_hash, self.compute_provenance_hash(rule_hash)
+
+    def _parent_identity(self) -> list[dict[str, Any]]:
+        """Return canonical parent lineage grouped by declared input name."""
+        parents = []
+        for name, parent in self.inputs.items():
+            if isinstance(parent, tuple):
+                parents.append(
+                    {
+                        "name": name,
+                        "group": [
+                            {
+                                "provenance_hash": item.provenance_hash,
+                                "output": item.output_name or "",
+                            }
+                            for item in parent
+                        ],
+                    }
+                )
+            else:
+                parents.append(
+                    {
+                        "name": name,
+                        "provenance_hash": parent.provenance_hash,
+                        "output": parent.output_name or "",
+                    }
+                )
+        return parents
+
+    def compute_provenance_hash(self, rule_hash: str) -> str:
+        """Hash this configured invocation and its exact parent lineage."""
+        identity = {
+            "domain": PROVENANCE_HASH_DOMAIN,
+            "rule_hash": rule_hash,
+            "config": self.config,
+            "execution_context": (
+                {"shellpath": self.shellpath} if self.shellpath is not None else {}
+            ),
+            "parents": self._parent_identity(),
+        }
+        return hashlib.sha256(canonical_bytes(identity, path="provenance")).hexdigest()
 
     def _constraints(self) -> dict[str, Any]:
         values = {
@@ -138,6 +196,35 @@ class RuleCall:
     @property
     def state_file(self) -> Path:
         return self.workdir / ".rip" / "state"
+
+    def log_path(self) -> Path:
+        """Return this call's captured job-output path."""
+        return self.workdir / ".rip" / "job.log"
+
+    def run(self, log_path: Path) -> None:
+        """Execute this call's materializer or resolved shell command."""
+        self.workdir.mkdir(parents=True, exist_ok=True)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("w") as log:
+            materializer = self.rule.materializer
+            if materializer is not None:
+                materializer(self, log)
+                return
+            command = self.resolve()
+            if command is None:
+                raise RuntimeError(
+                    f"rule {self.rule.__name__!r} has neither a command nor a "
+                    "materializer"
+                )
+            options = {
+                "shell": True,
+                "check": True,
+                "stdout": log,
+                "stderr": log,
+            }
+            if self.shellpath is not None:
+                options["executable"] = self.shellpath
+            subprocess.run(command, **options)
 
     @property
     def is_compromised(self) -> bool:

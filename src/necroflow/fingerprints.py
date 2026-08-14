@@ -10,10 +10,7 @@ import platform
 import sys
 import textwrap
 from types import UnionType
-from typing import TYPE_CHECKING, Annotated, Any, Callable, get_args, get_origin, Union
-
-if TYPE_CHECKING:
-    from necroflow.rule_call import RuleCall
+from typing import Annotated, Any, Callable, get_args, get_origin, Union
 
 # Stamped into .rip/dependencies.toml by RuleCall.write_dependencies and required back by
 # any reader of stored provenance, and carried in both hash domains so a format
@@ -251,33 +248,6 @@ def _command_identity(command: Any, recipe_identity: str | None) -> Any:
     raise TypeError(f"unsupported command identity {type(command).__name__}")
 
 
-def _parent_identity(call: RuleCall) -> list[dict[str, Any]]:
-    parents = []
-    for name, parent in call.inputs.items():
-        if isinstance(parent, tuple):
-            parents.append(
-                {
-                    "name": name,
-                    "group": [
-                        {
-                            "provenance_hash": item.provenance_hash,
-                            "output": item.output_name or "",
-                        }
-                        for item in parent
-                    ],
-                }
-            )
-        else:
-            parents.append(
-                {
-                    "name": name,
-                    "provenance_hash": parent.provenance_hash,
-                    "output": parent.output_name or "",
-                }
-            )
-    return parents
-
-
 def _rule_identity(
     *, rule_name, command, recipe_identity, mutable, input_types, output_types
 ) -> dict[str, Any]:
@@ -317,38 +287,4 @@ def declared_rule_hash(rule) -> str:
             input_types=rule.inputs.specs,
             output_types=rule.outputs.specs,
         )
-    )
-
-
-def provenance_hash(call: RuleCall, local_rule_hash: str) -> str:
-    """Hash one configured invocation and its exact parent lineage."""
-
-    identity = {
-        "domain": PROVENANCE_HASH_DOMAIN,
-        "rule_hash": local_rule_hash,
-        "config": call.config,
-        "execution_context": (
-            {"shellpath": call.shellpath} if call.shellpath is not None else {}
-        ),
-        "parents": _parent_identity(call),
-    }
-    return hashlib.sha256(canonical_bytes(identity, path="provenance")).hexdigest()
-
-
-def compute_identity(call: RuleCall) -> tuple[dict[str, Any], str, str]:
-    """Return the framework-owned v4 recipe and its two identity hashes."""
-
-    local_rule_identity = _rule_identity(
-        rule_name=call.rule.__name__,
-        command=call.command,
-        recipe_identity=call.rule.recipe_identity,
-        mutable=call.mutable,
-        input_types=call.rule.inputs.specs,
-        output_types=call.rule.outputs.specs,
-    )
-    local_rule_hash = hash_rule_identity(local_rule_identity)
-    return (
-        local_rule_identity,
-        local_rule_hash,
-        provenance_hash(call, local_rule_hash),
     )
