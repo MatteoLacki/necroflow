@@ -1200,16 +1200,16 @@ def test_run_returns_report_and_writes_run_stats_with_output_size(tmp_path):
     assert event is not None
     assert event.cached is False
     assert event.state == "up_to_date"
-    assert event.duration_seconds is not None and event.duration_seconds >= 0
+    assert event.duration_seconds() is not None and event.duration_seconds() >= 0
     assert event.started_at is not None
     assert event.finished_at is not None
     assert event.exit_code == 0
     assert event.output_size_bytes == len("abc\n")
-    assert event.output_size_human == "4 B"
 
     run_doc = tomlkit.parse((P.a.path.parent / ".rip" / "run.toml").read_text())
     assert run_doc["run"]["exit_code"] == 0
     assert run_doc["run"]["output_size_bytes"] == len("abc\n")
+    assert run_doc["run"]["output_size_human"] == "4 B"
     assert run_doc["run"]["duration_seconds"] >= 0
 
 
@@ -1224,5 +1224,5 @@ def test_run_report_marks_cached_nodes_and_measures_size(tmp_path):
     event = cached_report.get(P.a.rule_call.relative_path.as_posix())
     assert event is not None
     assert event.cached is True
-    assert event.duration_seconds is None
+    assert event.duration_seconds() is None
     assert event.output_size_bytes == len("cached\n")

@@ -156,6 +156,16 @@ class RuleCall:
     def mark_done(self, state: str) -> None:
         self.state_file.write_text(state)
 
+    def output_size_bytes(self) -> int:
+        """Return total non-metadata file bytes in this call's workdir."""
+        if not self.workdir.exists():
+            return 0
+        return sum(
+            path.stat().st_size
+            for path in self.workdir.rglob("*")
+            if path.is_file() and ".rip" not in path.parts
+        )
+
     def _accumulated_config(self, visited: dict[Path, dict] | None = None) -> dict:
         """Merge this call config over every ancestor config, nearest wins."""
         if visited is None:

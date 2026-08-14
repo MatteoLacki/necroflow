@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import concurrent.futures
 from collections.abc import Callable
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import fcntl
 import inspect
 import os
 from pathlib import Path
@@ -21,6 +19,7 @@ import tomlkit
 from necroflow import logger as _logger
 from necroflow.tgf import write_ancestor_tgf
 from necroflow.dag import DAG
+from necroflow.fs import _acquire_lock
 from necroflow.planning import ExecutionPlan, classify_available, plan_execution
 from necroflow.rule_call import RuleCall, RuleCallState
 from necroflow.schedulers import Scheduler, fifo_scheduler
@@ -39,11 +38,9 @@ class RuleCallExecution:
     output_paths: tuple[str, ...]
     started_at: str | None = None
     finished_at: str | None = None
-    duration_seconds: float | None = None
     exit_code: int | None = None
     error: str | None = None
     output_size_bytes: int | None = None
-    output_size_human: str | None = None
 
     @classmethod
     def from_call(
@@ -54,7 +51,6 @@ class RuleCallExecution:
         cached: bool,
         started_at: str | None = None,
         finished_at: str | None = None,
-        duration_seconds: float | None = None,
         exit_code: int | None = None,
         error: str | None = None,
         output_size_bytes: int | None = None,
@@ -72,16 +68,18 @@ class RuleCallExecution:
             output_paths=tuple(str(output.path) for output in call.outputs),
             started_at=started_at,
             finished_at=finished_at,
-            duration_seconds=duration_seconds,
             exit_code=exit_code,
             error=error,
             output_size_bytes=output_size_bytes,
-            output_size_human=(
-                _human_size(output_size_bytes)
-                if output_size_bytes is not None
-                else None
-            ),
         )
+
+    def duration_seconds(self) -> float | None:
+        """Return elapsed wall-clock seconds when both timestamps exist."""
+        if self.started_at is None or self.finished_at is None:
+            return None
+        started = datetime.fromisoformat(self.started_at)
+        finished = datetime.fromisoformat(self.finished_at)
+        return (finished - started).total_seconds()
 
     def to_toml_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -96,11 +94,15 @@ class RuleCallExecution:
         optional = {
             "started_at": self.started_at,
             "finished_at": self.finished_at,
-            "duration_seconds": self.duration_seconds,
+            "duration_seconds": self.duration_seconds(),
             "exit_code": self.exit_code,
             "error": self.error,
             "output_size_bytes": self.output_size_bytes,
-            "output_size_human": self.output_size_human,
+            "output_size_human": (
+                _human_size(self.output_size_bytes)
+                if self.output_size_bytes is not None
+                else None
+            ),
         }
         data.update(
             {key: value for key, value in optional.items() if value is not None}
@@ -122,24 +124,18 @@ def _human_size(size: int) -> str:
     return f"{size} B"
 
 
-def _call_output_size_bytes(call: RuleCall) -> int:
-    if not call.workdir.exists():
-        return 0
-    return sum(
-        path.stat().st_size
-        for path in call.workdir.rglob("*")
-        if path.is_file() and ".rip" not in path.parts
-    )
-
-
 def _write_run_stats(call: RuleCall, event: RuleCallExecution) -> None:
     run = {
         "started_at": event.started_at,
         "finished_at": event.finished_at,
-        "duration_seconds": event.duration_seconds,
+        "duration_seconds": event.duration_seconds(),
         "exit_code": event.exit_code,
         "output_size_bytes": event.output_size_bytes,
-        "output_size_human": event.output_size_human,
+        "output_size_human": (
+            _human_size(event.output_size_bytes)
+            if event.output_size_bytes is not None
+            else None
+        ),
     }
     data = {"run": {key: value for key, value in run.items() if value is not None}}
     rip = call.workdir / ".rip"
@@ -157,29 +153,10 @@ def _record_cached(report: dict[str, RuleCallExecution], calls: list[RuleCall]) 
             call,
             state="up_to_date",
             cached=True,
-            output_size_bytes=_call_output_size_bytes(call),
+            output_size_bytes=call.output_size_bytes(),
         )
         added += 1
     return added
-
-
-@contextmanager
-def _acquire_lock(outdir: Path):
-    lock_path = outdir / ".rip" / "necroflow.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    handle = open(lock_path, "w")
-    try:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        handle.close()
-        raise RuntimeError(
-            f"Another necroflow instance is already running against {outdir}.\n"
-            "Only one instance per node store is supported."
-        )
-    try:
-        yield
-    finally:
-        handle.close()
 
 
 def _remove_call_dir(call: RuleCall) -> bool:
@@ -306,7 +283,6 @@ def _complete_call(
     *,
     started_at: str,
     finished_at: str,
-    duration_seconds: float,
 ) -> RuleCallExecution:
     missing = [output.path for output in call.outputs if not output.path.exists()]
     if missing:
@@ -324,9 +300,8 @@ def _complete_call(
         cached=False,
         started_at=started_at,
         finished_at=finished_at,
-        duration_seconds=duration_seconds,
         exit_code=0,
-        output_size_bytes=_call_output_size_bytes(call),
+        output_size_bytes=call.output_size_bytes(),
     )
     report[event.call_key] = event
     _write_run_stats(call, event)
@@ -455,7 +430,6 @@ def run(
                                 report,
                                 started_at=start_wall,
                                 finished_at=finished_wall,
-                                duration_seconds=elapsed,
                             )
                             executed_call_keys.add(call.relative_path)
                             n_cleaned += _cleanup_parents(call, autoclean_plan)
@@ -481,7 +455,6 @@ def run(
                                 cached=False,
                                 started_at=start_wall,
                                 finished_at=finished_wall,
-                                duration_seconds=elapsed,
                                 exit_code=exit_code,
                                 error=str(exc),
                             )

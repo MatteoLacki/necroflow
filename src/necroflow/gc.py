@@ -10,7 +10,7 @@ import sys
 import tomlkit
 
 from necroflow.config import load_module
-from necroflow.executor import _acquire_lock
+from necroflow.fs import _acquire_lock
 from necroflow.fingerprints import (
     IDENTITY_FORMAT,
     declared_rule_hash,

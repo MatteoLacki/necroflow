@@ -66,6 +66,7 @@ _Combo: TypeAlias = tuple[str, Pipeline, list[_RequestedOutput]]
 
 
 def _load_validators(specs: list[str]) -> list[Callable]:
+    """Load config validators and report import failures as CLI errors."""
     validators: list[Callable] = []
     for spec in specs:
         try:
@@ -76,6 +77,7 @@ def _load_validators(specs: list[str]) -> list[Callable]:
 
 
 def _load_scheduler(spec: str) -> Callable:
+    """Resolve the built-in FIFO scheduler or load a user scheduler."""
     if spec == "fifo":
         return fifo_scheduler
     try:
@@ -90,6 +92,7 @@ def _load_scheduler(spec: str) -> Callable:
 def _validate_job_config(
     job_config, validators: list[Callable], job_path: Path
 ) -> None:
+    """Run every validator against one expanded job configuration."""
     for validator in validators:
         try:
             validator(job_config.config)
@@ -101,6 +104,7 @@ def _validate_job_config(
 
 
 def _dedupe_preserve_order(labels: list[str]) -> list[str]:
+    """Remove duplicate labels without changing first-seen order."""
     # Unlike dict, set does not preserve insertion order: it's session specific
     seen = set()
     result = []
@@ -112,6 +116,7 @@ def _dedupe_preserve_order(labels: list[str]) -> list[str]:
 
 
 def _load_reap_labels(path: Path, names: list[str]) -> list[str]:
+    """Load named invalidation-label sets from a reap TOML file."""
     if not names:
         return []
     if not path.exists():
@@ -131,6 +136,7 @@ def _load_reap_labels(path: Path, names: list[str]) -> list[str]:
 
 
 def _resolve_invalidation_keys(pipeline, labels: list[str]) -> set[Path]:
+    """Translate invalidation labels into canonical RuleCall keys."""
     if not labels:
         return set()
     missing = [label for label in labels if label not in pipeline.labels]
@@ -182,6 +188,7 @@ def _preflight_result_paths(results_dir: Path, combos: list[_Combo]) -> None:
 
 
 def _resolve_roots(args) -> tuple[Path, Path]:
+    """Resolve legacy or split CLI options into node and result roots."""
     if args.outdir is not None and (
         args.nodes_dir is not None or args.results_dir is not None
     ):
@@ -197,6 +204,7 @@ def _resolve_roots(args) -> tuple[Path, Path]:
 
 
 def _build_dag_from_jobs(args, *, nodes_dir: Path):
+    """Compile expanded jobs into a shared DAG, requests, and invalidations."""
     invalidation_labels = _dedupe_preserve_order(
         list(getattr(args, "invalidate", []))
         + _load_reap_labels(
@@ -250,6 +258,7 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
 
 
 def _normalize_arg_shellpath(args) -> str | None:
+    """Normalize --shellpath and present validation failures as CLI errors."""
     try:
         return _normalize_shellpath(getattr(args, "shellpath", None))
     except ValueError as exc:
@@ -257,6 +266,7 @@ def _normalize_arg_shellpath(args) -> str | None:
 
 
 def _parse_resource_caps(args) -> dict[str, int]:
+    """Parse core and named constraint options into scheduler capacities."""
     cores = args.cores.strip()
     resource_caps = {
         "threads": os.cpu_count() or 1 if cores.lower() == "all" else int(cores)
@@ -270,6 +280,7 @@ def _parse_resource_caps(args) -> dict[str, int]:
 
 
 def _json_ready(value):
+    """Recursively convert internal values into JSON-serializable values."""
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, dict):
@@ -285,10 +296,12 @@ def _json_ready(value):
 
 
 def _emit_json(payload) -> None:
+    """Print a stable, human-readable JSON representation of a payload."""
     print(json.dumps(_json_ready(payload), indent=2, sort_keys=True))
 
 
 def _node_display_label(node, label: str | None = None) -> str:
+    """Choose the visible label used for one node in CLI output."""
     return (
         label
         or node.rule_call.dag.label_for(node)
@@ -298,12 +311,14 @@ def _node_display_label(node, label: str | None = None) -> str:
 
 
 def _result_relative_path(node, label: str | None = None) -> Path:
+    """Build one requested output's label-based relative result path."""
     if node.path is None:
         raise ValueError("node path has not been resolved")
     return Path(_node_display_label(node, label)) / node.path.name
 
 
 def _node_json(node, *, nodes_dir: Path | None = None) -> dict:
+    """Serialize one node and its execution metadata for CLI JSON."""
     data = {
         "key": node.relative_path.as_posix(),
         "label": node.rule_call.dag.label_for(node),
@@ -331,6 +346,7 @@ def _node_json(node, *, nodes_dir: Path | None = None) -> dict:
 
 
 def _edge_json(nodes: list) -> list[dict]:
+    """Serialize parent edges whose endpoints are both in the given nodes."""
     node_keys = {node.relative_path for node in nodes}
     return [
         {
@@ -345,6 +361,7 @@ def _edge_json(nodes: list) -> list[dict]:
 
 
 def _outputs_payload(combos, *, nodes_dir: Path, results_dir: Path) -> dict:
+    """Describe requested node-store and visible result paths for each job."""
     jobs = []
     for label, pipeline, request in combos:
         requested = []
@@ -368,6 +385,7 @@ def _outputs_payload(combos, *, nodes_dir: Path, results_dir: Path) -> dict:
 
 
 def _graph_payload(dag, combos, *, nodes_dir: Path) -> dict:
+    """Serialize a DAG, its edges, and per-job requests for graph JSON."""
     requested = {node.relative_path for node in dag.required_nodes}
     return {
         "nodes": [
@@ -391,6 +409,7 @@ def _graph_payload(dag, combos, *, nodes_dir: Path) -> dict:
 
 
 def _provenance_payload(path: Path) -> dict:
+    """Read one output's stored provenance into a CLI payload."""
     rip = path.parent / ".rip" / "dependencies.toml"
     if not rip.exists():
         raise SystemExit(f"error: provenance metadata not found: {rip}")
@@ -407,6 +426,7 @@ def _provenance_payload(path: Path) -> dict:
 
 
 def _explain_payload(args) -> dict:
+    """Plan requested calls and explain their cache classification."""
     nodes_dir, _results_dir = _resolve_roots(args)
     dag, combos, forced_stale_call_keys = _build_dag_from_jobs(
         args, nodes_dir=nodes_dir
@@ -475,12 +495,14 @@ def _explain_payload(args) -> dict:
 
 
 def _issue(code: str, severity: str, message: str, **extra) -> dict:
+    """Build one doctor finding while omitting absent optional fields."""
     issue = {"code": code, "severity": severity, "message": message}
     issue.update({k: v for k, v in extra.items() if v is not None})
     return issue
 
 
 def _doctor_payload(args) -> dict:
+    """Run CLI preflight checks and return structured doctor findings."""
     issues: list[dict] = []
     nodes_dir, results_dir = _resolve_roots(args)
     try:
@@ -586,6 +608,7 @@ def _doctor_payload(args) -> dict:
 
 
 def _run(args) -> None:
+    """Build, execute, and materialize all jobs requested by the run command."""
     nodes_dir, results_dir = _resolve_roots(args)
     dag, combos, forced_stale_call_keys = _build_dag_from_jobs(
         args, nodes_dir=nodes_dir
@@ -608,6 +631,7 @@ def _run(args) -> None:
 
 
 def _gc(args) -> None:
+    """Collect unreachable node-store entries according to current rules."""
     collect(
         args.nodes_dir,
         args.gc_rules_script,
@@ -617,6 +641,7 @@ def _gc(args) -> None:
 
 
 def _graph(args) -> None:
+    """Render the requested DAG as TGF, JSON, or PNG."""
     nodes_dir, _results_dir = _resolve_roots(args)
     dag, combos, _forced_stale_call_keys = _build_dag_from_jobs(
         args, nodes_dir=nodes_dir
@@ -636,6 +661,7 @@ def _graph(args) -> None:
 
 
 def _outputs(args) -> None:
+    """Print requested node-store and result paths without executing."""
     nodes_dir, results_dir = _resolve_roots(args)
     dag, combos, _forced_stale_call_keys = _build_dag_from_jobs(
         args, nodes_dir=nodes_dir
@@ -656,6 +682,7 @@ def _outputs(args) -> None:
 
 
 def _provenance(args) -> None:
+    """Print stored provenance for one cached output."""
     path = Path(args.path)
     payload = _provenance_payload(path)
     if args.json:
@@ -678,6 +705,7 @@ def _provenance(args) -> None:
 
 
 def _doctor(args) -> None:
+    """Report preflight findings and fail when any finding is an error."""
     payload = _doctor_payload(args)
     if args.json:
         _emit_json(payload)
@@ -692,6 +720,7 @@ def _doctor(args) -> None:
 
 
 def _explain(args) -> None:
+    """Print why requested calls will run or remain cached."""
     payload = _explain_payload(args)
     if args.json:
         _emit_json(payload)
@@ -715,6 +744,7 @@ def _explain(args) -> None:
 
 
 def _init(args) -> None:
+    """Copy the canonical starter project into the requested directory."""
     dest = Path(args.dir)
     if dest.exists() and any(dest.iterdir()) and not args.force:
         raise SystemExit(f"error: {dest} is not empty; pass --force to overwrite")
@@ -735,6 +765,7 @@ def _init(args) -> None:
 
 
 def _requested_with_ancestors(request: list[_RequestedOutput]) -> list:
+    """Return requested nodes plus their transitive ancestors without duplicates."""
     seen: dict[Path, object] = {}
     stack = [binding.node for binding in request]
     while stack:
@@ -747,6 +778,7 @@ def _requested_with_ancestors(request: list[_RequestedOutput]) -> list:
 
 
 def _write_execution_summaries(results_dir: Path, combos: list[_Combo], report) -> None:
+    """Write per-job execution reports containing only requested call closures."""
     if report is None:
         return
     for label, pipeline, request in combos:
@@ -774,8 +806,9 @@ def _write_execution_summaries(results_dir: Path, combos: list[_Combo], report) 
                 "name": event.rule,
                 **values,
             }
-            if event.duration_seconds is not None:
-                total_duration += event.duration_seconds
+            duration = values.get("duration_seconds")
+            if duration is not None:
+                total_duration += duration
             table = tomlkit.table()
             for key, value in values.items():
                 table[key] = value
@@ -799,6 +832,7 @@ def _write_execution_summaries(results_dir: Path, combos: list[_Combo], report) 
 
 
 def _prune_empty_dirs(path: Path, stop: Path) -> None:
+    """Remove empty ancestors from path up to but excluding stop."""
     while path != stop and path.is_dir():
         try:
             path.rmdir()
@@ -808,6 +842,7 @@ def _prune_empty_dirs(path: Path, stop: Path) -> None:
 
 
 def _owned_result_paths(combo_dir: Path) -> set[Path]:
+    """Read and validate result paths owned by the prior manifest."""
     manifest = combo_dir / "manifest.toml"
     if not manifest.exists():
         return set()
@@ -832,6 +867,7 @@ def _owned_result_paths(combo_dir: Path) -> set[Path]:
 
 
 def _clear_generated_results(combo_dir: Path, paths: set[Path]) -> None:
+    """Delete previously managed results and newly empty label directories."""
     for path in sorted(paths, key=lambda p: len(p.parts), reverse=True):
         parent = path.parent
         if path.is_symlink() or path.is_file():
@@ -842,6 +878,7 @@ def _clear_generated_results(combo_dir: Path, paths: set[Path]) -> None:
 
 
 def _copy_result(source: Path, destination: Path) -> None:
+    """Archive-copy one result, requesting a clone or reflink when available."""
     command = ["cp", "-a"]
     if sys.platform == "darwin":
         command.append("-c")
@@ -856,11 +893,7 @@ def _materialize_results(
     results_dir: Path,
     combos: list[_Combo],
 ) -> None:
-    """Copy requested outputs into per-combo result directories.
-
-    GNU ``cp`` opportunistically creates reflinks; macOS requests APFS clones.
-    Symlink outputs remain symlinks because ``cp -a`` does not dereference them.
-    """
+    """Atomically replace managed per-job results and their manifest."""
     _validate_result_paths(results_dir, combos)
     for label, _pipeline, requested_outputs in combos:
         combo_dir = results_dir / label
@@ -915,6 +948,7 @@ def _materialize_results(
 
 
 def _add_run_options(parser) -> None:
+    """Add shared job-building and execution options to a subcommand parser."""
     parser.add_argument(
         "jobs",
         nargs="+",
@@ -1019,6 +1053,7 @@ def _add_run_options(parser) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Construct the complete necroflow command-line parser."""
     parser = argparse.ArgumentParser(
         prog="necroflow",
         description="Run necroflow pipelines from job TOML files.",

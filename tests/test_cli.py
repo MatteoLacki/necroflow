@@ -1446,6 +1446,7 @@ def test_main_writes_execution_summary_for_requested_ancestors(tmp_path, factory
     assert rules["make_b"]["cached"] is False
     assert rules["make_a"]["duration_seconds"] >= 0
     assert rules["make_a"]["output_size_bytes"] == 0
+    assert rules["make_a"]["output_size_human"] == "0 B"
     assert rules["make_a"]["outputs"][0]["labels"] == ["a"]
     assert doc["total_duration_seconds"] == pytest.approx(
         sum(rule["duration_seconds"] for rule in rules.values())

@@ -3,10 +3,28 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
+import fcntl
 import os
 from pathlib import Path
 
 _HASH_CHUNK_SIZE = 1024 * 1024
+
+
+@contextmanager
+def _acquire_lock(outdir: Path):
+    """Hold the exclusive per-node-store lock for one filesystem operation."""
+    lock_path = outdir / ".rip" / "necroflow.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Another necroflow instance is already running against {outdir}.\n"
+                "Only one instance per node store is supported."
+            ) from exc
+        yield
 
 
 def _filesystem_limits(path: Path) -> tuple[int | None, int | None]:
