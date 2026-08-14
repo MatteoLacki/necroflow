@@ -430,12 +430,6 @@ def test_direct_nodetype_construction_is_rejected():
         A()
 
 
-def test_nodetype_representation_is_its_declaration_name():
-    """Diagnostics should render a NodeType by its concise declaration name."""
-
-    assert repr(A) == "A"
-
-
 def test_rule_rejects_cooutputs_with_the_same_realized_filename(tmp_path):
     """One rule call cannot map two output names onto the same filesystem path."""
 

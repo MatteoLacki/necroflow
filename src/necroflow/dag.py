@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import tomlkit
+
 from necroflow.tgf import _node_label, render_tgf
-from necroflow.nodes import (
-    Node,
-    NodeType,
-    NodeTypeMeta,
-)
+from necroflow.nodes import Node
 from necroflow.rule_call import RuleCall
 from necroflow.rules import parse_resource
 
@@ -99,6 +97,35 @@ class DAG:
     @property
     def required_nodes(self) -> list:
         return [n for path, n in self._nodes.items() if path in self._required]
+
+    @property
+    def required_call_keys(self) -> set[Path]:
+        """Return required RuleCall keys, including every ancestor call."""
+        required: set[Path] = set()
+        frontier = [node.rule_call for node in self.required_nodes]
+        while frontier:
+            call = frontier.pop()
+            if call.relative_path in required:
+                continue
+            required.add(call.relative_path)
+            frontier.extend(call.parent_calls)
+        return required
+
+    def dependencies(self, call: RuleCall) -> list[dict] | None:
+        """Read valid parent dependency records for one RuleCall."""
+        path = call.workdir / ".rip" / "dependencies.toml"
+        if not path.exists():
+            return None
+        try:
+            data = tomlkit.parse(path.read_text())
+            parents = data.get("parents")
+        except Exception:
+            return None
+        if not isinstance(parents, list) or not all(
+            isinstance(parent, dict) for parent in parents
+        ):
+            return None
+        return parents
 
     def __repr__(self) -> str:
         return str(self)

@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import tomlkit
-
 from necroflow.dag import DAG
 from necroflow.fs import _content_hash, _output_mtime
 from necroflow.nodes import Node
@@ -46,34 +44,6 @@ class ExecutionPlan:
     @property
     def active_keys(self) -> set[Path]:
         return {call.relative_path for call in self.active}
-
-
-def _required_call_keys(dag: DAG) -> set[Path]:
-    required: set[Path] = set()
-    frontier = [node.rule_call for node in dag.required_nodes]
-    while frontier:
-        call = frontier.pop()
-        if call.relative_path in required:
-            continue
-        required.add(call.relative_path)
-        frontier.extend(call.parent_calls)
-    return required
-
-
-def _dependencies(call: RuleCall) -> list[dict] | None:
-    path = call.workdir / ".rip" / "dependencies.toml"
-    if not path.exists():
-        return None
-    try:
-        data = tomlkit.parse(path.read_text())
-        parents = data.get("parents")
-    except Exception:
-        return None
-    if not isinstance(parents, list) or not all(
-        isinstance(parent, dict) for parent in parents
-    ):
-        return None
-    return parents
 
 
 def _valid_sha256(value: object) -> bool:
@@ -134,7 +104,7 @@ def classify_call(
                 }
             )
 
-    metadata = _dependencies(call) if call.parents else []
+    metadata = call.dag.dependencies(call) if call.parents else []
     if call.parents and metadata is None:
         reasons.append({"kind": "dependency_metadata_missing_or_invalid"})
     elif metadata is not None:
@@ -233,7 +203,7 @@ def plan_execution(
     include_advisories: bool = False,
 ) -> ExecutionPlan:
     """Build call closure and classify only calls with settled parents."""
-    required = _required_call_keys(dag)
+    required = dag.required_call_keys
     active = [call for key, call in dag.calls.items() if key in required]
     orphans = [
         call

@@ -1,10 +1,7 @@
 __version__ = "0.0.4"
 
-from necroflow.dag import (
-    DAG,
-    Node,
-    NodeType,
-)
+from necroflow.dag import DAG
+from necroflow.nodes import Node, NodeType
 from necroflow.rules import (
     Constraints,
     Inputs,

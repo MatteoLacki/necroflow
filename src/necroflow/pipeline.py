@@ -4,6 +4,7 @@ import os
 from pathlib import Path, PurePosixPath
 
 from necroflow.dag import DAG
+from necroflow.fs import _normalize_shellpath
 from necroflow.nodes import Node
 from necroflow.tgf import render_tgf
 
@@ -271,18 +272,3 @@ class Pipeline:
     def save(self, path) -> None:
         """Write the DAG in Trivial Graph Format."""
         Path(path).write_text(str(self) + "\n", encoding="utf-8")
-
-
-def _normalize_shellpath(shellpath: str | Path | None) -> str | None:
-    if shellpath is None:
-        return None
-    path = Path(shellpath).expanduser()
-    try:
-        resolved = path.resolve(strict=True)
-    except FileNotFoundError as exc:
-        raise ValueError(f"shellpath does not exist: {path}") from exc
-    if not resolved.is_file():
-        raise ValueError(f"shellpath is not a file: {resolved}")
-    if not os.access(resolved, os.X_OK):
-        raise ValueError(f"shellpath is not executable: {resolved}")
-    return str(resolved)

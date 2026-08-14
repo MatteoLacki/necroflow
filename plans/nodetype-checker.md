@@ -151,7 +151,7 @@ class Csv(NodeType):
 No `staticmethod()` wrapping — confirmed by every existing `invalidator` usage
 (docs/caching.md:107, examples/custom_invalidation.py:33, tests/test_state.py) that a plain
 function assigned as a `NodeType` class attribute is read back unbound via `getattr`, since
-`NodeType` subclasses are never instantiated (`NodeTypeMeta.__call__` raises) and Python's
+`NodeType` subclasses are never instantiated (`NodeType.__new__` raises) and Python's
 function descriptor only binds `self` on instance access, not class access.
 
 ### 6. Documentation

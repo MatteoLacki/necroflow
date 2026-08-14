@@ -49,8 +49,7 @@ from necroflow import (
 )
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import parse_resource
-from necroflow.fs import _check_path_limits, _content_hash
-from necroflow.pipeline import _normalize_shellpath
+from necroflow.fs import _check_path_limits, _content_hash, _normalize_shellpath
 from necroflow.graphviz_render import render_png
 from necroflow.planning import plan_execution
 from necroflow.gc import collect

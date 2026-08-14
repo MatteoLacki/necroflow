@@ -11,6 +11,22 @@ from pathlib import Path
 _HASH_CHUNK_SIZE = 1024 * 1024
 
 
+def _normalize_shellpath(shellpath: str | Path | None) -> str | None:
+    """Resolve and validate an optional executable shell path."""
+    if shellpath is None:
+        return None
+    path = Path(shellpath).expanduser()
+    try:
+        resolved = path.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise ValueError(f"shellpath does not exist: {path}") from exc
+    if not resolved.is_file():
+        raise ValueError(f"shellpath is not a file: {resolved}")
+    if not os.access(resolved, os.X_OK):
+        raise ValueError(f"shellpath is not executable: {resolved}")
+    return str(resolved)
+
+
 @contextmanager
 def _acquire_lock(outdir: Path):
     """Hold the exclusive per-node-store lock for one filesystem operation."""

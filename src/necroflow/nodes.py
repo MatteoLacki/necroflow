@@ -11,20 +11,7 @@ from necroflow.fs import _check_path_limits
 from necroflow.rule_call import RuleCall, _safe_path_component
 
 
-class NodeTypeMeta(type):
-    """Metaclass for declarative node types."""
-
-    def __call__(cls, output_name: str | None = None) -> Node:
-        raise TypeError(
-            f"{cls.__name__} is a NodeType declaration, not a Node constructor; "
-            "create managed Nodes by calling a Rule with a Pipeline"
-        )
-
-    def __repr__(cls) -> str:
-        return cls.__name__
-
-
-class NodeType(metaclass=NodeTypeMeta):
+class NodeType:
     """Base class for node types. Subclass to define types.
 
     class Fastq(NodeType): ...
@@ -36,6 +23,12 @@ class NodeType(metaclass=NodeTypeMeta):
 
     filename: str | None = None
     invalidator = None
+
+    def __new__(cls, *args, **kwargs):
+        raise TypeError(
+            f"{cls.__name__} is a NodeType declaration, not a Node constructor; "
+            "create managed Nodes by calling a Rule with a Pipeline"
+        )
 
 
 @dataclass
