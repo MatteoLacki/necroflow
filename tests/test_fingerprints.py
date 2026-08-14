@@ -434,8 +434,8 @@ def test_framework_hashing_rejects_custom_config_values(tmp_path):
         )(Pipeline(DAG(tmp_path)), options=Options())
 
 
-def test_v2_fingerprint_cache_is_not_reused(tmp_path):
-    old_output = tmp_path / "source" / ("a" * 64) / "source.txt"
+def test_v3_split_hash_cache_is_not_reused(tmp_path):
+    old_output = tmp_path / "source" / ("a" * 64) / ("b" * 64) / "source.txt"
     old_output.parent.mkdir(parents=True)
     old_output.touch()
     dag = DAG(tmp_path)
@@ -445,7 +445,7 @@ def test_v2_fingerprint_cache_is_not_reused(tmp_path):
 
     plan_execution(dag)
 
-    assert len(node.path.relative_to(tmp_path).parts) == 4
+    assert len(node.path.relative_to(tmp_path).parts) == 3
     assert node.rule_call.state.value == "missing"
 
 
@@ -529,7 +529,7 @@ def test_callable_provenance_separates_command_and_fingerprint(tmp_path):
 
     metadata = (pipeline.result.path.parent / ".rip" / "dependencies.toml").read_text()
     assert "[identity]" in metadata
-    assert 'format = "v3"' in metadata
+    assert 'format = "v4"' in metadata
     assert f'rule_hash = "{pipeline.result.rule_hash}"' in metadata
     assert f'provenance_hash = "{pipeline.result.provenance_hash}"' in metadata
     assert "[command]" in metadata

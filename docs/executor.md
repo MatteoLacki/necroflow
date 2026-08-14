@@ -63,8 +63,7 @@ A `.rip/state` file containing anything except `up_to_date` is compromised. Miss
 On success, `dependencies.toml` records every parent Node in declaration order. Immutable parents include:
 
 ```toml
-node_key = "producer/<rule_hash>/<provenance_hash>/out.txt"
-call_key = "producer/<rule_hash>/<provenance_hash>"
+node_key = "producer/<provenance_hash>/out.txt"
 mutable = false
 consumed_sha256 = "<hash consumed by this call>"
 ```
@@ -309,8 +308,7 @@ consumed:
 
 ```toml
 [[parents]]
-node_key = "source/<rule_hash>/<provenance_hash>/raw.txt"
-call_key = "source/<rule_hash>/<provenance_hash>"
+node_key = "source/<provenance_hash>/raw.txt"
 mutable = false
 consumed_sha256 = "<64 lowercase hexadecimal characters>"
 ```

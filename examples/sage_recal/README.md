@@ -27,7 +27,7 @@ docker compose build
 ```
 
 Both run end to end and write into their own `jobs/<name>/outputs/`. Look under
-`outputs/run_sage/<rule_hash>/<provenance_hash>/` -- there are two provenance directories, one per `run_sage` call, each
+`outputs/run_sage/<provenance_hash>/` -- there are two provenance directories, one per `run_sage` call, each
 with its own `results.sage.tsv` etc. That's the reuse property made visible: same rule,
 two calls, two independently cached results.
 

@@ -377,7 +377,7 @@ def test_variadic_fingerprint_tracks_order_grouping_and_many_bounds(tmp_path):
     )
 
 
-def test_fixed_input_v3_hashes_are_deterministic(tmp_path):
+def test_fixed_input_v4_hashes_are_deterministic(tmp_path):
     source_rule = Rule(
         "source", Inputs(text=str), Outputs(source=Bam), "touch {source}"
     )

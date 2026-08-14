@@ -1,4 +1,5 @@
 import builtins
+import shutil
 
 import pytest
 
@@ -135,6 +136,26 @@ def test_gc_recursively_deletes_descendants_of_obsolete_rules(tmp_path):
     assert not consumer_call.exists()
 
 
+def test_gc_preserves_current_child_when_parent_directory_is_missing(tmp_path):
+    """Missing parent metadata cannot prove that a current child is obsolete."""
+    nodes_dir = tmp_path / "nodes"
+    source_call, consumer_call = _run_source_and_consumer(nodes_dir)
+    shutil.rmtree(source_call)
+    scope = tmp_path / "gc_rules.py"
+    scope.write_text(
+        "from test_gc import CURRENT_CONSUMER, Source\n"
+        "from necroflow import Inputs, Outputs\n"
+        "from necroflow.rules import Rule\n"
+        "CURRENT_SOURCE = Rule('source', Inputs(value=str), Outputs(source=Source), "
+        "'printf new > {source}')\n"
+        "rules = [CURRENT_SOURCE, CURRENT_CONSUMER]\n"
+    )
+
+    _gc(nodes_dir, scope, "-y")
+
+    assert consumer_call.exists()
+
+
 def test_gc_keeps_nodes_from_current_rules(tmp_path):
     nodes_dir = tmp_path / "nodes"
     dag = DAG(nodes_dir)
@@ -267,9 +288,9 @@ def test_gc_deletes_unreadable_current_layout_in_non_current_batch(tmp_path, cap
     assert str(call_dir) in output
 
 
-def test_gc_deletes_legacy_one_hash_layout_in_non_current_batch(tmp_path, capsys):
+def test_gc_deletes_legacy_two_hash_layout_in_non_current_batch(tmp_path, capsys):
     nodes_dir = tmp_path / "nodes"
-    legacy_call = nodes_dir / "produce" / ("a" * 64)
+    legacy_call = nodes_dir / "produce" / ("a" * 64) / ("b" * 64)
     legacy_call.mkdir(parents=True)
     (legacy_call / "result.txt").write_text("legacy")
     scope = tmp_path / "gc_rules.py"
@@ -280,7 +301,7 @@ def test_gc_deletes_legacy_one_hash_layout_in_non_current_batch(tmp_path, capsys
     assert not legacy_call.exists()
     output = capsys.readouterr().out
     assert "Non-current layout:" in output
-    assert str(legacy_call) in output
+    assert str(legacy_call.parent) in output
 
 
 def test_gc_interactive_refusal_deletes_nothing(tmp_path, monkeypatch, capsys):

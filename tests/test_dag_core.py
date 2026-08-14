@@ -74,11 +74,7 @@ def test_compiled_paths_structure(tmp_path):
     P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hi")
     assert txt.path == (
-        tmp_path.resolve()
-        / "make_txt"
-        / txt.rule_hash
-        / txt.provenance_hash
-        / "out.txt"
+        tmp_path.resolve() / "make_txt" / txt.provenance_hash / "out.txt"
     )
 
 

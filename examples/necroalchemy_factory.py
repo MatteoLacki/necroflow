@@ -11,7 +11,7 @@ Usage (from the necroflow/ project root):
         examples/necroalchemy_grid.toml
 
 After the run, /tmp/necroalchemy_nodes/ contains the hash-addressed node output
-tree (rule/rule-hash/provenance-hash/file). /tmp/necroalchemy_results/ contains one copied
+tree (rule/provenance-hash/file). /tmp/necroalchemy_results/ contains one copied
 subfolder per grid combo, e.g.:
     necroalchemy_grid__word+necroflow__n+2/
     necroalchemy_grid__word+necroflow__n+5/

@@ -56,8 +56,8 @@ necroflow
 │
 ├── Caching and paths
 │   ├── content-addressed node paths
-│   ├── split v3 hashes and absolute paths compiled during rule calls
-│   ├── full 64-character rule/provenance path components
+│   ├── v4 recipe and provenance hashes compiled during rule calls
+│   ├── full 64-character provenance path component
 │   ├── filesystem cache as source of truth
 │   ├── framework-owned recipe- and lineage-aware identity
 │   ├── explicit shellpath included in command fingerprints

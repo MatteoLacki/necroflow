@@ -49,7 +49,7 @@ necroflow graph --json job.toml        # DAG structure as JSON
 necroflow outputs --json job.toml      # requested output paths
 necroflow explain job.toml             # what would run and why (per-node reasons)
 necroflow doctor job.toml              # preflight checks with stable NF_* issue codes
-necroflow provenance --json nodes/rule/rule_hash/provenance_hash/file
+necroflow provenance --json nodes/rule/provenance_hash/file
 python -c "import inspect, necroflow.executor as e; print(inspect.signature(e.run))"
 ```
 
@@ -83,9 +83,9 @@ These have been true since the June refactors and are load-bearing design decisi
   every immutable parent output in `dependencies.toml`. Current hashes use an mtime-gated fast path
   through `.rip/{filename}.hash`; externally edited outputs are rehashed. A rebuilt parent with
   identical bytes must NOT invalidate consumers.
-- **Split hashes name directories.** Fingerprint v3 uses framed canonical values and paths
-  `{rule}/{rule_hash}/{provenance_hash}/{filename}`. The local rule hash covers recipe
-  structure; the provenance hash covers config, shell, and parent lineage. Co-outputs share
+- **Complete call hashes name directories.** Fingerprint v4 uses framed canonical values and paths
+  `{rule}/{provenance_hash}/{filename}`. The stored rule hash covers recipe structure; the provenance hash includes
+  it plus config, shell, and parent lineage. Co-outputs share
   one canonical `RuleCall`, both hashes, workdir, and realized command. Constraints and
   `repeat` remain excluded. Fingerprinting is framework-owned.
 - **Identity via `node.relative_path`, never `id()`.** It is a `Path` relative to
@@ -174,7 +174,7 @@ src/necroflow/
   nodes.py           — Node, NodeType/NodeTypeMeta, topo sort
   rule_call.py       — concrete invocation, RuleCallState, shared identity and state
   contexts.py        — immutable NamedValues and CommandArgs public views
-  fingerprints.py    — canonical v3 rule/provenance hashes and callable AST identity
+  fingerprints.py    — canonical v4 rule/provenance hashes and callable AST identity
   rules.py           — Rule internals plus command, text-file, and symlink-file declarations,
                        parse_resource with SI/binary suffixes
   schedulers.py      — RuleCall Scheduler protocol and fifo_scheduler

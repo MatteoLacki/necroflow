@@ -139,7 +139,7 @@ receive external Nodes such as `reference` explicitly.
 ```python
 S.fastq.rule_hash       # 64 lowercase hexadecimal characters
 S.fastq.provenance_hash # 64 lowercase hexadecimal characters
-S.fastq.relative_path   # Path("raw_fastq/<rule_hash>/<provenance_hash>/reads.fastq.gz")
+S.fastq.relative_path   # Path("raw_fastq/<provenance_hash>/reads.fastq.gz")
 S.fastq.path            # S.dag.nodes_dir / S.fastq.relative_path
 ```
 
@@ -193,7 +193,7 @@ declaration order and each tuple’s element order. Each parent has already copi
 its concrete output type's inherited `mutable` boolean when it was compiled;
 mutability is not supplied per Rule call or per input annotation.
 
-## 5. A candidate RuleCall receives split v3 identity
+## 5. A candidate RuleCall receives v4 recipe and provenance identity
 
 One candidate `RuleCall` represents the invocation and all of its co-outputs:
 
@@ -228,9 +228,9 @@ explicitly produce the same provenance hash. Changing a default changes the
 provenance hash for calls that omit it, while calls with an explicit override
 retain the hash associated with that explicit value.
 
-Parent Nodes contribute rule hash, provenance hash, output name, and mutable
-marker. A variadic input remains one named tuple, so group boundaries and order
-remain part of provenance. Static commands contribute their strings to the
+Parent Nodes contribute provenance hash and output name. Parent recipe identity is
+already contained by that provenance hash. A variadic input remains one named
+tuple, so group boundaries and order remain part of provenance. Static commands contribute their strings to the
 local recipe. Supported Python callbacks contribute canonical AST plus Python
 implementation/version identity. Both hashes are exactly 64 lowercase
 hexadecimal characters. The policy is framework-owned; there is no custom
@@ -242,7 +242,7 @@ fingerprint provider.
 the hashes above:
 
 ```python
-call.relative_path = Path(rule.__name__) / rule_hash / provenance_hash
+call.relative_path = Path(rule.__name__) / provenance_hash
 call.workdir = S.dag.nodes_dir / call.relative_path
 ```
 
@@ -264,8 +264,8 @@ One `RuleCall` per invocation stays the single place those values live.
 For a multi-output call:
 
 ```text
-align/<64-hex-rule-hash>/<64-hex-provenance-hash>/aligned.bam
-align/<64-hex-rule-hash>/<64-hex-provenance-hash>/align.log
+align/<64-hex-provenance-hash>/aligned.bam
+align/<64-hex-provenance-hash>/align.log
 ```
 
 Rule names and output filenames must each be one safe relative path component.
@@ -280,13 +280,13 @@ The DAG is a dictionary-backed canonical registry:
 dag.calls: dict[Path, RuleCall]
 ```
 
-The lookup key is `call.relative_path`, which contains the rule name and both
-full hashes.
+The lookup key is `call.relative_path`, which contains the rule name and full
+provenance hash.
 
 If no call exists, the DAG registers the candidate and all outputs atomically.
 If the key already exists, the DAG returns the existing RuleCall and its
 existing Node objects. Conflicting output declarations for one call path are a
-split-hash collision and raise an error.
+provenance-hash collision and raise an error.
 
 Consequently, equivalent calls through differently prefixed views—or through
 different root Pipelines sharing a DAG—return identical objects during factory
@@ -301,8 +301,9 @@ second.fastq = raw_fastq(second, path="shared.fastq.gz")
 assert first.fastq is second.fastq
 ```
 
-Both framework hashes are computed for each candidate because they are needed
-for lookup. The two labels differ, but the prefixes never enter either hash.
+Both framework hashes are computed for each candidate: rule hash feeds the
+provenance hash, which supplies the lookup key. The two labels differ, but the
+prefixes never enter either hash.
 The command callback does not run during lookup.
 
 ## 8. The rule returns canonical Node values

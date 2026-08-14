@@ -25,7 +25,7 @@ Rule commands are validated when a `Rule` is registered. Placeholders are limite
 
 Built-in placeholders:
 
-- `{workdir}` resolves to the rule-call output directory inside the node store, `nodes/{rule}/{rule_hash}/{provenance_hash}` by default. Use it for tools that need to write side directories or scratch files that should be retained with the cached result. The name `workdir` is reserved and cannot be used as an input or output name.
+- `{workdir}` resolves to the rule-call output directory inside the node store, `nodes/{rule}/{provenance_hash}` by default. Use it for tools that need to write side directories or scratch files that should be retained with the cached result. The name `workdir` is reserved and cannot be used as an input or output name.
 
 `{workdir}` is created before the command subprocess starts. Its contents are kept by default. With `autoclean=True`, intermediate rule-call directories are removed as whole directories once all active children are up to date, so `{workdir}` side files are cleaned together with declared outputs.
 
@@ -39,7 +39,7 @@ and explicitly equal values intern to the same Node. Fixed and variadic Node
 inputs must not have defaults. Built-in `text_file` and `symlink_file` inputs
 remain explicit.
 
-## Callable commands and fingerprint v3
+## Callable commands and fingerprint v4
 
 `command()` accepts a static shell string or a module-level, closure-free,
 source-inspectable Python function/lambda with one `CommandArgs` argument.
@@ -49,11 +49,11 @@ unchanged, so callback authors own shell quoting. List commands are rejected.
 
 Every canonical rule invocation owns one shared `RuleCall`; co-outputs share
 its 64-hex rule hash, 64-hex provenance hash, and once-per-output-root realized
-command. Paths are `{rule}/{rule_hash}/{provenance_hash}/{filename}`. Equivalent calls made through
+command. Paths are `{rule}/{provenance_hash}/{filename}`. Equivalent calls made through
 Pipelines sharing a DAG return the same RuleCall and Node objects immediately.
 
 The rule hash covers local recipe structure and declared contracts. The
-provenance hash covers effective config, shell, and exact parent lineage. Both
+provenance hash covers rule hash, effective config, shell, and exact parent lineage. Both
 use framed canonical serialization. Callable command identity uses canonical
 AST plus Python implementation/version. Fingerprinting is framework-owned.
 

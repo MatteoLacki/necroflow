@@ -7,7 +7,7 @@ from pathlib import Path
 
 import tomlkit
 
-from necroflow.dag import DAG, _has_changed_invalidation, current_output_hash
+from necroflow.dag import DAG, current_output_hash
 from necroflow.rule_call import RuleCall, RuleCallState
 
 Reason = dict[str, object]
@@ -97,7 +97,17 @@ def classify_call(
     if call.is_compromised:
         reasons.append({"kind": "compromised_prior_state"})
     for output in call.outputs:
-        if _has_changed_invalidation(output):
+        invalidator = output.node_type.invalidator
+        if invalidator is None:
+            continue
+        token = invalidator(output)
+        if not isinstance(token, str):
+            raise TypeError(
+                f"invalidator for {output.node_type.__name__} must return str, "
+                f"got {type(token).__name__}"
+            )
+        token_path = output.path.parent / ".rip" / (output.path.name + ".invalidation")
+        if not token_path.exists() or token_path.read_text() != token:
             reasons.append(
                 {
                     "kind": "invalidator_changed",

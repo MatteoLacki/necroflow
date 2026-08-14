@@ -2,7 +2,7 @@ import tomlkit
 
 from necroflow import DAG, Inputs, NodeType, Outputs, Pipeline
 from necroflow.config import load_module
-from necroflow.fingerprints import declared_rule_hash
+from necroflow.fingerprints import declared_rule_hash, hash_rule_identity
 from necroflow.rules import Rule
 
 
@@ -32,7 +32,6 @@ def test_config_variants_share_rule_hash_and_have_distinct_provenance_paths(tmp_
     assert first.relative_path == first.rule_call.relative_path / "result.txt"
     assert first.rule_call.relative_path.parts == (
         "produce",
-        first.rule_hash,
         first.provenance_hash,
     )
 
@@ -106,9 +105,14 @@ def test_success_metadata_records_outputs_and_exact_parent_keys(tmp_path):
     )
     assert source_metadata["mutable"] is True
     assert source_metadata["outputs"][0]["filename"] == "state.sqlite3"
+    assert source_metadata["recipe"]["rule"] == "state"
+    assert hash_rule_identity(source_metadata["recipe"]) == (
+        source_metadata["identity"]["rule_hash"]
+    )
     assert result_metadata["parents"][0]["node_key"] == (
         pipeline.state.relative_path.as_posix()
     )
+    assert set(result_metadata["parents"][0]) == {"node_key", "mutable"}
 
 
 def test_rule_hash_is_stable_across_loader_purposes(tmp_path):

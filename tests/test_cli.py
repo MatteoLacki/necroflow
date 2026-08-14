@@ -316,11 +316,7 @@ def job_toml(tmp_path, factory_file):
 
 
 def _real_output(outdir: Path, filename: str) -> Path:
-    matches = [
-        path
-        for path in outdir.rglob(filename)
-        if len(path.parent.name) == 64 and len(path.parent.parent.name) == 64
-    ]
+    matches = [path for path in outdir.rglob(filename) if len(path.parent.name) == 64]
     assert len(matches) == 1
     return matches[0]
 
@@ -1316,15 +1312,14 @@ def test_provenance_subcommand_prints_metadata(tmp_path, factory_file, capsys):
     assert "v = 'hello'" in captured
 
 
-def test_provenance_reports_the_stored_v3_identity_hashes(
+def test_provenance_reports_the_stored_v4_identity_hashes(
     tmp_path, factory_file, capsys
 ):
     """provenance must surface both stored hashes, matching the node's own path.
 
-    The v3 split replaced a single stored 'hash' key with an [identity] table;
-    the reader kept asking for the removed key and silently printed an empty
-    value for every node. Tie the output to the path components so a future
-    schema change cannot rot this again unnoticed.
+    Both hashes remain stored even though only provenance_hash names the call
+    directory. Tie output to metadata and path so schema changes cannot silently
+    leave either value empty.
     """
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
@@ -1333,7 +1328,9 @@ def test_provenance_reports_the_stored_v3_identity_hashes(
         ["--nodes-dir", str(nodes_dir), "--results-dir", str(tmp_path / "r"), str(job)]
     )
     output = _real_output(nodes_dir, "b.txt")
-    _rule, rule_hash, provenance_hash, _filename = output.relative_to(nodes_dir).parts
+    _rule, provenance_hash, _filename = output.relative_to(nodes_dir).parts
+    metadata = tomlkit.parse((output.parent / ".rip" / "dependencies.toml").read_text())
+    rule_hash = metadata["identity"]["rule_hash"]
 
     main(["provenance", str(output)])
 

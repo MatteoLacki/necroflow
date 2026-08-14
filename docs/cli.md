@@ -96,8 +96,8 @@ necroflow outputs --json job.toml
 Print stored provenance for an existing cached output:
 
 ```bash
-necroflow provenance nodes/rule/rule_hash/provenance_hash/file
-necroflow provenance --json nodes/rule/rule_hash/provenance_hash/file
+necroflow provenance nodes/rule/provenance_hash/file
+necroflow provenance --json nodes/rule/provenance_hash/file
 ```
 
 Delete cache entries that cannot have been produced by the current collection

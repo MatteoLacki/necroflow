@@ -8,7 +8,7 @@
 
 ```
 nodes/
-  {rule}/{rule_hash}/{provenance_hash}/{file}  ← canonical node outputs
+  {rule}/{provenance_hash}/{file}  ← canonical node outputs
 
 results/
   experiment__hg38__bwa/
@@ -38,7 +38,7 @@ results/experiment__hg38__bwa/counts/counts.txt
 ```toml
 [outputs.counts]
 path = "counts/counts.txt"
-origin_node_key = "count/<rule_hash>/<provenance_hash>/counts.txt"
+origin_node_key = "count/<provenance_hash>/counts.txt"
 content_sha256 = "<64 lowercase hexadecimal characters>"
 ```
 
@@ -49,29 +49,28 @@ for a runnable example.
 
 ## Caching
 
-Fingerprint v3 splits identity into two full SHA-256 values:
+Fingerprint v4 computes two full SHA-256 identities but uses only the complete call identity in paths:
 
 - `rule_hash` describes the local recipe: rule name, command or built-in recipe
   identity, declared input contracts, output contracts, filenames, and Rule mutability.
 - `provenance_hash` describes one invocation: the `rule_hash`, effective config,
-  selected shell, and ordered parent identities, including their rule hashes,
-  provenance hashes, and output names. Parent rule hashes already encode mutability.
+  selected shell, and ordered parent identities, including their provenance hashes and output names.
 
 Each output lives at
-`nodes/{rule}/{rule_hash}/{provenance_hash}/{filename}`. The canonical
+`nodes/{rule}/{provenance_hash}/{filename}`. The canonical
 rule-call key omits the filename; the canonical node key includes it.
 `node.rule_hash`, `node.provenance_hash`, and `node.relative_path` expose these
 values. Constraints and `repeat` remain excluded.
 
-V3 paths intentionally break compatibility with v2. Old cache directories are
-not probed, migrated, reused, or deleted automatically.
+V4 paths intentionally break compatibility with earlier layouts. Old cache
+directories are not probed, migrated, or reused.
 
 During path resolution, necroflow validates generated paths against the filesystem's `NAME_MAX` and `PATH_MAX` limits. If a rule name, filename, output directory, or complete generated path would exceed those limits, path resolution fails before execution starts.
 
 ### Rule work directories
 
 Commands may use the built-in `{workdir}` placeholder to refer to the rule-call
-output directory: `nodes/{rule}/{rule_hash}/{provenance_hash}` by default.
+output directory: `nodes/{rule}/{provenance_hash}` by default.
 
 ```python
 @command("dosomething --tmp {workdir}/scratch -o {result}")
@@ -87,7 +86,7 @@ still participate in identity. Any static-template placeholder that does
 appear must be a declared input/output, a command-visible constraint, or a
 built-in placeholder such as `{workdir}`.
 
-The v3 provenance hash canonically supports ordinary scalar values,
+The v4 provenance hash canonically supports ordinary scalar values,
 paths, dates/times, sequences, string-keyed mappings, and sets. Unsupported
 custom objects fail with a diagnostic identifying the config field.
 Fingerprint policy is framework-owned; custom fingerprint providers and the
@@ -138,7 +137,7 @@ Autoclean never deletes mutable RuleCall workdirs. Necroflow provides no transac
 
 - Re-running with identical identity and unchanged evidence is a cache hit.
 - Changing upstream parameters, commands, contracts, or Rule mutability produces new paths.
-- `.rip/dependencies.toml` stores identity, accumulated config, declared outputs, canonical parents, and immutable `consumed_sha256` values.
+- ``.rip/dependencies.toml` stores both hashes, the exact canonical recipe payload, accumulated config, declared outputs, canonical parents, and immutable `consumed_sha256` values.
 - `.rip/{filename}.hash` stores each declared output SHA-256.
 - `.rip/state` stores call state (`running`, `up_to_date`, `failed`, or `interrupted`). A leftover or unknown non-success value compromises the whole call.
 

@@ -242,13 +242,13 @@ summary	node=nodes/summarize/d18e6af2070f14be/summary.txt	result=results/job/sum
 Inspect stored metadata for an existing cached output:
 
 ```bash
-necroflow provenance nodes/summarize/<rule_hash>/<provenance_hash>/summary.txt
+necroflow provenance nodes/summarize/<provenance_hash>/summary.txt
 ```
 
 Example output:
 
 ```text
-path = nodes/summarize/<rule_hash>/<provenance_hash>/summary.txt
+path = nodes/summarize/<provenance_hash>/summary.txt
 rule = summarize
 rule_hash = <64 hex characters>
 provenance_hash = <64 hex characters>

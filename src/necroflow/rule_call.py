@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from necroflow.contexts import CommandArgs, NamedValues
-from necroflow.fingerprints import compute_hashes
+from necroflow.fingerprints import compute_identity
 
 if TYPE_CHECKING:
     from necroflow.nodes import Node
@@ -45,6 +45,7 @@ class RuleCall:
     parents: list[Node] = field(init=False)
     parent_calls: list[RuleCall] = field(init=False)
     state: RuleCallState | None = None
+    rule_identity: dict[str, Any] = field(init=False)
     rule_hash: str = field(init=False)
     provenance_hash: str = field(init=False)
     relative_path: Path = field(init=False)
@@ -66,11 +67,11 @@ class RuleCall:
                 continue
             seen.add(parent_call.relative_path)
             self.parent_calls.append(parent_call)
-        self.rule_hash, self.provenance_hash = compute_hashes(self)
-        rule_component = _safe_path_component(self.rule.__name__, kind="rule name")
-        self.relative_path = (
-            Path(rule_component) / self.rule_hash / self.provenance_hash
+        self.rule_identity, self.rule_hash, self.provenance_hash = compute_identity(
+            self
         )
+        rule_component = _safe_path_component(self.rule.__name__, kind="rule name")
+        self.relative_path = Path(rule_component) / self.provenance_hash
 
     def _constraints(self) -> dict[str, Any]:
         values = {

@@ -45,6 +45,7 @@ def _check_path_limits(path: Path) -> None:
             if part in (path.anchor, os.sep, ""):
                 continue
             length = len(os.fsencode(part))
+            # not len(part): fs limits NAME_MAX in bytes, not Unicode chars.
             if length > name_max:
                 raise ValueError(
                     f"path component too long ({length} > NAME_MAX {name_max}): {part!r}"
@@ -56,8 +57,8 @@ def _check_path_limits(path: Path) -> None:
 
 
 def _update_hash_from_file(digest, path: Path) -> None:
-    with path.open("rb") as stream:
-        while chunk := stream.read(_HASH_CHUNK_SIZE):
+    with path.open("rb") as file:
+        while chunk := file.read(_HASH_CHUNK_SIZE):
             digest.update(chunk)
 
 
@@ -91,41 +92,9 @@ def _accumulated_config(
     return config
 
 
-def _invalidator(node: Node):
-    if node.node_type is None:
-        return None
-    return getattr(node.node_type, "invalidator", None)
-
-
-def _invalidation_file(node: Node) -> Path:
-    return node.path.parent / ".rip" / (node.path.name + ".invalidation")
-
-
-def _invalidation_token(node: Node) -> str | None:
-    invalidator = _invalidator(node)
-    if invalidator is None:
-        return None
-    token = invalidator(node)
-    if not isinstance(token, str):
-        raise TypeError(
-            f"invalidator for {node.node_type.__name__} must return str, "
-            f"got {type(token).__name__}"
-        )
-    return token
-
-
-def _has_changed_invalidation(node: Node) -> bool:
-    token = _invalidation_token(node)
-    if token is None:
-        return False
-    token_path = _invalidation_file(node)
-    return not token_path.exists() or token_path.read_text() != token
-
-
 def _parent_metadata(parent: Node, hash_cache: dict[Path, str]) -> dict:
     data = {
         "node_key": parent.relative_path.as_posix(),
-        "call_key": parent.rule_call.relative_path.as_posix(),
         "mutable": parent.rule_call.mutable,
     }
     if not parent.rule_call.mutable:
@@ -159,6 +128,7 @@ def write_dependencies(
             "rule_hash": call.rule_hash,
             "provenance_hash": call.provenance_hash,
         },
+        "recipe": call.rule_identity,
     }
     if call.shellpath is not None:
         data["execution"] = {"shellpath": call.shellpath}
@@ -182,9 +152,15 @@ def write_dependencies(
             digest = _content_hash(output.path)
             (rip / (output.path.name + ".hash")).write_text(digest)
             hash_cache[output.relative_path] = digest
-            token = _invalidation_token(output)
-            if token is not None:
-                _invalidation_file(output).write_text(token)
+            invalidator = output.node_type.invalidator
+            if invalidator is not None:
+                token = invalidator(output)
+                if not isinstance(token, str):
+                    raise TypeError(
+                        f"invalidator for {output.node_type.__name__} must return str, "
+                        f"got {type(token).__name__}"
+                    )
+                (rip / (output.path.name + ".invalidation")).write_text(token)
 
 
 def _output_mtime(path: Path) -> int:

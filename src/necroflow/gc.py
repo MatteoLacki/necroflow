@@ -11,7 +11,11 @@ import tomlkit
 
 from necroflow.config import load_module
 from necroflow.executor import _acquire_lock
-from necroflow.fingerprints import IDENTITY_FORMAT, declared_rule_hash
+from necroflow.fingerprints import (
+    IDENTITY_FORMAT,
+    declared_rule_hash,
+    hash_rule_identity,
+)
 from necroflow.rules import Rule
 
 _HASH_COMPONENT = re.compile(r"[0-9a-f]{64}")
@@ -51,9 +55,13 @@ def _entry(call_dir: Path):
         identity = metadata["identity"]
         if identity["format"] != IDENTITY_FORMAT:
             return None
-        if identity["rule_hash"] != call_dir.parent.name:
+        recipe = metadata["recipe"]
+        if recipe["rule"] != call_dir.parent.name:
             return None
         if identity["provenance_hash"] != call_dir.name:
+            return None
+        rule_hash = str(identity["rule_hash"])
+        if hash_rule_identity(recipe) != rule_hash:
             return None
         outputs = metadata["outputs"]
         if not isinstance(outputs, list):
@@ -62,11 +70,7 @@ def _entry(call_dir: Path):
         parents = [str(parent["node_key"]) for parent in metadata["parents"]]
         for parent_key in parents:
             parts = Path(parent_key).parts
-            if (
-                len(parts) != 4
-                or _HASH_COMPONENT.fullmatch(parts[1]) is None
-                or _HASH_COMPONENT.fullmatch(parts[2]) is None
-            ):
+            if len(parts) != 3 or _HASH_COMPONENT.fullmatch(parts[1]) is None:
                 return None
     except (
         AttributeError,
@@ -77,7 +81,12 @@ def _entry(call_dir: Path):
         tomlkit.exceptions.ParseError,
     ):
         return None
-    return {"path": call_dir, "mutable": mutable, "parents": parents}
+    return {
+        "path": call_dir,
+        "rule_hash": rule_hash,
+        "mutable": mutable,
+        "parents": parents,
+    }
 
 
 def _scan_entries(nodes_dir: Path):
@@ -90,32 +99,19 @@ def _scan_entries(nodes_dir: Path):
     for rule_dir in nodes_dir.iterdir():
         if not rule_dir.is_dir() or rule_dir.name == ".rip":
             continue
-        rule_hash_dirs = [path for path in rule_dir.iterdir() if path.is_dir()]
-        if not rule_hash_dirs:
+        call_dirs = [path for path in rule_dir.iterdir() if path.is_dir()]
+        if not call_dirs:
             non_current.append(rule_dir)
             continue
-        for rule_hash_dir in rule_hash_dirs:
-            if _HASH_COMPONENT.fullmatch(rule_hash_dir.name) is None:
-                non_current.append(rule_hash_dir)
+        for call_dir in call_dirs:
+            if _HASH_COMPONENT.fullmatch(call_dir.name) is None:
+                non_current.append(call_dir)
                 continue
-            call_dirs = [path for path in rule_hash_dir.iterdir() if path.is_dir()]
-            current_call_dirs = [
-                path
-                for path in call_dirs
-                if _HASH_COMPONENT.fullmatch(path.name) is not None
-            ]
-            if not current_call_dirs:
-                non_current.append(rule_hash_dir)
-                continue
-            for call_dir in call_dirs:
-                if _HASH_COMPONENT.fullmatch(call_dir.name) is None:
-                    non_current.append(call_dir)
-                    continue
-                entry = _entry(call_dir)
-                if entry is None:
-                    non_current.append(call_dir)
-                else:
-                    entries[call_dir.relative_to(nodes_dir).as_posix()] = entry
+            entry = _entry(call_dir)
+            if entry is None:
+                non_current.append(call_dir)
+            else:
+                entries[call_dir.relative_to(nodes_dir).as_posix()] = entry
     return entries, non_current
 
 
@@ -134,9 +130,9 @@ def _incompatible_keys(entries, valid_rule_hashes: set[str]) -> set[str]:
         if key in memo:
             return memo[key]
         parts = Path(key).parts
-        if len(parts) != 3:
+        if len(parts) != 2:
             return False
-        if parts[1] not in valid_rule_hashes:
+        if entries[key]["rule_hash"] not in valid_rule_hashes:
             memo[key] = True
             return True
         if key in visiting:
@@ -145,14 +141,10 @@ def _incompatible_keys(entries, valid_rule_hashes: set[str]) -> set[str]:
         next_visiting = visiting | {key}
         for parent_key in entries[key]["parents"]:
             parent_parts = Path(parent_key).parts
-            if len(parent_parts) != 4:
+            if len(parent_parts) != 3:
                 continue
             parent_call = Path(*parent_parts[:-1]).as_posix()
-            if parent_call in entries:
-                if incompatible(parent_call, next_visiting):
-                    memo[key] = True
-                    return True
-            elif parent_parts[1] not in valid_rule_hashes:
+            if parent_call in entries and incompatible(parent_call, next_visiting):
                 memo[key] = True
                 return True
         memo[key] = False
@@ -191,8 +183,8 @@ def collect(
         unknown_names = sorted({_rule_name(key) for key in entries} - declared_names)
         if unknown_names and not prune_unknown_rules:
             valid_rule_hashes |= {
-                Path(key).parts[1]
-                for key in entries
+                entry["rule_hash"]
+                for key, entry in entries.items()
                 if _rule_name(key) in unknown_names
             }
 

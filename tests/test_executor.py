@@ -477,8 +477,8 @@ def test_shared_node_executed_once(tmp_path):
     assert P1.b.path.exists()
     assert P2.c.path.exists()
 
-    # The shared upstream node ran once — one rule hash and one provenance hash.
-    make_a_calls = list(tmp_path.glob("make_a/*/*/"))
+    # The shared upstream node ran once — one provenance-addressed call directory.
+    make_a_calls = list(tmp_path.glob("make_a/*/"))
     assert len(make_a_calls) == 1
     assert (make_a_calls[0] / ".rip" / "job.log").exists()
 

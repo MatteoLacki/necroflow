@@ -158,7 +158,7 @@ mapping access, such as `args.outputs.merged` and `args.outputs["merged"]`.
 Callbacks return a complete shell string. Necroflow executes it unchanged and
 does not attempt to infer or repair quoting; use `shlex.quote` or `shlex.join`
 when interpolated values require shell escaping. Argv-list commands are not
-supported in fingerprint v3.
+supported in fingerprint v4.
 
 Command callbacks must be module-level, closure-free functions or unambiguous
 source-file lambdas accepting exactly one argument. Their canonical AST and

@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 # Stamped into .rip/dependencies.toml by write_dependencies and required back by
 # any reader of stored provenance, and carried in both hash domains so a format
 # bump cannot leave the stored marker and the hashes disagreeing.
-IDENTITY_FORMAT = "v3"
+IDENTITY_FORMAT = "v4"
 RULE_HASH_DOMAIN = f"necroflow.rule-hash/{IDENTITY_FORMAT}"
 PROVENANCE_HASH_DOMAIN = f"necroflow.provenance-hash/{IDENTITY_FORMAT}"
 
@@ -260,7 +260,6 @@ def _parent_identity(call: RuleCall) -> list[dict[str, Any]]:
                     "name": name,
                     "group": [
                         {
-                            "rule_hash": item.rule_hash,
                             "provenance_hash": item.provenance_hash,
                             "output": item.output_name or "",
                         }
@@ -272,7 +271,6 @@ def _parent_identity(call: RuleCall) -> list[dict[str, Any]]:
             parents.append(
                 {
                     "name": name,
-                    "rule_hash": parent.rule_hash,
                     "provenance_hash": parent.provenance_hash,
                     "output": parent.output_name or "",
                 }
@@ -280,10 +278,10 @@ def _parent_identity(call: RuleCall) -> list[dict[str, Any]]:
     return parents
 
 
-def _rule_hash(
+def _rule_identity(
     *, rule_name, command, recipe_identity, mutable, input_types, output_types
-) -> str:
-    identity = {
+) -> dict[str, Any]:
+    return {
         "domain": RULE_HASH_DOMAIN,
         "rule": rule_name,
         "command": _command_identity(command, recipe_identity),
@@ -299,32 +297,26 @@ def _rule_hash(
             for name, annotation in output_types.items()
         },
     }
+
+
+def hash_rule_identity(identity: Mapping[str, Any]) -> str:
+    """Hash one canonical local recipe description."""
+
     return hashlib.sha256(canonical_bytes(identity, path="rule")).hexdigest()
-
-
-def rule_hash(call: RuleCall) -> str:
-    """Hash the local, configuration-independent recipe contract."""
-
-    return _rule_hash(
-        rule_name=call.rule.__name__,
-        command=call.command,
-        recipe_identity=call.rule.recipe_identity,
-        mutable=call.mutable,
-        input_types=call.rule.inputs.specs,
-        output_types=call.rule.outputs.specs,
-    )
 
 
 def declared_rule_hash(rule) -> str:
     """Hash a module-level Rule without constructing a configured call."""
 
-    return _rule_hash(
-        rule_name=rule.__name__,
-        command=rule.command,
-        recipe_identity=rule.recipe_identity,
-        mutable=rule.mutable,
-        input_types=rule.inputs.specs,
-        output_types=rule.outputs.specs,
+    return hash_rule_identity(
+        _rule_identity(
+            rule_name=rule.__name__,
+            command=rule.command,
+            recipe_identity=rule.recipe_identity,
+            mutable=rule.mutable,
+            input_types=rule.inputs.specs,
+            output_types=rule.outputs.specs,
+        )
     )
 
 
@@ -343,8 +335,20 @@ def provenance_hash(call: RuleCall, local_rule_hash: str) -> str:
     return hashlib.sha256(canonical_bytes(identity, path="provenance")).hexdigest()
 
 
-def compute_hashes(call: RuleCall) -> tuple[str, str]:
-    """Return the framework-owned v3 ``(rule_hash, provenance_hash)`` pair."""
+def compute_identity(call: RuleCall) -> tuple[dict[str, Any], str, str]:
+    """Return the framework-owned v4 recipe and its two identity hashes."""
 
-    local_rule_hash = rule_hash(call)
-    return local_rule_hash, provenance_hash(call, local_rule_hash)
+    local_rule_identity = _rule_identity(
+        rule_name=call.rule.__name__,
+        command=call.command,
+        recipe_identity=call.rule.recipe_identity,
+        mutable=call.mutable,
+        input_types=call.rule.inputs.specs,
+        output_types=call.rule.outputs.specs,
+    )
+    local_rule_hash = hash_rule_identity(local_rule_identity)
+    return (
+        local_rule_identity,
+        local_rule_hash,
+        provenance_hash(call, local_rule_hash),
+    )
