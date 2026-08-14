@@ -20,7 +20,7 @@ import tomlkit
 
 from necroflow import logger as _logger
 from necroflow.tgf import write_ancestor_tgf
-from necroflow.dag import DAG, resolve_command, write_dependencies
+from necroflow.dag import DAG
 from necroflow.planning import ExecutionPlan, classify_available, plan_execution
 from necroflow.rule_call import RuleCall, RuleCallState
 from necroflow.schedulers import Scheduler, fifo_scheduler
@@ -313,7 +313,7 @@ def _complete_call(
         raise RuntimeError(
             "command succeeded but output missing: " + ", ".join(map(str, missing))
         )
-    write_dependencies(call, plan.hash_cache)
+    call.write_dependencies(plan.hash_cache)
     if call.outputs:
         write_ancestor_tgf(call.outputs[0])
     call.mark_done("up_to_date")
@@ -520,7 +520,7 @@ def _run_rule_call(call: RuleCall, log_path: Path) -> None:
         if materializer is not None:
             materializer(call, log)
             return
-        command = resolve_command(call)
+        command = call.resolve()
         if command is None:
             raise RuntimeError(
                 f"rule {call.rule.__name__!r} has neither a command nor a materializer"

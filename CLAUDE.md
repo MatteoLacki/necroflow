@@ -172,14 +172,14 @@ dict as `dag.last_execution_report`. Full semantics: `run()` docstring and `docs
 ```
 src/necroflow/
   nodes.py           — Node, NodeType/NodeTypeMeta, topo sort
-  rule_call.py       — concrete invocation, RuleCallState, shared identity and state
+  rule_call.py       — concrete invocation, RuleCallState, shared identity and metadata
   contexts.py        — immutable NamedValues and CommandArgs public views
   fingerprints.py    — canonical v4 rule/provenance hashes and callable AST identity
   rules.py           — Rule internals plus command, text-file, and symlink-file declarations,
                        parse_resource with SI/binary suffixes
   schedulers.py      — RuleCall Scheduler protocol and fifo_scheduler
   fs.py              — filesystem path-limit checks, content hashing, and output mtimes
-  dag.py             — resolve_command, cache metadata, and the DAG registry/executor class
+  dag.py             — canonical RuleCall and Node registry/executor class
   planning.py        — RuleCall closure, lazy consumed-hash classification, reasons
   pipeline.py        — Pipeline (prefixed views, labels, finish)
   tgf.py             — TGF rendering, Node labels, per-call ancestor graph

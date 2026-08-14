@@ -5,8 +5,8 @@
 #
 # Build context is the necroflow/ repo root (see docker-compose.yml's `context: ../..`),
 # not this directory -- necroflow is installed from local source, not PyPI, because this
-# example's `spectra: MzMlSpectra | MgfSpectra` union input needs a resolve_command()
-# fix (necroflow/src/necroflow/dag.py) that isn't in a released version yet. Once a
+# example's `spectra: MzMlSpectra | MgfSpectra` union input needs a RuleCall.resolve()
+# fix (necroflow/src/necroflow/rule_call.py) that isn't in a released version yet. Once a
 # necroflow release including that fix ships, this should go back to
 # `pip install necroflow==X.Y.Z` (see the diff this comment came from for the old form)
 # and docker-compose.yml's build context back to `.`.

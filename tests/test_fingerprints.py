@@ -19,7 +19,6 @@ from necroflow import (
     command,
     run,
     output,
-    resolve_command,
 )
 from necroflow.planning import plan_execution
 from necroflow.rules import Rule
@@ -121,7 +120,7 @@ def test_command_args_are_resolved_named_immutable_views(tmp_path):
         Constraints(threads=3),
     )
     result = rule(pipeline, source, force=True)
-    realized = resolve_command(result.rule_call)
+    realized = result.rule_call.resolve()
 
     assert (
         realized
@@ -148,8 +147,8 @@ def test_callable_command_is_realized_once_per_rule_call(tmp_path):
     )
     pipeline = Pipeline(DAG(tmp_path))
     outputs = rule(pipeline, label="x")
-    first = resolve_command(outputs.result.rule_call)
-    assert resolve_command(outputs.log.rule_call) == first
+    first = outputs.result.rule_call.resolve()
+    assert outputs.log.rule_call.resolve() == first
     assert CALL_COUNT == 1
     assert outputs.result.path.is_absolute()
 
@@ -201,7 +200,7 @@ def test_callable_command_must_return_nonempty_string(tmp_path):
     result = rule(Pipeline(DAG(tmp_path)), label="x")
 
     with pytest.raises(TypeError, match="must return a non-empty shell string"):
-        resolve_command(result.rule_call)
+        result.rule_call.resolve()
 
 
 def test_lambda_command_with_unique_source_is_supported(tmp_path):
@@ -212,7 +211,7 @@ def test_lambda_command_with_unique_source_is_supported(tmp_path):
         LAMBDA_COMMAND,
     )
     result = rule(Pipeline(DAG(tmp_path)), label="x")
-    assert resolve_command(result.rule_call) == f"touch {result.path}"
+    assert result.rule_call.resolve() == f"touch {result.path}"
 
 
 def test_callable_command_decorator_uses_declared_rule_shape(tmp_path):
@@ -222,7 +221,7 @@ def test_callable_command_decorator_uses_declared_rule_shape(tmp_path):
 
     assert result.rule.__name__ == "decorated_dynamic"
     assert result.rule.constraints == {"threads": 2}
-    assert resolve_command(result.rule_call).endswith(
+    assert result.rule_call.resolve().endswith(
         f"{shlex.quote(str(source.path))} {shlex.quote(str(result.path))}"
     )
 

@@ -6,7 +6,7 @@ featureCounts, or bcftools. Commands run only when a DAG is executed.
 
 from types import SimpleNamespace
 
-from necroflow import DAG, NodeType, Pipeline, resolve_command, command, output
+from necroflow import DAG, NodeType, Pipeline, command, output
 
 
 class Fastq(NodeType):
@@ -125,7 +125,7 @@ def inspect_example():
     config = example_config()
     pipeline = Pipeline(DAG("results"))
     extended_pipeline(pipeline, config)
-    return pipeline, [resolve_command(node) for node in pipeline.nodes]
+    return pipeline, [node.rule_call.resolve() for node in pipeline.nodes]
 
 
 def shared_dag(outdir="results"):

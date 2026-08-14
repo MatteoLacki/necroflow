@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Callable, get_args, get_origin
 if TYPE_CHECKING:
     from necroflow.rule_call import RuleCall
 
-# Stamped into .rip/dependencies.toml by write_dependencies and required back by
+# Stamped into .rip/dependencies.toml by RuleCall.write_dependencies and required back by
 # any reader of stored provenance, and carried in both hash domains so a format
 # bump cannot leave the stored marker and the hashes disagreeing.
 IDENTITY_FORMAT = "v4"

@@ -297,7 +297,7 @@ necroflow graph --output graph.tgf job.toml
 The same rendering is available from Python:
 
 ```python
-from necroflow import DAG, Pipeline, resolve_command
+from necroflow import DAG, Pipeline
 
 dag = DAG("results")
 P = Pipeline(dag)
@@ -309,7 +309,7 @@ P.save("pipeline.txt")      # same render to a file
 dag.save("dag.txt")         # works on DAG too
 
 for node in P.nodes:
-    print(resolve_command(node))   # fully-resolved shell command
+    print(node.rule_call.resolve())   # fully-resolved shell command
 ```
 
 ## Types and subtypes

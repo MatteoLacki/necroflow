@@ -52,7 +52,7 @@ State transitions belong on the object that owns the state.
 Prefer `with` over manual resource management for anything that pairs acquire/release.
 
 ### Security: quote paths going to shell
-`resolve_command()` wraps Path substitutions with `shlex.quote()` before formatting string commands.
+`RuleCall.resolve()` wraps Path substitutions with `shlex.quote()` before formatting string commands.
 Config values (`str`/`int`) are NOT quoted — they're user-controlled content.
 List commands bypass the shell entirely and need no quoting.
 

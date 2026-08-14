@@ -147,7 +147,7 @@ about it in the abstract:
 - necroflow version: currently built from **local source** (see `docker-compose.yml`'s
   `build.context: ../..` and the comment at the top of `Dockerfile`), not the PyPI
   release archived for this repo -- this example's `spectra: MzMlSpectra | MgfSpectra`
-  union input needs a `resolve_command()` fix in `necroflow/src/necroflow/dag.py`
+  union input needs a `RuleCall.resolve()` fix in `necroflow/src/necroflow/rule_call.py`
   (union-typed positional inputs weren't being substituted into `{name}` command
   placeholders, despite `docs/rules.md` documenting unions as supported) that isn't in
   a released version yet. Once a release including that fix ships, this should revert

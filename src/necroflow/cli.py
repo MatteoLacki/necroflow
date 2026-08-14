@@ -48,7 +48,7 @@ from necroflow import (
     fifo_scheduler,
 )
 from necroflow.config import iter_job_configs, load_callable
-from necroflow.dag import parse_resource, resolve_command
+from necroflow.dag import parse_resource
 from necroflow.fs import _check_path_limits, _content_hash
 from necroflow.pipeline import _normalize_shellpath
 from necroflow.graphviz_render import render_png
@@ -432,7 +432,7 @@ def _explain_payload(args) -> dict:
     calls = []
     for call in active:
         try:
-            command = resolve_command(call)
+            command = call.resolve()
         except Exception as exc:
             command = f"<error: {exc}>"
         state = call.state.value if call.state is not None else None

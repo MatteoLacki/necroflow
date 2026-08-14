@@ -20,7 +20,6 @@ from necroflow import (
     Pipeline,
 )
 from necroflow.planning import plan_execution
-from necroflow.dag import resolve_command
 from necroflow.rules import Rule
 
 
@@ -92,12 +91,12 @@ def test_plain_variadic_tuple_accepts_zero_or_more_nodes(tmp_path):
 
     assert result.rule_call.inputs.bams == (first, second)
     assert result.parents == [first, second]
-    assert resolve_command(result.rule_call) == (
+    assert result.rule_call.resolve() == (
         f"merge {shlex.quote(str(first.path))} {shlex.quote(str(second.path))} "
         f"> {result.path}"
     )
     assert empty.parents == []
-    assert resolve_command(empty.rule_call) == f"merge  > {empty.path}"
+    assert empty.rule_call.resolve() == f"merge  > {empty.path}"
 
 
 def test_decorated_rule_accepts_variadic_tuple(tmp_path):
@@ -123,7 +122,7 @@ def test_variadic_static_command_quotes_each_path_independently(tmp_path):
 
     result = merge(pipeline, (first, second))
 
-    assert resolve_command(result.rule_call) == (
+    assert result.rule_call.resolve() == (
         f"merge {shlex.quote(str(first.path))} {shlex.quote(str(second.path))} "
         f"> {shlex.quote(str(result.path))}"
     )
@@ -143,7 +142,7 @@ def test_callable_command_receives_tuple_of_resolved_paths(tmp_path):
     )
 
     result = merge(pipeline, (first, second))
-    resolve_command(result.rule_call)
+    result.rule_call.resolve()
 
     assert LAST_COMMAND_ARGS is not None
     assert LAST_COMMAND_ARGS.inputs.bams == (first.path, second.path)

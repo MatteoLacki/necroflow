@@ -8,11 +8,6 @@ from typing import Literal
 import necroflow.dag as dag_core
 import necroflow.fs as fs_core
 from necroflow import DAG, NodeType, Pipeline
-from necroflow.dag import (
-    _accumulated_config,
-    resolve_command,
-    write_dependencies,
-)
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -411,14 +406,14 @@ def test_resolve_command_input_substitution(tmp_path):
     P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hi")
     upper, _ = R_to_upper(P, txt, n=2)
-    cmd = resolve_command(upper.rule_call)
+    cmd = upper.rule_call.resolve()
     assert str(txt.path) in cmd
 
 
 def test_resolve_command_config_substitution(tmp_path):
     P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hello")
-    cmd = resolve_command(txt.rule_call)
+    cmd = txt.rule_call.resolve()
     assert "hello" in cmd
 
 
@@ -432,7 +427,7 @@ def test_resolve_command_quotes_string_config_for_shell_commands(tmp_path):
     )
     txt = r_filter_txt(P, filter="a > b")
 
-    assert resolve_command(txt.rule_call) == f"tool --filter 'a > b' > {txt.path}"
+    assert txt.rule_call.resolve() == f"tool --filter 'a > b' > {txt.path}"
 
 
 def test_resolve_command_scalar_config_stays_bare_when_shell_safe(tmp_path):
@@ -442,7 +437,7 @@ def test_resolve_command_scalar_config_stays_bare_when_shell_safe(tmp_path):
     )
     txt = r_number_txt(P, n=5)
 
-    assert resolve_command(txt.rule_call) == f"tool -n 5 > {txt.path}"
+    assert txt.rule_call.resolve() == f"tool -n 5 > {txt.path}"
 
 
 def test_list_commands_are_rejected():
@@ -459,7 +454,7 @@ def test_resolve_command_output_substitution(tmp_path):
     P = Pipeline(DAG(tmp_path))
     txt = R_make_txt(P, word="hi")
     upper, log = R_to_upper(P, txt, n=1)
-    cmd = resolve_command(upper.rule_call)
+    cmd = upper.rule_call.resolve()
     assert str(upper.path) in cmd
     assert str(log.path) in cmd
 
@@ -470,7 +465,7 @@ R_no_command = Rule("no_command", Inputs(word=str), Outputs(txt=Txt), None)
 def test_resolve_command_none_for_no_command(tmp_path):
     P = Pipeline(DAG(tmp_path))
     txt = R_no_command(P, word="hi")
-    assert resolve_command(txt.rule_call) is None
+    assert txt.rule_call.resolve() is None
 
 
 def test_resolve_command_direct_constraint_placeholders(tmp_path):
@@ -485,7 +480,7 @@ def test_resolve_command_direct_constraint_placeholders(tmp_path):
     txt = r_constrained(P, word="hi")
 
     assert (
-        resolve_command(txt.rule_call)
+        txt.rule_call.resolve()
         == f"tool --threads 8 --ram 4Gi --gpu 2 --word hi > {txt.path}"
     )
 
@@ -500,7 +495,7 @@ def test_resolve_command_threads_defaults_to_one(tmp_path):
     )
     txt = r_default_threads(P, word="hi")
 
-    assert resolve_command(txt.rule_call) == f"tool --threads 1 > {txt.path}"
+    assert txt.rule_call.resolve() == f"tool --threads 1 > {txt.path}"
 
 
 def test_resolve_command_preserves_escaped_shell_braces(tmp_path):
@@ -513,16 +508,13 @@ def test_resolve_command_preserves_escaped_shell_braces(tmp_path):
     )
     txt = r_brace(P, word="hi")
 
-    assert (
-        resolve_command(txt.rule_call)
-        == f"printf '%s\n' {{left,right}} hi > {txt.path}"
-    )
+    assert txt.rule_call.resolve() == f"printf '%s\n' {{left,right}} hi > {txt.path}"
 
 
 def test_resolve_command_substitutes_union_typed_input(tmp_path):
     P = Pipeline(DAG(tmp_path))
 
-    # Regression test: resolve_command used to build its {name} substitution dict by
+    # Regression test: RuleCall.resolve used to build its {name} substitution dict by
     # filtering node.rule.inputs.specs with _is_nodetype(), which is a strict
     # isclass()-and-issubclass()-NodeType check -- False for a `TypeA | TypeB` union,
     # even though docs/rules.md documents unions as a supported "either format is
@@ -537,7 +529,7 @@ def test_resolve_command_substitutes_union_typed_input(tmp_path):
 
     src = R_make_txt(P, word="hi")
     doc = read_either(P, src)
-    cmd = resolve_command(doc.rule_call)
+    cmd = doc.rule_call.resolve()
     assert str(src.path) in cmd
     assert str(doc.path) in cmd
 
@@ -553,7 +545,7 @@ def test_constraint_placeholder_forces_constraint_when_config_name_collides(tmp_
     )
     txt = r_colliding_threads(P, threads=2)
 
-    assert resolve_command(txt.rule_call) == f"tool --arg 2 --scheduler 8 > {txt.path}"
+    assert txt.rule_call.resolve() == f"tool --arg 2 --scheduler 8 > {txt.path}"
 
 
 def test_unknown_constraint_placeholder_is_rejected():
@@ -577,14 +569,14 @@ def test_unknown_constraint_placeholder_is_rejected():
 
 def test_accumulated_config_single_node():
     txt = R_make_txt(P, word="hello")
-    cfg = _accumulated_config(txt.rule_call)
+    cfg = txt.rule_call._accumulated_config()
     assert cfg["word"] == "hello"
 
 
 def test_accumulated_config_multi_hop():
     txt = R_make_txt(P, word="hello")
     upper, _ = R_to_upper(P, txt, n=5)
-    cfg = _accumulated_config(upper.rule_call)
+    cfg = upper.rule_call._accumulated_config()
     assert cfg["word"] == "hello"
     assert cfg["n"] == 5
 
@@ -595,7 +587,7 @@ def test_accumulated_config_diamond_visits_shared_ancestor_once():
     branch_a, _ = R_to_upper(P, root, n=2)
     branch_b, _ = R_to_upper(P, root, n=3)
     joined = R_join_upper(P, branch_a, branch_b)
-    cfg = _accumulated_config(joined.rule_call)
+    cfg = joined.rule_call._accumulated_config()
     assert cfg["word"] == "hello"
     assert cfg["n"] == 3
 
@@ -608,7 +600,7 @@ def test_write_dependencies_creates_file(tmp_path):
     txt = R_make_txt(P, word="hi")
     txt.path.parent.mkdir(parents=True, exist_ok=True)
     txt.path.touch()
-    write_dependencies(txt.rule_call)
+    txt.rule_call.write_dependencies()
     assert (txt.path.parent / ".rip" / "dependencies.toml").exists()
 
 
@@ -617,7 +609,7 @@ def test_write_dependencies_content(tmp_path):
     txt = R_make_txt(P, word="hi")
     txt.path.parent.mkdir(parents=True, exist_ok=True)
     txt.path.touch()
-    write_dependencies(txt.rule_call)
+    txt.rule_call.write_dependencies()
     content = (txt.path.parent / ".rip" / "dependencies.toml").read_text()
     assert "make_txt" in content
     assert "hi" in content

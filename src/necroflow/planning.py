@@ -7,10 +7,29 @@ from pathlib import Path
 
 import tomlkit
 
-from necroflow.dag import DAG, current_output_hash
+from necroflow.dag import DAG
+from necroflow.fs import _content_hash, _output_mtime
+from necroflow.nodes import Node
 from necroflow.rule_call import RuleCall, RuleCallState
 
 Reason = dict[str, object]
+
+
+def current_output_hash(node: Node, memo: dict[Path, str]) -> str:
+    """Return current bytes hash, trusting stored hash while mtime proves safety."""
+    cached = memo.get(node.relative_path)
+    if cached is not None:
+        return cached
+    hash_file = node.rule_call.workdir / ".rip" / (node.path.name + ".hash")
+    digest = None
+    if hash_file.exists() and _output_mtime(node.path) <= hash_file.stat().st_mtime_ns:
+        stored = hash_file.read_text().strip()
+        if len(stored) == 64 and all(char in "0123456789abcdef" for char in stored):
+            digest = stored
+    if digest is None:
+        digest = _content_hash(node.path)
+    memo[node.relative_path] = digest
+    return digest
 
 
 @dataclass

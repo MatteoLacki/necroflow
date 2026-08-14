@@ -4,8 +4,6 @@ from necroflow.dag import (
     DAG,
     Node,
     NodeType,
-    resolve_command,
-    write_dependencies,
 )
 from necroflow.rules import (
     Constraints,
@@ -43,8 +41,6 @@ __all__ = [
     "symlink_file_rule",
     "text_file",
     "text_file_rule",
-    "resolve_command",
-    "write_dependencies",
     "Pipeline",
     "DAG",
     "run",
