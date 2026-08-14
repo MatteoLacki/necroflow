@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from necroflow.contexts import NamedValues
+from necroflow.fs import _check_path_limits
 from necroflow.rule_call import RuleCall, _safe_path_component
 
 
@@ -90,8 +91,6 @@ class Node:
         command,
         outputs_specs: dict,
     ) -> list[Node]:
-        from necroflow.dag import _check_path_limits
-
         shellpath = pipeline.shellpath if command is not None else None
         call = RuleCall(
             dag=pipeline.dag,

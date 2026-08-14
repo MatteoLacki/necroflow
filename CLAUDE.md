@@ -178,8 +178,8 @@ src/necroflow/
   rules.py           — Rule internals plus command, text-file, and symlink-file declarations,
                        parse_resource with SI/binary suffixes
   schedulers.py      — RuleCall Scheduler protocol and fifo_scheduler
-  dag.py             — path-length checks, resolve_command, write_dependencies,
-                       content hashing, the DAG registry/executor class
+  fs.py              — filesystem path-limit checks, content hashing, and output mtimes
+  dag.py             — resolve_command, cache metadata, and the DAG registry/executor class
   planning.py        — RuleCall closure, lazy consumed-hash classification, reasons
   pipeline.py        — Pipeline (prefixed views, labels, finish)
   tgf.py             — TGF rendering, Node labels, per-call ancestor graph

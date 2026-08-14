@@ -48,12 +48,8 @@ from necroflow import (
     fifo_scheduler,
 )
 from necroflow.config import iter_job_configs, load_callable
-from necroflow.dag import (
-    _check_path_limits,
-    _content_hash,
-    parse_resource,
-    resolve_command,
-)
+from necroflow.dag import parse_resource, resolve_command
+from necroflow.fs import _check_path_limits, _content_hash
 from necroflow.pipeline import _normalize_shellpath
 from necroflow.graphviz_render import render_png
 from necroflow.planning import plan_execution

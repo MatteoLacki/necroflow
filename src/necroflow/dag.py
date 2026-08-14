@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import os
 import shlex
 from pathlib import Path
@@ -15,64 +14,9 @@ from necroflow.nodes import (
     NodeTypeMeta,
 )
 from necroflow.fingerprints import IDENTITY_FORMAT, command_ast, python_identity
+from necroflow.fs import _content_hash, _output_mtime
 from necroflow.rule_call import RuleCall
 from necroflow.rules import parse_resource
-
-_HASH_CHUNK_SIZE = 1024 * 1024
-
-
-def _filesystem_limits(path: Path) -> tuple[int | None, int | None]:
-    """Return (NAME_MAX, PATH_MAX) for the nearest existing parent of path."""
-    for candidate in (path, *path.parents):
-        if not candidate.exists():
-            continue
-        try:
-            name_max = os.pathconf(candidate, "PC_NAME_MAX")
-        except (OSError, ValueError):
-            name_max = None
-        try:
-            path_max = os.pathconf(candidate, "PC_PATH_MAX")
-        except (OSError, ValueError):
-            path_max = None
-        return name_max, path_max
-    return None, None
-
-
-def _check_path_limits(path: Path) -> None:
-    name_max, path_max = _filesystem_limits(path)
-    if name_max is not None:
-        for part in path.parts:
-            if part in (path.anchor, os.sep, ""):
-                continue
-            length = len(os.fsencode(part))
-            # not len(part): fs limits NAME_MAX in bytes, not Unicode chars.
-            if length > name_max:
-                raise ValueError(
-                    f"path component too long ({length} > NAME_MAX {name_max}): {part!r}"
-                )
-    if path_max is not None:
-        length = len(os.fsencode(os.fspath(path)))
-        if length > path_max:
-            raise ValueError(f"path too long ({length} > PATH_MAX {path_max}): {path}")
-
-
-def _update_hash_from_file(digest, path: Path) -> None:
-    with path.open("rb") as file:
-        while chunk := file.read(_HASH_CHUNK_SIZE):
-            digest.update(chunk)
-
-
-def _content_hash(path: Path) -> str:
-    """SHA-256 of a file's bytes, or of all non-.rip files in a directory."""
-    h = hashlib.sha256()
-    if path.is_file():
-        _update_hash_from_file(h, path)
-    else:
-        for f in sorted(path.rglob("*")):
-            if f.is_file() and ".rip" not in f.parts:
-                h.update(str(f.relative_to(path)).encode())
-                _update_hash_from_file(h, f)
-    return h.hexdigest()
 
 
 def _accumulated_config(
@@ -161,19 +105,6 @@ def write_dependencies(
                         f"got {type(token).__name__}"
                     )
                 (rip / (output.path.name + ".invalidation")).write_text(token)
-
-
-def _output_mtime(path: Path) -> int:
-    """Newest output mtime; directory entries detect rename and deletion."""
-    if path.is_dir():
-        entries = [path]
-        entries.extend(
-            entry
-            for entry in path.rglob("*")
-            if ".rip" not in entry.relative_to(path).parts
-        )
-        return max(entry.stat().st_mtime_ns for entry in entries)
-    return path.stat().st_mtime_ns
 
 
 def current_output_hash(node: Node, memo: dict[Path, str]) -> str:
