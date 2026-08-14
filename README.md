@@ -54,6 +54,20 @@ def rna_pipeline(P: Pipeline, config: dict) -> None:
     P.counts = count(P, P.bam, gene_model=config["gene_model"])
 ```
 
+## Request pipeline results
+
+Assignments such as `P.counts = ...` give Nodes public Pipeline labels. Select
+which labelled outputs to produce with `.requests` in the job TOML:
+
+```toml
+".pipeline" = "pipeline.py:rna_pipeline"
+".requests" = ["counts"]
+```
+
+Running `necroflow job.toml` executes `counts` and all its ancestors, then copies
+the requested output to `results/job/counts/counts.txt`. If `.requests` is
+omitted, necroflow requests every labelled sink Node. More on jobs in [Job TOML and parameter grids](docs/job-toml.md).
+
 ## Reusable subpipelines
 
 `P.subpipeline(prefix)` returns a view over the same Pipeline. Assignments through the view are registered on the root with the prefix, while rule identity and DAG deduplication remain unchanged:
