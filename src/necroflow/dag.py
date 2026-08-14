@@ -8,7 +8,7 @@ from typing import Any
 
 import tomlkit
 
-from necroflow.ascii_render import _node_label, render_ascii
+from necroflow.tgf import _node_label, render_tgf
 from necroflow.nodes import (
     Node,
     NodeType,
@@ -359,14 +359,13 @@ class DAG:
 
         def label(node: Node) -> str:
             return _node_label(node) + (
-                " ★" if node.relative_path in required_paths else ""
+                " [required]" if node.relative_path in required_paths else ""
             )
 
-        header = f"DAG  {len(self._nodes)} nodes  ({len(self._required)} required)"
-        return render_ascii(self.nodes, header, label=label)
+        return render_tgf(self.nodes, label=label)
 
     def save(self, path) -> None:
-        """Write the ASCII DAG render to a file."""
+        """Write the DAG in Trivial Graph Format."""
         Path(path).write_text(str(self) + "\n", encoding="utf-8")
 
     def run(self, **kwargs):

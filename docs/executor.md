@@ -162,7 +162,7 @@ After runner success, executor:
 
 1. validates every declared output;
 2. writes `dependencies.toml`, output hashes, and invalidator tokens;
-3. writes `graph.txt`;
+3. writes `graph.tgf`;
 4. writes state `up_to_date`;
 5. records one `RuleCallExecution` and `run.toml`;
 6. optionally cleans eligible parent calls.
@@ -174,13 +174,15 @@ Shared metadata:
   dependencies.toml
   <filename>.hash
   <filename>.invalidation
-  graph.txt
+  graph.tgf
   job.log
   run.toml
   state
 ```
 
 `run.toml` stores call-level timestamps, `duration_seconds`, exit code, and total non-`.rip` workdir size.
+`graph.tgf` stores numbered Nodes followed by parent-to-child edge pairs in
+[Trivial Graph Format](https://docs.gephi.org/desktop/User_Manual/Import/Trivial_Graph_Format/).
 
 ## Execution report
 

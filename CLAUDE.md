@@ -101,8 +101,8 @@ These have been true since the June refactors and are load-bearing design decisi
 - **Exit 0 with a missing declared output is a failure.** The executor checks `path.exists()`
   after every job.
 - **`.rip/` per-RuleCall metadata**: `dependencies.toml` (lineage plus consumed immutable
-  parent hashes), `{filename}.hash`, `job.log`, `state`, `run.toml` (call timings/size), `graph.txt`
-  (ancestor render), `{filename}.invalidation` (NodeType invalidator token, when set).
+  parent hashes), `{filename}.hash`, `job.log`, `state`, `run.toml` (call timings/size), `graph.tgf`
+  (ancestor DAG in Trivial Graph Format), `{filename}.invalidation` (NodeType invalidator token, when set).
 - **Canonicalization is eager; labels are explicit.** Every `Pipeline(dag, ...)` references a
   shared DAG. A rule call fingerprints and interns its `RuleCall` immediately; equivalent calls
   return identical Node objects. Attribute/item assignment records qualified Pipeline-local labels.
@@ -182,7 +182,7 @@ src/necroflow/
                        content hashing, the DAG registry/executor class
   planning.py        — RuleCall closure, lazy consumed-hash classification, reasons
   pipeline.py        — Pipeline (prefixed views, labels, finish)
-  ascii_render.py    — render_ascii, _node_label, write_ancestor_graph
+  tgf.py             — TGF rendering, Node labels, per-call ancestor graph
   executor.py        — atomic RuleCall run(), reports, resources, lock, cleanup, failures
   logger.py          — thread-safe job logging
   config.py          — job TOML loading and grid expansion (iter_job_configs, JobConfig)
@@ -207,5 +207,3 @@ Tests live in `tests/` (one file per concern); runnable examples in `examples/`.
 ## What is NOT yet implemented
 
 - Cluster/cloud backends (long-term goal, not currently prioritised)
-- Long-range edges in the ASCII renderer (edges skipping layers are omitted; planned fix:
-  dummy-node insertion)

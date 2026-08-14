@@ -19,7 +19,7 @@ from typing import Any
 import tomlkit
 
 from necroflow import logger as _logger
-from necroflow.ascii_render import write_ancestor_graph
+from necroflow.tgf import write_ancestor_tgf
 from necroflow.dag import DAG, resolve_command, write_dependencies
 from necroflow.planning import ExecutionPlan, classify_available, plan_execution
 from necroflow.rule_call import RuleCall, RuleCallState
@@ -315,7 +315,7 @@ def _complete_call(
         )
     write_dependencies(call, plan.hash_cache)
     if call.outputs:
-        write_ancestor_graph(call.outputs[0])
+        write_ancestor_tgf(call.outputs[0])
     call.mark_done("up_to_date")
     call.state = RuleCallState.UP_TO_DATE
     event = RuleCallExecution.from_call(

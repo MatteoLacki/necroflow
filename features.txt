@@ -38,7 +38,7 @@ necroflow
 │       ├── owns the node store and canonical RuleCall registry
 │       ├── immediate shared-node interning across Pipelines
 │       ├── requested target nodes
-│       └── ASCII graph rendering / save
+│       └── TGF graph rendering / save
 │
 ├── Commands
 │   ├── input/output path placeholders
@@ -160,7 +160,7 @@ necroflow
 │   ├── invalidation token files
 │   ├── job.log
 │   ├── run.toml runtime stats
-│   ├── graph.txt ancestor view
+│   ├── graph.tgf ancestor DAG (Trivial Graph Format)
 │   └── provenance CLI display
 │
 ├── Examples and docs

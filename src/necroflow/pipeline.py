@@ -3,9 +3,9 @@ from __future__ import annotations
 import os
 from pathlib import Path, PurePosixPath
 
-from necroflow.ascii_render import render_ascii
 from necroflow.dag import DAG
 from necroflow.nodes import Node
+from necroflow.tgf import render_tgf
 
 _LINUX_NAME_MAX = 255
 _LINUX_PATH_MAX = 4096
@@ -266,10 +266,10 @@ class Pipeline:
         return str(self)
 
     def __str__(self) -> str:
-        return render_ascii(self.nodes, f"Pipeline  {len(self.nodes)} nodes")
+        return render_tgf(self.nodes)
 
     def save(self, path) -> None:
-        """Write the ASCII DAG render to a file."""
+        """Write the DAG in Trivial Graph Format."""
         Path(path).write_text(str(self) + "\n", encoding="utf-8")
 
 

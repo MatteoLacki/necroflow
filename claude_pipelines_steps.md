@@ -634,11 +634,11 @@ for conode in node.output_nodes.values():
         raise RuntimeError(f"command succeeded but output missing: {conode.path}")
 _record_success_events(...)
 write_dependencies(node)
-write_ancestor_graph(node)
+write_ancestor_tgf(node)
 ```
 
 Exit 0 with a missing declared output is a failure. On success the rule-call directory gains
-`.rip/dependencies.toml`, per-output `.hash` files, invalidation tokens, `.rip/graph.txt`, and
+`.rip/dependencies.toml`, per-output `.hash` files, invalidation tokens, `.rip/graph.tgf`, and
 `.rip/run.toml`; siblings and self are marked `up_to_date`.
 
 With `keep_going=False`, the first failure re-raises from inside the `with pool` block. The

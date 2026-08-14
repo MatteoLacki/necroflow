@@ -85,7 +85,7 @@ The first pipeline API was `with Pipeline() as P:` — rules auto-registered nod
 Replaced with explicit attribute assignment `P.bam = align(...)`. Explicit beats implicit.
 
 ### External deps for things pure Python can do
-`pipeline.plot()` used `networkx` + `matplotlib` for DAG rendering. Removed. Replaced with pure terminal ASCII using box-drawing chars. No dependency beats a dependency.
+`pipeline.plot()` used `networkx` + `matplotlib` for DAG rendering. Removed. Replaced with a small pure-Python TGF writer. No dependency beats a dependency.
 
 ### Set-based done-tracking via `id()`
 The first executor: `done_ids = {id(n) for n in nodes if check_cache(n)}`. Two problems:

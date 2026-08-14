@@ -291,7 +291,7 @@ From the command line, render the requested job DAG without executing it:
 
 ```bash
 necroflow graph job.toml
-necroflow graph --output graph.txt job.toml
+necroflow graph --output graph.tgf job.toml
 ```
 
 The same rendering is available from Python:
@@ -303,7 +303,7 @@ dag = DAG("results")
 P = Pipeline(dag)
 rna_pipeline(P, config)
 P.finish()
-print(P)                    # layered ASCII DAG to stdout
+print(P)                    # TGF DAG to stdout
 P.save("pipeline.txt")      # same render to a file
 
 dag.save("dag.txt")         # works on DAG too

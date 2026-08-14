@@ -493,7 +493,7 @@ def test_dag_require_rejects_non_nodes_and_foreign_nodes(tmp_path):
         dag.require([foreign])
 
 
-def test_pipeline_repr_matches_its_ascii_render(tmp_path):
+def test_pipeline_repr_matches_its_tgf_render(tmp_path):
     """Interactive representations must expose the same DAG view as string output."""
 
     pipeline = Pipeline(DAG(tmp_path))
@@ -520,11 +520,12 @@ def test_pipeline_missing_attribute_still_raises():
 
 
 def test_pipeline_save(tmp_path):
+    """Pipeline.save must persist exactly its TGF string representation."""
     P = diamond()
-    out = tmp_path / "out.txt"
+    out = tmp_path / "pipeline.tgf"
     P.save(out)
     assert out.exists()
-    assert "Pipeline" in out.read_text()
+    assert out.read_text() == str(P) + "\n"
 
 
 def test_workdir_is_reserved_input_output_name():
@@ -619,37 +620,27 @@ def test_dag_explicit_request():
     assert req_rules == {"make_b", "make_c"}
 
 
-def test_str_long_range_edge():
-    """Long-range edges (spanning >1 layer) render as │ pass-throughs, not silently dropped.
-
-    Chain: a(0)→b(1)→c(2), plus direct a→e(3). The a→e edge skips two layers; dummy
-    pass-through nodes are inserted so the connector is drawn through all intermediate layers.
-    """
+def test_tgf_preserves_long_range_edge():
+    """TGF must retain direct dependencies regardless of topological distance."""
     P = Pipeline(DAG(TEST_NODES_DIR))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
     P.c = R_make_c_from_b(P, P.b)
     P.e = R_make_e_from_ac(P, P.a, P.c)
     rendered = str(P)
-    # all node labels present
     for label in ("make_a", "make_b", "make_c_from_b", "make_e_from_ac"):
         assert label in rendered
-    # dummy pass-throughs add an extra │ to the mid row of intermediate layers,
-    # e.g. "│ make_b[B:b] │   │" has 3 pipe chars vs 2 for a plain box row
-    rows_with_dummy = [
-        l for l in rendered.splitlines() if "make_" in l and l.count("│") >= 3
-    ]
-    assert (
-        len(rows_with_dummy) > 0
-    ), "expected dummy │ pass-through in intermediate layer rows"
+    assert "1 4" in rendered.splitlines()
 
 
 def test_dag_save(tmp_path):
+    """DAG.save must persist TGF and retain requested-node labels."""
     dag = DAG(tmp_path)
     P = diamond(dag)
     P.finish()
     dag.require(P.sinks())
-    out = tmp_path / "dag.txt"
+    out = tmp_path / "dag.tgf"
     dag.save(out)
     assert out.exists()
-    assert "DAG" in out.read_text()
+    assert out.read_text() == str(dag) + "\n"
+    assert "4 make_d[D:d] [required]" in out.read_text().splitlines()

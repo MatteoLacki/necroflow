@@ -79,12 +79,15 @@ Render a DAG without running jobs:
 
 ```bash
 necroflow graph job.toml
-necroflow graph --output graph.txt job.toml
+necroflow graph --output graph.tgf job.toml
 necroflow graph --json job.toml
 necroflow graph --png graph.png job.toml
 ```
 
-`--png` requires the `dev` extra and Graphviz `dot`; it groups rule calls by dependency depth. Nodes owned by mutable Rules are marked in ASCII; their Graphviz edges are dashed and labelled; JSON Nodes and edges include a `mutable` boolean.
+Text output uses Trivial Graph Format with parent-to-child edges. `--png` requires
+the `dev` extra and Graphviz `dot`; it groups rule calls by dependency depth.
+Nodes owned by mutable Rules are marked in TGF labels; their Graphviz edges are
+dashed and labelled; JSON Nodes and edges include a `mutable` boolean.
 
 List requested output paths without running jobs:
 

@@ -67,5 +67,5 @@ Forced labels do not add requirements.
 <workdir>/.rip/{filename}.invalidation
 <workdir>/.rip/job.log
 <workdir>/.rip/run.toml
-<workdir>/.rip/graph.txt
+<workdir>/.rip/graph.tgf
 ```

@@ -1758,17 +1758,18 @@ def test_provenance_json_prints_metadata(tmp_path, factory_file, capsys):
 
 
 def test_graph_output_writes_rendered_dag(tmp_path, factory_file):
-    """Graph output files must contain the same textual DAG without executing it."""
+    """Graph output files must contain the same TGF DAG without executing it."""
 
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
-    graph = tmp_path / "graph.txt"
+    graph = tmp_path / "graph.tgf"
 
     main(["graph", "--output", str(graph), "--outdir", str(tmp_path / "out"), str(job)])
 
     rendered = graph.read_text()
     assert "make_a" in rendered
     assert "make_b" in rendered
+    assert "\n#\n" in rendered
     assert not list((tmp_path / "out").rglob("a.txt"))
 
 

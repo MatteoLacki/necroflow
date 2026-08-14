@@ -1053,7 +1053,7 @@ def _build_parser() -> argparse.ArgumentParser:
     graph_parser.add_argument(
         "--png",
         help="Render the DAG as a PNG grouped by dependency depth instead of "
-        "ASCII. Requires the 'dev' extra and the system 'dot' binary.",
+        "TGF text. Requires the 'dev' extra and the system 'dot' binary.",
     )
     graph_parser.set_defaults(func=_graph)
 
