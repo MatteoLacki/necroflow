@@ -4,7 +4,7 @@ from necroflow.rules import Constraints, Inputs, Outputs, Rule
 from necroflow import command, output
 
 import pytest
-from typing import Literal
+from typing import Literal, Union
 import necroflow.dag as dag_core
 import necroflow.fs as fs_core
 from necroflow import DAG, NodeType, Pipeline
@@ -729,13 +729,120 @@ def test_nodetype_union_rejects_unrelated_type():
         r_use_txt_or_upper(P, log)
 
 
-def test_mixed_nodetype_union_rejected_at_declaration():
-    with pytest.raises(TypeError, match="mixes NodeType and non-NodeType union"):
+def test_mixed_nodetype_union_selects_parent_or_scalar_branch(tmp_path):
+    """A mixed fixed input is a dependency only when its runtime value is a Node."""
 
-        @command("touch {log}")
-        def bad_union(data: Txt | str):
-            log = output(Log)
-            return log
+    rule = Rule(
+        "consume_mixed",
+        Inputs(source=Txt | str | None),
+        Outputs(log=Log),
+        "printf %s {source} > {log}",
+    )
+    pipeline = Pipeline(DAG(tmp_path))
+    source = R_make_txt(pipeline, word="managed")
+
+    managed = rule(pipeline, source)
+    external = rule(pipeline, "external")
+    absent = rule(pipeline, None)
+
+    assert managed.parents == [source]
+    assert dict(managed.rule_call.input_values) == {}
+    assert external.parents == []
+    assert dict(external.rule_call.input_values) == {"source": "external"}
+    assert absent.parents == []
+    assert dict(absent.rule_call.input_values) == {"source": None}
+    assert managed.rule_call.command_args().inputs.source == source.path
+    assert external.rule_call.command_args().inputs.source == "external"
+    assert absent.rule_call.command_args().inputs.source is None
+    assert external.rule_call.resolve() == (f"printf %s external > {external.path}")
+    assert absent.rule_call.resolve() == f"printf %s None > {absent.path}"
+    assert (
+        len({managed.provenance_hash, external.provenance_hash, absent.provenance_hash})
+        == 3
+    )
+    assert rule(pipeline, "external") is external
+
+    absent.rule_call.write_dependencies()
+    metadata = (absent.path.parent / ".rip" / "dependencies.toml").read_text()
+    assert 'name = "source"' in metadata
+    assert 'type = "builtins.NoneType"' in metadata
+    assert 'value = "None"' in metadata
+    assert 'input_order = ["source"]' in metadata
+
+
+def test_mixed_nodetype_union_supports_typing_union(tmp_path):
+    """Legacy typing.Union spelling must have the same mixed-input behavior."""
+
+    rule = Rule(
+        "consume_typing_union",
+        Inputs(source=Union[Txt, str]),
+        Outputs(log=Log),
+        "printf %s {source} > {log}",
+    )
+    pipeline = Pipeline(DAG(tmp_path))
+
+    assert rule(pipeline, "external").parents == []
+
+
+def test_mixed_plain_value_fingerprint_retains_positional_order(tmp_path):
+    """Callback-visible mixed input order must remain part of call identity."""
+
+    left_first = Rule(
+        "ordered_mixed",
+        Inputs(left=Txt | str, right=Txt | str),
+        Outputs(log=Log),
+        "touch {log}",
+    )
+    right_first = Rule(
+        "ordered_mixed",
+        Inputs(right=Txt | str, left=Txt | str),
+        Outputs(log=Log),
+        "touch {log}",
+    )
+    first_pipeline = Pipeline(DAG(tmp_path / "left-first"))
+    second_pipeline = Pipeline(DAG(tmp_path / "right-first"))
+
+    first = left_first(first_pipeline, "left", "right")
+    second = right_first(second_pipeline, "right", "left")
+
+    assert dict(first.rule_call.input_values) == dict(second.rule_call.input_values)
+    assert first.provenance_hash != second.provenance_hash
+
+
+def test_mixed_nodetype_union_rejects_unmatched_node_and_scalar(tmp_path):
+    """Each mixed-input runtime value must match its Node or scalar union arm."""
+
+    rule = Rule(
+        "consume_mixed",
+        Inputs(source=Txt | str | None),
+        Outputs(log=Log),
+        "touch {log}",
+    )
+    pipeline = Pipeline(DAG(tmp_path))
+    unrelated = rule(pipeline, "seed")
+
+    with pytest.raises(TypeError, match="expected NoneType \\| Txt \\| str"):
+        rule(pipeline, unrelated)
+    with pytest.raises(TypeError, match="expected NoneType \\| Txt \\| str"):
+        rule(pipeline, 3)
+
+
+def test_mixed_nodetype_union_checks_dag_ownership_only_for_nodes(tmp_path):
+    """Scalar alternatives have no DAG owner; managed alternatives still must match."""
+
+    rule = Rule(
+        "consume_mixed",
+        Inputs(source=Txt | str),
+        Outputs(log=Log),
+        "touch {log}",
+    )
+    pipeline = Pipeline(DAG(tmp_path / "local"))
+    foreign_pipeline = Pipeline(DAG(tmp_path / "foreign"))
+    foreign = R_make_txt(foreign_pipeline, word="foreign")
+
+    assert rule(pipeline, "external").parents == []
+    with pytest.raises(ValueError, match="different DAG"):
+        rule(pipeline, foreign)
 
 
 def test_config_union_still_supported():
@@ -984,6 +1091,86 @@ def test_command_decorator_rejects_wrongly_typed_config_default():
         def make_txt(count: int = "invalid"):
             txt = output(Txt)
             return txt
+
+
+def test_mixed_nodetype_union_accepts_matching_scalar_default(tmp_path):
+    """A hybrid default may select a declared scalar arm, including None."""
+
+    @command("printf %s {source} > {txt}")
+    def consume(source: Txt | None = None):
+        txt = output(Txt)
+        return txt
+
+    pipeline = Pipeline(DAG(tmp_path))
+    omitted = consume(pipeline)
+    explicit = consume(pipeline, None)
+
+    assert omitted is explicit
+    assert omitted.parents == []
+    assert omitted.config == {}
+    assert dict(omitted.rule_call.input_values) == {"source": None}
+
+
+def test_mixed_nodetype_union_rejects_unmatched_defaults():
+    """Hybrid defaults must match a non-Node arm when the Rule is declared."""
+
+    with pytest.raises(TypeError, match="default for hybrid input 'source'.*expected"):
+
+        @command("touch {txt}")
+        def wrong_scalar(source: Txt | str = 42):
+            txt = output(Txt)
+            return txt
+
+    with pytest.raises(TypeError, match="default for hybrid input 'source'.*expected"):
+
+        @command("touch {txt}")
+        def missing_none_arm(source: Txt | str = None):
+            txt = output(Txt)
+            return txt
+
+
+def test_mixed_nodetype_union_accepts_factory_default(tmp_path):
+    """Explicit Rule construction exposes the same hybrid-default semantics."""
+
+    rule = Rule(
+        "hybrid_default",
+        Inputs(source=Txt | str),
+        Outputs(log=Log),
+        "printf %s {source} > {log}",
+        input_defaults={"source": "auto"},
+    )
+    pipeline = Pipeline(DAG(tmp_path))
+
+    assert rule(pipeline) is rule(pipeline, "auto")
+
+
+def test_hybrid_positional_defaults_must_be_trailing():
+    """Omitting a positional default must not shift a later required Node input."""
+
+    with pytest.raises(TypeError, match="without a default follows"):
+        Rule(
+            "ambiguous_defaults",
+            Inputs(optional=Txt | None, required=Upper),
+            Outputs(log=Log),
+            "touch {log}",
+            input_defaults={"optional": None},
+        )
+
+
+def test_mixed_nodetype_union_rejects_node_valued_default(tmp_path):
+    """Defaults cannot capture managed Nodes tied to one particular DAG."""
+
+    pipeline = Pipeline(DAG(tmp_path))
+    source = R_make_txt(pipeline, word="managed")
+
+    with pytest.raises(TypeError, match="Node-valued default"):
+        Rule(
+            "captured_default",
+            Inputs(source=Txt | None),
+            Outputs(log=Log),
+            "touch {log}",
+            input_defaults={"source": source},
+        )
 
 
 def test_command_decorator_rejects_node_input_defaults():

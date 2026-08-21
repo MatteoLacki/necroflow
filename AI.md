@@ -32,20 +32,30 @@ Built-in placeholders:
 ## Command input defaults
 
 Decorated `@command` rules honor Python defaults on scalar/config parameters;
-explicit factory and direct `Rule` construction use `input_defaults`. Defaults
-are type-checked when the `Rule` is declared, expanded before call validation,
-and included in config, provenance, command contexts, and fingerprints. Omitted
-and explicitly equal values intern to the same Node. Fixed and variadic Node
-inputs must not have defaults. Built-in `text_file` and `symlink_file` inputs
-remain explicit.
+fixed mixed Node/value inputs may also default to one of their non-Node arms.
+Explicit factory and direct `Rule` construction use `input_defaults`. Defaults
+are type-checked when the `Rule` is declared and expanded before call validation.
+Omitted and explicitly equal values intern to the same Node. Pure fixed and
+variadic Node inputs, plus managed Node values themselves, must not be defaults.
+Built-in `text_file` and `symlink_file` inputs remain explicit.
+
+## Mixed Node/value inputs
+
+A fixed union such as `Bam | str | None` is one positional logical input. A
+managed Node selects a NodeType arm, creates a parent edge, and contributes
+lineage. A matching plain value creates no edge and contributes a named canonical
+`input_values` entry plus positional order to provenance. `CommandArgs.inputs`
+exposes a resolved Path for the Node branch or the unchanged plain value for the
+value branch. Mixed variadic element unions remain unsupported.
 
 ## Callable commands and fingerprint v4
 
 `command()` accepts a static shell string or a module-level, closure-free,
 source-inspectable Python function/lambda with one `CommandArgs` argument.
-Callbacks receive resolved named input/output paths, config, constraints, and
-`workdir`; they return one complete valid shell string. The string is executed
-unchanged, so callback authors own shell quoting. List commands are rejected.
+Callbacks receive resolved named input paths or mixed values, output paths,
+config, constraints, and `workdir`; they return one complete valid shell string.
+The string is executed unchanged, so callback authors own shell quoting. List
+commands are rejected.
 
 Every canonical rule invocation owns one shared `RuleCall`; co-outputs share
 its 64-hex rule hash, 64-hex provenance hash, and once-per-output-root realized
@@ -53,7 +63,8 @@ command. Paths are `{rule}/{provenance_hash}/{filename}`. Equivalent calls made 
 Pipelines sharing a DAG return the same RuleCall and Node objects immediately.
 
 The rule hash covers local recipe structure and declared contracts. The
-provenance hash covers rule hash, effective config, shell, and exact parent lineage. Both
+provenance hash covers rule hash, effective config, shell, exact parent lineage,
+and any selected mixed plain values. Both
 use framed canonical serialization. Callable command identity uses canonical
 AST plus Python implementation/version. Fingerprinting is framework-owned.
 

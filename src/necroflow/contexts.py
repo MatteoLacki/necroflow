@@ -47,7 +47,7 @@ class NamedValues(Mapping[str, _T], Generic[_T]):
 class CommandArgs:
     """Resolved values supplied to a Python command callback."""
 
-    inputs: NamedValues[Path | tuple[Path, ...]]
+    inputs: NamedValues[Any]
     config: NamedValues[Any]
     outputs: NamedValues[Path]
     constraints: NamedValues[Any]

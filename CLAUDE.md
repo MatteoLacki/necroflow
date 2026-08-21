@@ -85,7 +85,7 @@ These have been true since the June refactors and are load-bearing design decisi
   identical bytes must NOT invalidate consumers.
 - **Complete call hashes name directories.** Fingerprint v4 uses framed canonical values and paths
   `{rule}/{provenance_hash}/{filename}`. The stored rule hash covers recipe structure; the provenance hash includes
-  it plus config, shell, and parent lineage. Co-outputs share
+  it plus config, shell, parent lineage, and selected mixed-input plain values. Co-outputs share
   one canonical `RuleCall`, both hashes, workdir, and realized command. Constraints and
   `repeat` remain excluded. Fingerprinting is framework-owned.
 - **Identity via `node.relative_path`, never `id()`.** It is a `Path` relative to
@@ -100,8 +100,8 @@ These have been true since the June refactors and are load-bearing design decisi
   attempt. Retry policy remains outside fingerprints.
 - **Exit 0 with a missing declared output is a failure.** The executor checks `path.exists()`
   after every job.
-- **`.rip/` per-RuleCall metadata**: `dependencies.toml` (lineage plus consumed immutable
-  parent hashes), `{filename}.hash`, `job.log`, `state`, `run.toml` (call timings/size), `graph.tgf`
+- **`.rip/` per-RuleCall metadata**: `dependencies.toml` (lineage, mixed-input plain values,
+  and consumed immutable parent hashes), `{filename}.hash`, `job.log`, `state`, `run.toml` (call timings/size), `graph.tgf`
   (ancestor DAG in Trivial Graph Format), `{filename}.invalidation` (NodeType invalidator token, when set).
 - **Canonicalization is eager; labels are explicit.** Every `Pipeline(dag, ...)` references a
   shared DAG. A rule call fingerprints and interns its `RuleCall` immediately; equivalent calls
@@ -126,6 +126,11 @@ These have been true since the June refactors and are load-bearing design decisi
 - **Filename-less NodeTypes are input-only.** A `NodeType` with `filename = None` may be
   used as a fixed, union, or variadic input contract, but every Rule output must resolve to an
   explicit filename. Rule declaration rejects filename-less outputs; output names are not fallbacks.
+- **Mixed fixed inputs select their branch per call.** A union containing NodeType and plain-value
+  arms remains positional. A matching Node creates a parent edge; a matching plain value creates no
+  edge and enters provenance as a named canonical value along with positional input order. Only
+  matching plain values may be defaults, and positional defaults must be trailing. Mixed variadic
+  element unions remain unsupported.
 - **Mutable Rules ignore external content-only edits.** `Rule(..., mutable=True)` is allowed only
   for a single-output RuleCall. Mutable parents retain identity, ordering, provenance, and failure
   propagation. Rebuilding a mutable parent during the current run forces consumers to rerun; external

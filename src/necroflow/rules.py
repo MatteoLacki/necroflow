@@ -49,7 +49,7 @@ def parse_resource(s: str | int) -> int:
 
 
 class Inputs:
-    """Declare rule inputs: NodeType values = positional Node args; plain types = config kwargs."""
+    """Declare positional Node/mixed inputs and keyword config inputs."""
 
     def __init__(self, **specs):
         """Store named declarations in their insertion order."""
@@ -101,6 +101,12 @@ class _NodeInputContract:
     element_type: Any
     variadic: bool = False
     many: Many | None = None
+    value_types: tuple[Any, ...] = ()
+
+    @property
+    def hybrid(self) -> bool:
+        """Return whether this fixed input also accepts non-Node values."""
+        return bool(self.value_types)
 
 
 def _pascal_to_snake(name: str) -> str:
@@ -124,7 +130,8 @@ def _node_input_contract(
 ) -> _NodeInputContract | None:
     """Classify an input annotation as a positional Node contract or config.
 
-    Fixed NodeTypes and all-NodeType unions produce scalar contracts.
+    Fixed NodeTypes and unions containing NodeTypes produce positional contracts.
+    A fixed mixed union may select either a managed Node or a plain value.
     ``tuple[NodeType, ...]`` produces a variadic contract, optionally bounded
     by one ``Many`` item in ``Annotated`` metadata. Invalid or ambiguous Node
     declarations raise immediately; ordinary config annotations return
@@ -142,16 +149,6 @@ def _node_input_contract(
             f"Rule {rule_name!r}: input {input_name!r} has more than one Many marker"
         )
     many = many_values[0] if many_values else None
-
-    members = _union_members(base)
-    if members:
-        has_nodetype = any(_is_nodetype(member) for member in members)
-        if has_nodetype and not all(_is_nodetype(member) for member in members):
-            raise TypeError(
-                f"Rule {rule_name!r}: input {input_name!r} mixes NodeType and "
-                "non-NodeType union members; use only NodeType alternatives for "
-                "positional node inputs, or only plain types for config inputs"
-            )
 
     if get_origin(base) is tuple:
         tuple_args = get_args(base)
@@ -189,8 +186,12 @@ def _node_input_contract(
             f"Rule {rule_name!r}: input {input_name!r} uses Many on a non-variadic "
             "Node tuple"
         )
-    if _is_nodetype(base) or _is_nodetype_union(base):
+    if _is_nodetype(base):
         return _NodeInputContract(base)
+    members = _union_members(base)
+    if any(_is_nodetype(member) for member in members):
+        value_types = tuple(member for member in members if not _is_nodetype(member))
+        return _NodeInputContract(base, value_types=value_types)
     return None
 
 
@@ -206,8 +207,27 @@ def _matches_node_type(actual, expected) -> bool:
     """Return whether an actual NodeType satisfies a type or union contract."""
     members = _union_members(expected)
     if members:
-        return any(_matches_node_type(actual, member) for member in members)
-    return issubclass(actual, expected)
+        return any(
+            _is_nodetype(member) and _matches_node_type(actual, member)
+            for member in members
+        )
+    return _is_nodetype(expected) and issubclass(actual, expected)
+
+
+def _matches_value_type(value: Any, expected: Any) -> bool:
+    """Check one plain value against the non-Node arms of an annotation."""
+    members = _union_members(expected) or (expected,)
+    for member in members:
+        if _is_nodetype(member):
+            continue
+        try:
+            if isinstance(value, member):
+                return True
+        except TypeError:
+            # Match existing config behavior for typing-only annotations such as
+            # Literal and parameterized containers that isinstance cannot inspect.
+            return True
+    return False
 
 
 def output(node_type: type[NodeType]) -> Node:
@@ -270,7 +290,9 @@ class Rule(Generic[_ReturnT]):
             for input_name, contract in contracts.items()
             if contract is None
         }
-        self._input_defaults = self._validated_input_defaults(input_defaults, contracts)
+        self._input_defaults, self._pos_input_defaults = self._validated_input_defaults(
+            input_defaults, contracts
+        )
         self._validate_config_values(self._input_defaults)
         reserved = BUILTIN_COMMAND_PLACEHOLDERS & (
             set(inputs.specs) | set(outputs.specs)
@@ -314,10 +336,10 @@ class Rule(Generic[_ReturnT]):
         self,
         input_defaults: Mapping[str, Any] | None,
         contracts: dict[str, _NodeInputContract | None],
-    ) -> dict[str, Any]:
-        """Copy defaults and require them to name scalar/config inputs."""
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Split validated config and hybrid positional defaults."""
         if input_defaults is None:
-            return {}
+            return {}, {}
         if not isinstance(input_defaults, Mapping):
             raise TypeError(f"Rule {self.__name__!r}: input_defaults must be a mapping")
         defaults = dict(input_defaults)
@@ -327,13 +349,44 @@ class Rule(Generic[_ReturnT]):
                 f"Rule {self.__name__!r}: unknown input defaults: "
                 f"{sorted(unknown, key=repr)!r}"
             )
-        for name in defaults:
-            if contracts[name] is not None:
+        config_defaults = {}
+        positional_defaults = {}
+        for name, value in defaults.items():
+            contract = contracts[name]
+            if contract is None:
+                config_defaults[name] = value
+                continue
+            if not contract.hybrid:
                 raise TypeError(
                     f"Rule {self.__name__!r}: Node input {name!r} "
                     "must not have a default"
                 )
-        return defaults
+            if isinstance(value, Node):
+                raise TypeError(
+                    f"Rule {self.__name__!r}: hybrid input {name!r} has a "
+                    "Node-valued default; managed Nodes must be supplied per Pipeline"
+                )
+            if not _matches_value_type(value, contract.element_type):
+                expected = " | ".join(
+                    sorted(_type_contract_name(item) for item in contract.value_types)
+                )
+                raise TypeError(
+                    f"Rule {self.__name__!r}: default for hybrid input {name!r} "
+                    f"expected {expected}, "
+                    f"got {type(value).__name__!r}"
+                )
+            positional_defaults[name] = value
+
+        seen_default = False
+        for name, _contract in self._pos_inputs:
+            if name in positional_defaults:
+                seen_default = True
+            elif seen_default:
+                raise TypeError(
+                    f"Rule {self.__name__!r}: positional input {name!r} without a "
+                    "default follows a positional input with a default"
+                )
+        return config_defaults, positional_defaults
 
     @staticmethod
     def _validate_repeat(repeat: int) -> int:
@@ -401,10 +454,14 @@ class Rule(Generic[_ReturnT]):
     def _validate_input_presence(
         self, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> None:
-        """Require exactly the declared Nodes and all normalized config keys."""
+        """Require all positional inputs and normalized config keys exactly once."""
         name = self.__name__
         if len(args) < len(self._pos_inputs):
-            missing = [pname for pname, _ in self._pos_inputs[len(args) :]]
+            missing = [
+                pname
+                for pname, _ in self._pos_inputs[len(args) :]
+                if pname not in self._pos_input_defaults
+            ]
             raise TypeError(f"{name}: missing required inputs: {missing!r}")
         if len(args) > len(self._pos_inputs):
             raise TypeError(
@@ -418,10 +475,26 @@ class Rule(Generic[_ReturnT]):
         if missing_kw:
             raise TypeError(f"{name}: missing required inputs: {missing_kw!r}")
 
-    def _validate_parent_nodes(self, pipeline, args: tuple[Any, ...]) -> None:
-        """Validate Node containers, bounds, types, order, and DAG ownership."""
+    def _validate_positional_inputs(self, pipeline, args: tuple[Any, ...]) -> None:
+        """Validate positional Node, variadic, and hybrid values."""
         name = self.__name__
         for (pname, contract), value in zip(self._pos_inputs, args):
+            if not contract.variadic and not isinstance(value, Node):
+                if contract.hybrid and _matches_value_type(
+                    value, contract.element_type
+                ):
+                    continue
+                if not contract.hybrid:
+                    raise TypeError(
+                        f"{name}: {pname!r} expected Node, "
+                        f"got {type(value).__name__!r}"
+                    )
+                raise TypeError(
+                    f"{name}: {pname!r} expected "
+                    f"{_type_contract_name(contract.element_type)}, "
+                    f"got {type(value).__name__!r}"
+                )
+
             values: tuple[Any, ...]
             if contract.variadic:
                 if not isinstance(value, tuple):
@@ -482,15 +555,34 @@ class Rule(Generic[_ReturnT]):
         config.update(kwargs)
         return config
 
+    def _effective_positional_inputs(self, args: tuple[Any, ...]) -> tuple[Any, ...]:
+        """Fill an omitted trailing hybrid input from its declared default."""
+        if len(args) >= len(self._pos_inputs):
+            return args
+        remaining = self._pos_inputs[len(args) :]
+        if not all(name in self._pos_input_defaults for name, _contract in remaining):
+            return args
+        return args + tuple(self._pos_input_defaults[name] for name, _ in remaining)
+
     def _compile_outputs(
         self, pipeline, args: tuple[Any, ...], config: dict[str, Any]
     ) -> list[Node]:
         """Compile and intern output Nodes from validated logical inputs."""
-        node_inputs = NamedValues(
-            {name: value for (name, _contract), value in zip(self._pos_inputs, args)}
-        )
+        node_inputs = {}
+        input_values = {}
+        for (name, contract), value in zip(self._pos_inputs, args):
+            if contract.variadic or isinstance(value, Node):
+                node_inputs[name] = value
+            else:
+                input_values[name] = value
         return Node.make_outputs(
-            pipeline, self, node_inputs, config, self.command, self.outputs.specs
+            pipeline,
+            self,
+            NamedValues(node_inputs),
+            NamedValues(input_values),
+            config,
+            self.command,
+            self.outputs.specs,
         )
 
     def _shape_outputs(self, nodes: list[Node]) -> _ReturnT:
@@ -506,9 +598,10 @@ class Rule(Generic[_ReturnT]):
         """Validate one invocation and return its canonical output Nodes."""
         self._validate_pipeline(pipeline)
         pipeline._assert_open()
+        args = self._effective_positional_inputs(args)
         config = self._effective_config(kwargs)
         self._validate_input_presence(args, config)
-        self._validate_parent_nodes(pipeline, args)
+        self._validate_positional_inputs(pipeline, args)
         self._validate_config_values(config)
         nodes = self._compile_outputs(pipeline, args, config)
         return self._shape_outputs(nodes)
@@ -670,8 +763,9 @@ def command(
     """Create a factory rule or return the decorator-sugar adapter.
 
     ``repeat`` is the maximum number of command attempts, including the first.
-    Decorated scalar/config defaults come from the Python signature. Factory
-    rules may declare them with ``input_defaults={name: value}``.
+    Decorated scalar/config and mixed-value defaults come from the Python
+    signature. Factory rules may declare them with
+    ``input_defaults={name: value}``.
     """
     if isinstance(cmd, list):
         raise TypeError(

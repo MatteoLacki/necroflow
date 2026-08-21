@@ -136,6 +136,28 @@ def test_command_args_are_resolved_named_immutable_views(tmp_path):
         LAST_ARGS.workdir = Path("elsewhere")
 
 
+def test_command_callback_receives_hybrid_scalar_in_inputs(tmp_path):
+    """A hybrid scalar keeps its logical input name instead of becoming config."""
+
+    global CALL_COUNT, LAST_ARGS
+    CALL_COUNT = 0
+    LAST_ARGS = None
+    pipeline = Pipeline(DAG(tmp_path))
+    rule = Rule(
+        "dynamic_hybrid",
+        Inputs(source=Source | str),
+        Outputs(result=Result),
+        dynamic_command,
+    )
+
+    result = rule(pipeline, "external")
+
+    assert result.rule_call.resolve() == f"cp external {result.path}"
+    assert LAST_ARGS.inputs.source == "external"
+    assert dict(LAST_ARGS.config) == {}
+    assert CALL_COUNT == 1
+
+
 def test_callable_command_is_realized_once_per_rule_call(tmp_path):
     global CALL_COUNT
     CALL_COUNT = 0

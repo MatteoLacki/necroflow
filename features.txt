@@ -6,6 +6,7 @@ necroflow
 │   ├── NodeType typed file/artifact classes
 │   ├── NodeType subtype families for format contracts
 │   ├── NodeType union inputs for alternative type contracts
+│   ├── fixed mixed NodeType/value unions with runtime parent selection
 │   ├── mutable single-output Rules with cache-neutral external edits
 │   ├── Node typed output/edge/result selectors
 │   ├── RuleCall atomic identity, cache, state, execution, report, cleanup
@@ -16,7 +17,7 @@ necroflow
 │   │   ├── lint-clean name = output(NodeType) declarations
 │   │   ├── typed Inputs / Outputs
 │   │   ├── filename-less abstract input contracts; explicit output filenames
-│   │   ├── scalar/config input defaults with explicit Node dependencies
+│   │   ├── scalar/config and mixed-value defaults with explicit Node dependencies
 │   │   ├── ordered tuple[NodeType, ...] variadic inputs
 │   │   ├── optional inclusive Many(min=..., max=...) bounds
 │   │   ├── multi-output rules

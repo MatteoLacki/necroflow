@@ -87,6 +87,7 @@ class RuleCall:
     dag: Any
     rule: Any
     inputs: NamedValues[Node | tuple[Node, ...]]
+    input_values: NamedValues[Any]
     config: dict[str, Any]
     command: str | Callable | None
     shellpath: str | None = None
@@ -162,8 +163,16 @@ class RuleCall:
                 )
         return parents
 
+    def _positional_input_order(self) -> list[str]:
+        """Return callback-visible positional input names in declaration order."""
+        return [
+            name
+            for name in self.rule.inputs.specs
+            if name in self.inputs or name in self.input_values
+        ]
+
     def compute_provenance_hash(self, rule_hash: str) -> str:
-        """Hash this configured invocation and its exact parent lineage."""
+        """Hash config, execution context, parent lineage, and mixed values."""
         identity = {
             "domain": PROVENANCE_HASH_DOMAIN,
             "rule_hash": rule_hash,
@@ -173,6 +182,9 @@ class RuleCall:
             ),
             "parents": self._parent_identity(),
         }
+        if self.input_values:
+            identity["input_values"] = dict(self.input_values)
+            identity["input_order"] = self._positional_input_order()
         return hashlib.sha256(canonical_bytes(identity, path="provenance")).hexdigest()
 
     def _constraints(self) -> dict[str, Any]:
@@ -312,6 +324,16 @@ class RuleCall:
             },
             "recipe": self.rule_identity,
         }
+        if self.input_values:
+            data["input_order"] = self._positional_input_order()
+            data["input_values"] = [
+                {
+                    "name": name,
+                    "type": f"{type(value).__module__}.{type(value).__qualname__}",
+                    "value": repr(value),
+                }
+                for name, value in self.input_values.items()
+            ]
         if self.shellpath is not None:
             data["execution"] = {"shellpath": self.shellpath}
         if self.command is not None:
@@ -353,14 +375,17 @@ class RuleCall:
         return tuple(self.output_nodes.values())
 
     def command_args(self) -> CommandArgs:
-        named_inputs = {
-            name: (
-                tuple(parent.path for parent in value)
-                if isinstance(value, tuple)
-                else value.path
-            )
-            for name, value in self.inputs.items()
-        }
+        named_inputs = {}
+        for name in self.rule.inputs.specs:
+            if name in self.inputs:
+                value = self.inputs[name]
+                named_inputs[name] = (
+                    tuple(parent.path for parent in value)
+                    if isinstance(value, tuple)
+                    else value.path
+                )
+            elif name in self.input_values:
+                named_inputs[name] = self.input_values[name]
         outputs = {name: node.path for name, node in self.output_nodes.items()}
         return CommandArgs(
             inputs=NamedValues(named_inputs),

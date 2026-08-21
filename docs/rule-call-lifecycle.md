@@ -150,46 +150,63 @@ compiled, the resulting FASTQ is a parent Node.
 
 ## 4. Inputs and configuration are validated
 
-The rule validates positional Node inputs against declared NodeTypes and
-config values against their declared Python types. Decorated command rules
-derive scalar/config defaults from their Python signature; explicit Rule and
-factory construction use ``input_defaults``. Rule construction rejects unknown
-defaults, wrongly typed defaults, and defaults on fixed or variadic Node inputs.
+The rule validates positional Node inputs against declared NodeTypes and config
+values against their declared Python types. A fixed mixed union is also
+positional: a Node selects its NodeType arm, while any other value selects a
+matching non-Node arm. Decorated command rules derive scalar/config and mixed
+value defaults from their Python signature; explicit Rule and factory
+construction use ``input_defaults``. Rule construction rejects unknown or
+wrongly typed defaults, defaults on pure fixed or variadic Node inputs, managed
+Node defaults, and non-trailing positional defaults.
 Every decorated-rule parameter must have a type annotation; an unannotated
 parameter fails while the decorator constructs the Rule, even when no command
 placeholder references it. Return annotations remain optional and do not
 declare outputs.
 
-At call time, explicit keyword values overlay a fresh copy of the defaults.
-This effective config is then used for presence/type validation and output
+At call time, omitted trailing mixed inputs receive their positional defaults;
+explicit keyword values separately overlay a fresh copy of config defaults.
+These effective values are then used for presence/type validation and output
 compilation. Keywords outside the declared scalar/config inputs fail before
-fingerprinting or DAG interning. The caller's ``kwargs`` mapping is not mutated.
+fingerprinting or DAG interning. Mixed inputs remain positional even when their
+runtime value is plain. The caller's ``args`` and ``kwargs`` are not mutated.
 
 `Rule.__call__` coordinates the phases through focused methods:
 
 ```python
 self._validate_pipeline(pipeline)
+args = self._effective_positional_inputs(args)
 config = self._effective_config(kwargs)
 self._validate_input_presence(args, config)
-self._validate_parent_nodes(pipeline, args)
+self._validate_positional_inputs(pipeline, args)
 self._validate_config_values(config)
 nodes = self._compile_outputs(pipeline, args, config)
 return self._shape_outputs(nodes)
 ```
 
 The validated values retain their named logical shape. Config contains every
-effective default as a concrete value. A fixed input stores one Node, while a
-variadic input stores one ordered tuple of Nodes:
+effective config default as a concrete value. A fixed pure Node input stores one
+Node, while a variadic input stores one ordered tuple of Nodes. A mixed input is
+partitioned by its runtime branch: Nodes enter `node_inputs`; plain values enter
+`input_values` under the same declared name:
 
 ```python
 node_inputs = {
     name: value
-    for (name, _contract), value in zip(self._pos_inputs, args)
+    for (name, contract), value in zip(self._pos_inputs, args)
+    if contract.variadic or isinstance(value, Node)
+}
+input_values = {
+    name: value
+    for (name, contract), value in zip(self._pos_inputs, args)
+    if not contract.variadic and not isinstance(value, Node)
 }
 ```
 
 `RuleCall.parents` flattens those values only for graph traversal, preserving
-declaration order and each tuple’s element order. Each parent has already copied
+declaration order and each tuple’s element order. Mixed plain values never enter
+`parents` and therefore create no DAG edge. Command resolution reunites both
+mappings in declaration order: Nodes become paths, while plain values remain
+unchanged under `CommandArgs.inputs`. Each parent has already copied
 its concrete output type's inherited `mutable` boolean when it was compiled;
 mutability is not supplied per Rule call or per input annotation.
 
@@ -202,6 +219,7 @@ call = RuleCall(
     dag=S.dag,
     rule=align,
     inputs=NamedValues({"fastq": S.fastq, "reference": reference}),
+    input_values=NamedValues(),
     config={},
     command=align.command,
     shellpath=S.shellpath,
@@ -217,7 +235,8 @@ and mutability. `declared_rule_hash(rule)` can therefore compute it without a jo
 config or DAG.
 
 It then hashes one configured invocation into `provenance_hash` from the local
-`rule_hash`, effective config, selected shell, and ordered parent identities.
+`rule_hash`, effective config, selected shell, ordered parent identities, and
+any named mixed plain values.
 The framework-owned hasher reads those values directly from the freshly built
 `RuleCall`, before output paths are resolved. Constraints and `repeat` are not
 identity inputs and are never passed through an intermediate fingerprint view.
@@ -227,6 +246,14 @@ identity input. Consequently, omitting a default and passing that same value
 explicitly produce the same provenance hash. Changing a default changes the
 provenance hash for calls that omit it, while calls with an explicit override
 retain the hash associated with that explicit value.
+
+The same effective-value rule applies to mixed positional defaults. A Node arm
+contributes its parent provenance and output name. A non-Node arm contributes a
+conditionally present `input_values` mapping encoded by the canonical v4 value
+encoder plus the callback-visible positional input order. Existing calls without
+mixed plain values retain their previous v4 identity payload. Persisted dependency
+metadata records mixed plain values as named diagnostic type/value representations;
+those representations are not the identity encoding.
 
 Parent Nodes contribute provenance hash and output name. Parent recipe identity is
 already contained by that provenance hash. A variadic input remains one named

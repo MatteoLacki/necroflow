@@ -19,7 +19,8 @@ The decorator form below remains supported as syntactic sugar.
 
 For a decorated rule, the function signature is the complete input schema.
 Every parameter must have a type annotation: Node dependencies use a
-`NodeType` contract, while scalar/config inputs use ordinary Python types.
+`NodeType` contract, scalar/config inputs use ordinary Python types, and a
+fixed mixed union may select either kind at call time.
 Necroflow rejects an unannotated parameter when the decorator constructs the
 Rule, even if the command does not reference that parameter. Calls likewise
 reject keyword inputs absent from the declared schema before fingerprinting or
@@ -29,7 +30,8 @@ outputs are declared only with `output(ConcreteNodeType)`.
 ## Command input defaults
 
 Scalar/config inputs on decorated command rules may use ordinary Python
-defaults. Node inputs remain explicit dependencies and must not have defaults:
+defaults. Pure Node inputs remain explicit dependencies and must not have
+defaults; mixed Node/value inputs may default to one of their value arms:
 
 ```python
 @command("sage --train-fdr {train_fdr} --test-fdr {test_fdr} {spectra} -o {results}")
@@ -66,9 +68,12 @@ run_sage = command(
 )
 ```
 
-Defaults are validated when the Rule is declared. A default may name only a
-declared scalar/config input and must satisfy its runtime-checkable annotation;
-a default on a fixed or variadic Node input raises ``TypeError``. Specialized
+Defaults are validated when the Rule is declared. A config default must satisfy
+its runtime-checkable annotation. A mixed-input default must satisfy one of its
+non-Node arms; a managed Node cannot be captured as a default because it belongs
+to one concrete DAG. Defaults on pure fixed or variadic Node inputs raise
+``TypeError``. Positional mixed defaults must be trailing among positional
+inputs so omission cannot shift a later required dependency. Specialized
 ``text_file`` and ``symlink_file`` declarations continue to require their one
 input explicitly.
 
@@ -76,6 +81,41 @@ Defaults are expanded before a rule call is validated and fingerprinted. An
 omitted value and the same value passed explicitly therefore intern to the same
 Node. Overriding or changing an effective default changes the fingerprint just
 like changing any other config input.
+
+## Mixed Node/value inputs
+
+A fixed union may combine one or more `NodeType` contracts with ordinary Python
+types. It remains one positional logical input:
+
+```python
+@command(select_command)
+def consume(source: Bam | str | None = None):
+    result = output(Result)
+    return result
+
+P.managed = consume(P, P.bam)   # P.bam is a parent dependency
+P.external = consume(P, "/data/external.bam")  # no parent dependency
+P.absent = consume(P)           # same call identity as consume(P, None)
+```
+
+At call time, a managed `Node` is checked against the NodeType arms and must
+belong to the compiling Pipeline's DAG. Any other value is checked against the
+non-Node arms. A matching Node creates a DAG edge and contributes parent lineage
+to provenance. A matching plain value creates no edge and contributes its named,
+canonical value and positional input order directly to provenance. Consequently,
+an external filename passed as `str` is fingerprinted by that string; necroflow
+does not track or hash the external file's contents.
+
+Mixed inputs are positional even when the selected value is plain. Call
+`consume(P, value)`, not `consume(P, source=value)`. In `CommandArgs`, the value
+remains under `args.inputs.source`: managed Nodes resolve to `Path`; plain values
+remain unchanged. Static command templates stringify and shell-quote the selected
+value with the normal substitution policy. In particular, `None` renders as the
+literal `None`; use a Python command callback when absence should omit an argument.
+
+Mixed element unions inside variadic tuples, such as
+`tuple[Bam | str, ...]`, remain invalid. Variadic inputs model only ordered Node
+dependency groups.
 
 ## Variadic Node inputs
 
@@ -154,6 +194,8 @@ merge = command(
 `CommandArgs` contains read-only named `inputs`, `config`, `outputs`, and
 `constraints` collections plus `workdir`. Names support both attribute and
 mapping access, such as `args.outputs.merged` and `args.outputs["merged"]`.
+`inputs` contains resolved Node paths, Node-path tuples, and selected plain
+values from mixed inputs; `config` contains keyword scalar/config inputs.
 
 Callbacks return a complete shell string. Necroflow executes it unchanged and
 does not attempt to infer or repair quoting; use `shlex.quote` or `shlex.join`
@@ -393,8 +435,8 @@ Here `score()` accepts `PrecursorTable`, `FilteredPrecursors`, or
 `IndexedDataset`. Use multiple inheritance for combined requirements: "must be
 both filtered precursors and indexed". Use a union for alternatives:
 `PrecursorTable | FilteredPrecursors` means "either concrete contract is fine".
-Mixed unions such as `NodeType | str` are rejected because node inputs and config
-inputs are different parts of the rule API.
+Mixed unions such as `PrecursorTable | str | None` additionally allow a plain
+positional value or absence under the mixed-input rules above.
 
 ## Mutable Rules
 
