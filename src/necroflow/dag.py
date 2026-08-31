@@ -146,6 +146,48 @@ def write_dependencies(node: Node) -> None:
             if token is not None:
                 _invalidation_file(onode).write_text(token)
 
+    # Record what this node ACTUALLY CONSUMED: the content hash of every parent output at the
+    # moment this node ran.
+    #
+    # Without it, staleness could only compare a parent's current content against the PARENT'S OWN
+    # stored hash -- which `write_dependencies` rewrites on every parent run, so it always matched
+    # and the "parent re-ran but content unchanged" branch always skipped. A parent re-run IN PLACE
+    # (same fingerprint, new content -- e.g. an invalidator firing on an edited spec file) therefore
+    # left its children `up_to_date` against data that had changed underneath them.
+    #
+    # Observed 2026-08-31: an edited design spec re-ran `design` and `peptide_yield` in place; five
+    # of six cohort arms kept their old renders and necroflow reported "done: 6 arms". The cohort
+    # silently mixed two configurations and only a file-mtime comparison caught it.
+    _write_consumed_hashes(node, rip)
+
+
+def _consumed_file(rip: Path) -> Path:
+    return rip / "consumed.hashes"
+
+
+def _write_consumed_hashes(node: Node, rip: Path) -> None:
+    lines = []
+    for parent in node.parents:
+        if parent.path is not None and parent.path.exists():
+            lines.append(f"{parent.path}\t{_content_hash(parent.path)}")
+    if lines:
+        _consumed_file(rip).write_text("\n".join(sorted(lines)) + "\n")
+
+
+def _consumed_hashes(node: Node) -> dict[str, str] | None:
+    """What this node recorded for its parents when it last ran, or None if never recorded."""
+    if node.path is None:
+        return None
+    f = _consumed_file(node.path.parent / ".rip")
+    if not f.exists():
+        return None
+    out = {}
+    for line in f.read_text().splitlines():
+        if "\t" in line:
+            path, digest = line.split("\t", 1)
+            out[path] = digest.strip()
+    return out
+
 
 def _output_mtime(path: Path) -> float:
     """Mtime of a node output. For directories, returns the max mtime of all files inside."""
@@ -195,17 +237,25 @@ def classify_nodes(nodes: list[Node], required_nodes: list[Node]) -> None:
             if p.state is not None
         )
         if not stale:
+            consumed = _consumed_hashes(node)
             for p in node.parents:
                 if p.path is None or not p.path.exists():
                     continue
                 if _output_mtime(p.path) <= node_mtime:
                     continue  # fast path: parent not newer
-                hash_file = p.path.parent / ".rip" / (p.path.name + ".hash")
-                if (
-                    hash_file.exists()
-                    and _content_hash(p.path) == hash_file.read_text().strip()
-                ):
-                    continue  # parent re-ran but content unchanged
+                # Compare the parent's CURRENT content against what THIS NODE recorded consuming.
+                # Comparing against the parent's own stored hash cannot work: that file is rewritten
+                # on every parent run, so it always matches and a changed parent looks unchanged.
+                if consumed is not None:
+                    recorded = consumed.get(str(p.path))
+                    if recorded is not None and _content_hash(p.path) == recorded:
+                        continue  # parent re-ran, but its content is what we consumed
+                    stale = True
+                    break
+                # No record (node predates this mechanism): the parent is newer and we cannot prove
+                # the content is the same, so treat it as stale. Conservative on purpose -- the
+                # failure this replaces was silent, and a needless re-run is cheaper than a mixed
+                # cohort.
                 stale = True
                 break
         if _has_changed_invalidation(node):

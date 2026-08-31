@@ -205,3 +205,46 @@ def test_content_unchanged_parent_not_stale(tmp_path):
         n for n in dag.nodes if n.rule.__name__ == "align" and n.output_name == "bam"
     )
     assert align_bam.state == NodeState.UP_TO_DATE
+
+
+def test_stale_when_parent_reran_in_place_with_new_content(tmp_path):
+    """A parent re-run IN PLACE must invalidate its children.
+
+    Regression for a silent-staleness bug (2026-08-31). When a parent re-runs at the SAME path with
+    NEW content -- which is what happens when an invalidator fires on an edited spec file, since the
+    fingerprint and therefore the node directory are unchanged -- `write_dependencies` rewrites the
+    parent's own `.hash` to match the new content. The old check compared the parent's current
+    content against THAT file, so it always matched, the "parent re-ran but content unchanged"
+    branch always skipped, and children stayed `up_to_date` against data that had changed.
+
+    In production this silently produced a cohort mixing two configurations: one arm re-rendered,
+    five reused, and the runner reported "done: 6 arms".
+
+    Distinct from `test_stale_direct`, which mutates the parent WITHOUT refreshing its stored hash
+    and so is caught by either implementation.
+    """
+    dag = DAG(outdir=tmp_path)
+    P = make_pipeline(dag)
+    dag.require([P.sorted])
+    dag.execute()
+
+    raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
+    align_bam = next(
+        n for n in dag.nodes if n.rule.__name__ == "align" and n.output_name == "bam"
+    )
+
+    time.sleep(0.05)
+    # Simulate the parent re-running in place: new content AND a refreshed own-hash, exactly what
+    # write_dependencies leaves behind.
+    raw_node.path.write_bytes(b"content from a re-run with an edited spec")
+    from necroflow.dag import _content_hash
+
+    hash_file = raw_node.path.parent / ".rip" / (raw_node.path.name + ".hash")
+    hash_file.parent.mkdir(parents=True, exist_ok=True)
+    hash_file.write_text(_content_hash(raw_node.path))
+
+    classify_nodes(dag.nodes, dag.required_nodes)
+    assert align_bam.state == NodeState.STALE, (
+        "child must be STALE after its parent re-ran in place with different content; "
+        "comparing against the parent's own refreshed hash cannot detect this"
+    )
