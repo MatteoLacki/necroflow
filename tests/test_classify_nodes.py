@@ -233,18 +233,64 @@ def test_stale_when_parent_reran_in_place_with_new_content(tmp_path):
         n for n in dag.nodes if n.rule.__name__ == "align" and n.output_name == "bam"
     )
 
+    from necroflow.dag import _content_hash, _consumed_file
+
+    # PIN THE MECHANISM, not just the outcome. Without this the test would also pass if
+    # consumed.hashes were never written at all, via the "no record + newer parent => stale"
+    # fallback -- i.e. it would assert the right answer for the wrong reason.
+    record = _consumed_file(align_bam.path.parent / ".rip")
+    assert record.exists(), "the child must record what it consumed"
+    consumed = dict(
+        line.split("\t", 1) for line in record.read_text().splitlines() if "\t" in line
+    )
+    old_digest = _content_hash(raw_node.path)
+    assert consumed.get(str(raw_node.path)) == old_digest, (
+        "the child's record must hold the parent's digest AS CONSUMED, "
+        f"got {consumed!r}"
+    )
+
     time.sleep(0.05)
     # Simulate the parent re-running in place: new content AND a refreshed own-hash, exactly what
     # write_dependencies leaves behind.
     raw_node.path.write_bytes(b"content from a re-run with an edited spec")
-    from necroflow.dag import _content_hash
-
     hash_file = raw_node.path.parent / ".rip" / (raw_node.path.name + ".hash")
     hash_file.parent.mkdir(parents=True, exist_ok=True)
     hash_file.write_text(_content_hash(raw_node.path))
+    assert _content_hash(raw_node.path) != old_digest, "the parent's content must actually differ"
 
     classify_nodes(dag.nodes, dag.required_nodes)
     assert align_bam.state == NodeState.STALE, (
         "child must be STALE after its parent re-ran in place with different content; "
         "comparing against the parent's own refreshed hash cannot detect this"
+    )
+
+
+def test_up_to_date_when_parent_reran_in_place_with_SAME_content(tmp_path):
+    """The converse: a parent that re-runs and produces IDENTICAL bytes must NOT invalidate.
+
+    Guards against over-invalidation -- without this, "any newer parent is stale" would rebuild the
+    world on every no-op rerun. Together with the test above this pins the comparison to CONTENT
+    rather than to mtime.
+    """
+    dag = DAG(outdir=tmp_path)
+    P = make_pipeline(dag)
+    dag.require([P.sorted])
+    dag.execute()
+
+    raw_node = next(n for n in dag.nodes if n.rule.__name__ == "raw_fastq")
+    align_bam = next(
+        n for n in dag.nodes if n.rule.__name__ == "align" and n.output_name == "bam"
+    )
+    from necroflow.dag import _content_hash
+
+    time.sleep(0.05)
+    same = raw_node.path.read_bytes()
+    raw_node.path.write_bytes(same)  # rewritten, newer mtime, identical content
+    hash_file = raw_node.path.parent / ".rip" / (raw_node.path.name + ".hash")
+    hash_file.parent.mkdir(parents=True, exist_ok=True)
+    hash_file.write_text(_content_hash(raw_node.path))
+
+    classify_nodes(dag.nodes, dag.required_nodes)
+    assert align_bam.state == NodeState.UP_TO_DATE, (
+        "a parent rerun with identical content must not invalidate its children"
     )

@@ -170,8 +170,13 @@ def _write_consumed_hashes(node: Node, rip: Path) -> None:
     for parent in node.parents:
         if parent.path is not None and parent.path.exists():
             lines.append(f"{parent.path}\t{_content_hash(parent.path)}")
-    if lines:
-        _consumed_file(rip).write_text("\n".join(sorted(lines)) + "\n")
+    # ALWAYS write, even with no parents. "File absent" means "this node predates the mechanism"
+    # and triggers the conservative fallback; a parentless node that skipped the write would be
+    # indistinguishable from a legacy node forever.
+    target = _consumed_file(rip)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_text("\n".join(sorted(lines)) + ("\n" if lines else ""))
+    os.replace(tmp, target)  # atomic: an interrupted write must not leave a truncated record
 
 
 def _consumed_hashes(node: Node) -> dict[str, str] | None:

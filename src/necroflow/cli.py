@@ -41,6 +41,7 @@ from necroflow._compat import ExceptionGroup
 from necroflow import DAG, Node, Pipeline, connected_component_scheduler, fifo_scheduler
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import (
+    _consumed_hashes,
     NodeState,
     _check_path_limits,
     _content_hash,
@@ -434,13 +435,19 @@ def _classification_reasons(node, forced_stale_keys: set[Path]) -> list[dict]:
         elif node.path is not None and parent.path is not None and parent.path.exists():
             try:
                 if _output_mtime(parent.path) > _output_mtime(node.path):
-                    hash_file = (
-                        parent.path.parent / ".rip" / (parent.path.name + ".hash")
-                    )
-                    content_changed = not (
-                        hash_file.exists()
-                        and _content_hash(parent.path) == hash_file.read_text().strip()
-                    )
+                    # Must mirror classify_nodes EXACTLY: compare the parent's current content
+                    # against what THIS NODE recorded consuming, not against the parent's own
+                    # stored hash (which is rewritten on every parent run and so always matches).
+                    # Diagnostics that disagree with the execution decision are worse than none.
+                    consumed = _consumed_hashes(node)
+                    if consumed is None:
+                        content_changed = True  # no record: same conservative call as classify
+                    else:
+                        recorded = consumed.get(str(parent.path))
+                        content_changed = not (
+                            recorded is not None
+                            and _content_hash(parent.path) == recorded
+                        )
                     if content_changed:
                         reasons.append(
                             {
