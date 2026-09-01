@@ -632,7 +632,7 @@ def test_wrong_config_type_raises():
 
 
 def test_missing_positional_input_raises():
-    with pytest.raises(TypeError, match="missing required inputs"):
+    with pytest.raises(TypeError, match="missing a required argument"):
         R_to_upper(P, n=1)  # txt input omitted
 
 
@@ -642,7 +642,7 @@ def test_missing_config_input_raises():
     This keeps malformed DAGs from being accepted and then failing later
     during command formatting or execution.
     """
-    with pytest.raises(TypeError, match="missing required inputs"):
+    with pytest.raises(TypeError, match="missing a required.*argument"):
         R_make_txt(
             P,
         )  # word config omitted
@@ -653,7 +653,7 @@ def test_explicit_rule_rejects_unexpected_config_before_interning(tmp_path):
     dag = DAG(tmp_path)
     pipeline = Pipeline(dag)
 
-    with pytest.raises(TypeError, match="unexpected inputs.*extra"):
+    with pytest.raises(TypeError, match="unexpected keyword argument 'extra'"):
         R_make_txt(pipeline, word="hi", extra=True)
 
     assert dag.calls == {}
@@ -671,7 +671,7 @@ def test_decorated_rule_rejects_unexpected_config_before_interning(tmp_path):
     dag = DAG(tmp_path)
     pipeline = Pipeline(dag)
 
-    with pytest.raises(TypeError, match="unexpected inputs.*extra"):
+    with pytest.raises(TypeError, match="unexpected keyword argument 'extra'"):
         make_txt(pipeline, word="hi", extra=True)
 
     assert dag.calls == {}
@@ -686,8 +686,46 @@ def test_extra_positional_input_raises():
     """
     txt = R_make_txt(P, word="hi")
     extra = R_make_txt(P, word="extra")
-    with pytest.raises(TypeError, match="too many positional inputs"):
+    with pytest.raises(TypeError, match="too many positional arguments"):
         R_to_upper(P, txt, extra, n=1)
+
+
+def test_node_input_accepted_by_keyword():
+    """Node inputs may now be named, not just positional."""
+    txt = R_make_txt(P, word="hi")
+
+    by_position, _ = R_to_upper(P, txt, n=1)
+    by_keyword, _ = R_to_upper(P, txt=txt, n=1)
+    mixed_order, _ = R_to_upper(P, n=1, txt=txt)
+
+    assert by_position is by_keyword is mixed_order
+
+
+def test_node_input_duplicate_positional_and_keyword_raises():
+    """Supplying the same Node input both positionally and by name must fail."""
+    txt = R_make_txt(P, word="hi")
+    with pytest.raises(TypeError, match="multiple values for argument 'txt'"):
+        R_to_upper(P, txt, txt=txt, n=1)
+
+
+def test_mixed_input_accepted_by_keyword(tmp_path):
+    """A mixed Node/value input may be named too, for either arm."""
+
+    @command("printf %s {source} > {txt}")
+    def consume(source: Txt | str | None = None):
+        txt = output(Txt)
+        return txt
+
+    pipeline = Pipeline(DAG(tmp_path))
+    txt_node = R_make_txt(pipeline, word="hi")
+
+    node_by_position = consume(pipeline, txt_node)
+    node_by_keyword = consume(pipeline, source=txt_node)
+    value_by_position = consume(pipeline, "external")
+    value_by_keyword = consume(pipeline, source="external")
+
+    assert node_by_position is node_by_keyword
+    assert value_by_position is value_by_keyword
 
 
 def test_subtype_accepted():
