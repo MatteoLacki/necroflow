@@ -150,10 +150,10 @@ compiled, the resulting FASTQ is a parent Node.
 
 ## 4. Inputs and configuration are validated
 
-The rule validates positional Node inputs against declared NodeTypes and config
-values against their declared Python types. A fixed mixed union is also
-positional: a Node selects its NodeType arm, while any other value selects a
-matching non-Node arm. Decorated command rules derive scalar/config and mixed
+The rule validates Node inputs (positional or by name) against declared
+NodeTypes and config values against their declared Python types. A fixed mixed
+union works the same way: a Node selects its NodeType arm, while any other
+value selects a matching non-Node arm. Decorated command rules derive scalar/config and mixed
 value defaults from their Python signature; explicit Rule and factory
 construction use ``input_defaults``. Rule construction rejects unknown or
 wrongly typed defaults, defaults on pure fixed or variadic Node inputs, managed
@@ -163,20 +163,26 @@ parameter fails while the decorator constructs the Rule, even when no command
 placeholder references it. Return annotations remain optional and do not
 declare outputs.
 
-At call time, omitted trailing mixed inputs receive their positional defaults;
-explicit keyword values separately overlay a fresh copy of config defaults.
-These effective values are then used for presence/type validation and output
-compilation. Keywords outside the declared scalar/config inputs fail before
-fingerprinting or DAG interning. Mixed inputs remain positional even when their
-runtime value is plain. The caller's ``args`` and ``kwargs`` are not mutated.
+At call time, `Rule.__call__` binds `args`/`kwargs` against an `inspect.Signature`
+built once per Rule from its declared schema: Node, variadic, and mixed inputs
+are `POSITIONAL_OR_KEYWORD`, and plain config inputs stay `KEYWORD_ONLY`. Every
+input may therefore be supplied positionally or by name — `consume(P, value)`
+and `consume(P, source=value)` bind identically — while `bind()`/`apply_defaults()`
+supply presence, duplicate, and defaulting checks with ordinary Python calling
+semantics. The bound values are then read back out in the Rule's fixed
+declaration order (not the order the caller wrote them), so call syntax never
+affects fingerprinting: a keyword call and the equivalent positional call
+produce byte-identical `NamedValues`/provenance input. Keywords outside the
+declared schema fail before fingerprinting or DAG interning. The caller's
+``args`` and ``kwargs`` are not mutated.
 
 `Rule.__call__` coordinates the phases through focused methods:
 
 ```python
 self._validate_pipeline(pipeline)
-args = self._effective_positional_inputs(args)
-config = self._effective_config(kwargs)
-self._validate_input_presence(args, config)
+bound = self._bind_call(args, kwargs)
+args = tuple(bound[name] for name, _contract in self._pos_inputs)
+config = {name: bound[name] for name in self._kw_inputs}
 self._validate_positional_inputs(pipeline, args)
 self._validate_config_values(config)
 nodes = self._compile_outputs(pipeline, args, config)

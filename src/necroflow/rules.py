@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import namedtuple
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+import inspect
 import re
 from types import UnionType
 from string import Formatter
@@ -294,6 +295,7 @@ class Rule(Generic[_ReturnT]):
             input_defaults, contracts
         )
         self._validate_config_values(self._input_defaults)
+        self._signature = self._build_signature()
         reserved = BUILTIN_COMMAND_PLACEHOLDERS & (
             set(inputs.specs) | set(outputs.specs)
         )
@@ -388,6 +390,31 @@ class Rule(Generic[_ReturnT]):
                 )
         return config_defaults, positional_defaults
 
+    def _build_signature(self) -> inspect.Signature:
+        """Build the args/kwargs signature that ``__call__`` binds against.
+
+        Node/mixed positional inputs become ``POSITIONAL_OR_KEYWORD`` so a
+        caller may name them; plain config inputs stay ``KEYWORD_ONLY``,
+        matching their existing call-site behavior.
+        """
+        params = [
+            inspect.Parameter(
+                name,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                default=self._pos_input_defaults.get(name, inspect.Parameter.empty),
+            )
+            for name, _contract in self._pos_inputs
+        ]
+        params += [
+            inspect.Parameter(
+                name,
+                inspect.Parameter.KEYWORD_ONLY,
+                default=self._input_defaults.get(name, inspect.Parameter.empty),
+            )
+            for name in self._kw_inputs
+        ]
+        return inspect.Signature(params)
+
     @staticmethod
     def _validate_repeat(repeat: int) -> int:
         """Return a valid positive attempt count or raise immediately."""
@@ -450,30 +477,6 @@ class Rule(Generic[_ReturnT]):
                 f"{self.__name__}: first argument must be the owning Pipeline, "
                 f"got {type(pipeline).__name__}"
             )
-
-    def _validate_input_presence(
-        self, args: tuple[Any, ...], kwargs: dict[str, Any]
-    ) -> None:
-        """Require all positional inputs and normalized config keys exactly once."""
-        name = self.__name__
-        if len(args) < len(self._pos_inputs):
-            missing = [
-                pname
-                for pname, _ in self._pos_inputs[len(args) :]
-                if pname not in self._pos_input_defaults
-            ]
-            raise TypeError(f"{name}: missing required inputs: {missing!r}")
-        if len(args) > len(self._pos_inputs):
-            raise TypeError(
-                f"{name}: too many positional inputs: "
-                f"expected {len(self._pos_inputs)}, got {len(args)}"
-            )
-        unexpected_kw = [kname for kname in kwargs if kname not in self._kw_inputs]
-        if unexpected_kw:
-            raise TypeError(f"{name}: unexpected inputs: {unexpected_kw!r}")
-        missing_kw = [kname for kname in self._kw_inputs if kname not in kwargs]
-        if missing_kw:
-            raise TypeError(f"{name}: missing required inputs: {missing_kw!r}")
 
     def _validate_positional_inputs(self, pipeline, args: tuple[Any, ...]) -> None:
         """Validate positional Node, variadic, and hybrid values."""
@@ -549,20 +552,16 @@ class Rule(Generic[_ReturnT]):
                     f"got {type(value).__name__!r}"
                 )
 
-    def _effective_config(self, kwargs: dict[str, Any]) -> dict[str, Any]:
-        """Return declared defaults overlaid with explicit call values."""
-        config = dict(self._input_defaults)
-        config.update(kwargs)
-        return config
-
-    def _effective_positional_inputs(self, args: tuple[Any, ...]) -> tuple[Any, ...]:
-        """Fill an omitted trailing hybrid input from its declared default."""
-        if len(args) >= len(self._pos_inputs):
-            return args
-        remaining = self._pos_inputs[len(args) :]
-        if not all(name in self._pos_input_defaults for name, _contract in remaining):
-            return args
-        return args + tuple(self._pos_input_defaults[name] for name, _ in remaining)
+    def _bind_call(
+        self, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Bind call args/kwargs against the declared schema like a normal function call."""
+        try:
+            bound = self._signature.bind(*args, **kwargs)
+        except TypeError as exc:
+            raise TypeError(f"{self.__name__}: {exc}") from exc
+        bound.apply_defaults()
+        return bound.arguments
 
     def _compile_outputs(
         self, pipeline, args: tuple[Any, ...], config: dict[str, Any]
@@ -598,9 +597,9 @@ class Rule(Generic[_ReturnT]):
         """Validate one invocation and return its canonical output Nodes."""
         self._validate_pipeline(pipeline)
         pipeline._assert_open()
-        args = self._effective_positional_inputs(args)
-        config = self._effective_config(kwargs)
-        self._validate_input_presence(args, config)
+        bound = self._bind_call(args, kwargs)
+        args = tuple(bound[name] for name, _contract in self._pos_inputs)
+        config = {name: bound[name] for name in self._kw_inputs}
         self._validate_positional_inputs(pipeline, args)
         self._validate_config_values(config)
         nodes = self._compile_outputs(pipeline, args, config)

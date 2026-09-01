@@ -106,12 +106,13 @@ canonical value and positional input order directly to provenance. Consequently,
 an external filename passed as `str` is fingerprinted by that string; necroflow
 does not track or hash the external file's contents.
 
-Mixed inputs are positional even when the selected value is plain. Call
-`consume(P, value)`, not `consume(P, source=value)`. In `CommandArgs`, the value
-remains under `args.inputs.source`: managed Nodes resolve to `Path`; plain values
-remain unchanged. Static command templates stringify and shell-quote the selected
-value with the normal substitution policy. In particular, `None` renders as the
-literal `None`; use a Python command callback when absence should omit an argument.
+Mixed inputs may be passed positionally or by keyword, whichever value arm is
+selected: `consume(P, value)` and `consume(P, source=value)` intern to the same
+call. In `CommandArgs`, the value remains under `args.inputs.source`: managed
+Nodes resolve to `Path`; plain values remain unchanged. Static command templates
+stringify and shell-quote the selected value with the normal substitution
+policy. In particular, `None` renders as the literal `None`; use a Python
+command callback when absence should omit an argument.
 
 Mixed element unions inside variadic tuples, such as
 `tuple[Bam | str, ...]`, remain invalid. Variadic inputs model only ordered Node

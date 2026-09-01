@@ -109,6 +109,16 @@ def test_decorated_rule_accepts_variadic_tuple(tmp_path):
     assert result.parents == [first]
 
 
+def test_decorated_rule_accepts_variadic_tuple_by_keyword(tmp_path):
+    pipeline = Pipeline(DAG(tmp_path))
+    first = _source(pipeline, "first")
+
+    by_position = decorated_merge(pipeline, (first,))
+    by_keyword = decorated_merge(pipeline, bams=(first,))
+
+    assert by_position is by_keyword
+
+
 def test_variadic_static_command_quotes_each_path_independently(tmp_path):
     pipeline = Pipeline(DAG(tmp_path / "root with spaces"))
     first = _source(pipeline, "first")
