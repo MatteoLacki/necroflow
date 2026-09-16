@@ -5,9 +5,10 @@ import subprocess
 
 import pytest
 
+from necroflow.containers import docker_argv
+
 from compare import compare_quant
-from containers import docker_argv, images, run_container
-from pipeline import build
+from pipeline import build, load_job
 from prepare import subset_pair
 
 
@@ -49,9 +50,9 @@ def test_shared_index_and_image_provenance(workspace):
     """A tool image changes its consumers' identity, without invalidating other branches."""
     before, selected = build(workspace)
     assert len([c for c in before.calls.values() if c.rule.__name__ == "index"]) == 1
-    pins = copy.deepcopy(images())
-    pins["fastqc"]["image"] = "example/fastqc@sha256:" + "0" * 64
-    after, changed = build(workspace, pins)
+    job = copy.deepcopy(load_job())
+    job["images"]["fastqc"]["image"] = "example/fastqc@sha256:" + "0" * 64
+    after, changed = build(workspace, job)
     for sample in ("ggal_gut", "ggal_liver"):
         assert (
             selected[f"fastqc/{sample}"].relative_path
@@ -68,17 +69,23 @@ def test_docker_path_arguments_and_failure(workspace, monkeypatch):
     """Host paths survive spaces and a failed container remains a failed task."""
     dag, selected = build(workspace)
     call = selected["fastqc/ggal_gut"].rule_call
-    argv = docker_argv(call, workspace)
-    assert argv[argv.index("--workdir") + 1] == str(call.workdir)
-    assert f"type=bind,src={workspace},dst={workspace},readonly" in argv
+    argv = docker_argv(call, call.container, call.resolve())
+    assert f"--workdir={call.workdir}" in argv
+    reads = workspace / "data" / "short" / "ggal_gut_1.fq"
+    read_node = call.inputs["r1"]
+    read_node.path.parent.mkdir(parents=True)
+    read_node.path.symlink_to(reads)
+    argv = docker_argv(call, call.container, call.resolve())
+    assert f"type=bind,src={reads},dst={read_node.path},readonly" in argv
     assert "'" in argv[-1]  # Paths are quoted inside the container's shell too.
+    assert "--network=none" in argv
 
     def fail(command, **kwargs):
         raise subprocess.CalledProcessError(7, command)
 
     monkeypatch.setattr(subprocess, "run", fail)
     with pytest.raises(subprocess.CalledProcessError) as error:
-        run_container(call, call.log_path(), root=workspace)
+        call.run(call.log_path())
     assert error.value.returncode == 7
 
 
@@ -98,7 +105,8 @@ def test_input_import_stays_on_host(workspace):
     """Input symlink rules must work without Docker, including paths with spaces."""
     dag, _ = build(workspace)
     call = next(c for c in dag.calls.values() if c.rule.__name__ == "reference")
-    run_container(call, call.log_path(), root=workspace)
+    assert call.container is None
+    call.run(call.log_path())
     assert call.outputs[0].path.is_symlink()
     assert call.outputs[0].path.read_text() == ">transcript\nACGT\n"
 

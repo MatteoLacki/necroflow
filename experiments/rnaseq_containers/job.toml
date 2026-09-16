@@ -1,0 +1,28 @@
+# Container settings shared by every scientific rule.
+[docker]
+platform = "linux/amd64"
+run_args = [
+    "--rm",
+    "--init",
+    "--pull=never",  # `make setup` pulls and verifies images first
+    "--user={uid}:{gid}",
+    "--env=HOME=/tmp",
+    "--network=none",
+    "--cpus=1",
+    "--memory=2g",
+]
+
+[images.fastqc]
+version = "0.12.1"
+tag = "0.12.1--hdfd78af_0"
+image = "quay.io/biocontainers/fastqc@sha256:e194048df39c3145d9b4e0a14f4da20b59d59250465b6f2a9cb698445fd45900"
+
+[images.salmon]
+version = "1.10.3"
+tag = "1.10.3--h45fbf2d_5"
+image = "quay.io/biocontainers/salmon@sha256:3938cc6dfaca6f7ee14eac0cdc0f305fdff8faa7f14541c72e684feb1b443a74"
+
+[images.multiqc]
+version = "1.27.1"
+tag = "1.27.1--pyhdfd78af_0"
+image = "quay.io/biocontainers/multiqc@sha256:e8821df086710ff4fe535814e70eb6390d4685dd6e962fc743bff58b35b0e603"

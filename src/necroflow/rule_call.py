@@ -13,6 +13,12 @@ from typing import Any, TYPE_CHECKING
 
 import tomlkit
 
+from necroflow.containers import (
+    CONTAINER_POLICY,
+    Docker,
+    docker_argv,
+    split_prefix,
+)
 from necroflow.contexts import CommandArgs, NamedValues
 from necroflow.fingerprints import (
     IDENTITY_FORMAT,
@@ -100,6 +106,7 @@ class RuleCall:
     provenance_hash: str = field(init=False)
     relative_path: Path = field(init=False)
     _realized_command: str | None = None
+    _container_input: str | None = None
 
     def __post_init__(self) -> None:
         # Cached once: read in hot graph-traversal loops via
@@ -173,13 +180,16 @@ class RuleCall:
 
     def compute_provenance_hash(self, rule_hash: str) -> str:
         """Hash config, execution context, parent lineage, and mixed values."""
+        execution_context: dict[str, Any] = {}
+        if self.shellpath is not None:
+            execution_context["shellpath"] = self.shellpath
+        if self.rule.container_capable:
+            execution_context["container_policy"] = CONTAINER_POLICY
         identity = {
             "domain": PROVENANCE_HASH_DOMAIN,
             "rule_hash": rule_hash,
             "config": self.config,
-            "execution_context": (
-                {"shellpath": self.shellpath} if self.shellpath is not None else {}
-            ),
+            "execution_context": execution_context,
             "parents": self._parent_identity(),
         }
         if self.input_values:
@@ -228,6 +238,11 @@ class RuleCall:
                     f"rule {self.rule.__name__!r} has neither a command nor a "
                     "materializer"
                 )
+            container = self.container
+            if container is not None:
+                argv = docker_argv(self, container, command)
+                subprocess.run(argv, check=True, stdout=log, stderr=log)
+                return
             options = {
                 "shell": True,
                 "check": True,
@@ -237,6 +252,14 @@ class RuleCall:
             if self.shellpath is not None:
                 options["executable"] = self.shellpath
             subprocess.run(command, **options)
+
+    @property
+    def container(self) -> Docker | None:
+        """Return the Docker settings selected by the resolved command, if any."""
+        self.resolve()
+        if self._container_input is None:
+            return None
+        return self.config[self._container_input]
 
     @property
     def is_compromised(self) -> bool:
@@ -336,6 +359,8 @@ class RuleCall:
             ]
         if self.shellpath is not None:
             data["execution"] = {"shellpath": self.shellpath}
+        if self.container is not None:
+            data.setdefault("execution", {})["container_input"] = self._container_input
         if self.command is not None:
             command_data = {
                 "kind": "python" if callable(self.command) else "shell",
@@ -408,8 +433,14 @@ class RuleCall:
                     f"Python command callback {self.command.__qualname__!r} must return "
                     f"a non-empty shell string, got {result!r}"
                 )
-            self._realized_command = result
-            return result
+            self._container_input, body = split_prefix(result, self.rule.docker_inputs)
+            if not body.strip():
+                raise TypeError(
+                    f"Python command callback {self.command.__qualname__!r} returned "
+                    "an empty container command body"
+                )
+            self._realized_command = body
+            return body
         command_inputs = self.command_args().inputs
         substitutions: dict[str, Any] = {
             name: _ShellArguments(value) if isinstance(value, tuple) else value
@@ -432,5 +463,8 @@ class RuleCall:
             key: _quote_command_substitution(value)
             for key, value in substitutions.items()
         }
-        self._realized_command = self.command.format(**quoted)
+        self._container_input, template = split_prefix(
+            self.command, self.rule.docker_inputs
+        )
+        self._realized_command = template.format(**quoted)
         return self._realized_command

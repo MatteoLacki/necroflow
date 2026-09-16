@@ -154,6 +154,8 @@ Resources remain reserved across retries.
 
 `rule_call_runner(call, log_path)` executes one complete call. The default is `RuleCall.run(log_path)`, which invokes a Python materializer or realizes and runs one shell command. Output and error go to `<workdir>/.rip/job.log`.
 
+When the realized command selects a `Docker` input (see [Docker execution](rules.md#docker-execution)), `RuleCall.run` launches `docker run` with argv from `necroflow.containers.docker_argv` instead of a host shell. Exit codes, retries, logs, and missing-output checks are unchanged. Cached calls launch nothing and pull nothing. A custom `rule_call_runner` owns whatever it replaces, including container launch.
+
 `repeat=N` permits at most N command attempts within one scheduler submission. Only `subprocess.CalledProcessError` retries. Materializer errors, missing outputs, runner bugs, and metadata errors do not.
 
 ## Successful completion

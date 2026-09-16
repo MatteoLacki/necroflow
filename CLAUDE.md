@@ -14,7 +14,7 @@ disagrees with the code, the code wins (and this file should be fixed).
 |---|---|
 | Compact map of the whole feature surface | `features.txt` |
 | Recent / agent-relevant feature notes | `AI.md` |
-| Rules, typed outputs, subtypes, conditional pipelines, subpipelines | `docs/rules.md` |
+| Rules, typed outputs, subtypes, conditional pipelines, subpipelines, Docker execution | `docs/rules.md` |
 | Executor, classification, scheduling, resources, failure handling, autoclean | `docs/executor.md` |
 | Output layout, `.rip/` metadata, caching, STALE detection | `docs/caching.md` |
 | CLI flags and subcommands (`run`, `graph`, `outputs`, `provenance`, `doctor`, `explain`, `gc`) | `docs/cli.md` |
@@ -179,6 +179,7 @@ src/necroflow/
   nodes.py           — Node, NodeType, topo sort
   rule_call.py       — concrete invocation, RuleCallState, shared identity and metadata
   contexts.py        — immutable NamedValues and CommandArgs public views
+  containers.py      — Docker config value, `{env}:` command prefix, docker run argv
   fingerprints.py    — canonical v4 rule/provenance hashes and callable AST identity
   rules.py           — Rule internals plus command, text-file, and symlink-file declarations,
                        parse_resource with SI/binary suffixes

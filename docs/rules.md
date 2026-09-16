@@ -208,6 +208,58 @@ source-file lambdas accepting exactly one argument. Their canonical AST and
 the running Python implementation/version participate in the default
 fingerprint.
 
+## Docker execution
+
+A rule runs its command in Docker when the command starts with `{name}:` and
+`name` is an input annotated exactly `Docker`. The image is ordinary config,
+usually read from the job TOML:
+
+```toml
+[images.salmon]
+image    = "quay.io/biocontainers/salmon@sha256:..."
+platform = "linux/amd64"
+# run_args = [...]   # optional; replaces Docker.DEFAULT_RUN_ARGS entirely
+```
+
+```python
+from necroflow import Docker, command, output
+
+@command("{env}:salmon index --threads {threads} -t {fasta} -i {index}", threads=1)
+def index(fasta: Reference, env: Docker):
+    index = output(Index)
+    return index
+
+def pipeline(p, cfg):
+    salmon = Docker(**cfg["images"]["salmon"])
+    p.index = index(p, p.fasta, env=salmon)
+```
+
+`Docker(image, platform, run_args=Docker.DEFAULT_RUN_ARGS)` is a read-only
+mapping. It requires a `@sha256:` digest and a platform, and never contacts
+Docker. Because it is config, image, platform, and run args enter the provenance
+of the consumer and its descendants; changing any of them yields new paths, and
+switching back reuses the old ones. The defaults are
+`--rm --init --pull=missing --user={uid}:{gid} --env=HOME=/tmp`. `{uid}` and
+`{gid}` are expanded only at launch, so identities do not depend on the user.
+
+Prefix rules:
+
+- A leading `{x}:` whose `x` is not a `Docker` input is left unchanged.
+- A `Docker` input without a prefix is plain config; the command runs on the host.
+- Python callbacks select Docker by returning the literal prefix, e.g.
+  `return "{env}:" + body`. The remainder is not formatted again.
+- The prefix covers the complete shell command, including pipes and redirections.
+  The container shell is `/bin/sh -c`; `shellpath` applies to host commands only.
+  Multi-line commands that should stop on the first error need `set -e`.
+
+Framework-owned `docker run` arguments follow the user run args and cannot be
+overridden: `--platform`, one read-only bind per Node input at its node-store path
+(sourced from the resolved path, so a symlinked input exposes only its target),
+a writable bind of the call workdir used as `--workdir`, and
+`--entrypoint=/bin/sh`. Plain config values never create mounts. Directory inputs
+containing symlinks that point outside the directory are unsupported. Paths
+containing `,`, `"`, or newlines are rejected.
+
 ## Declaring rule outputs
 
 Import `output` with the decorator and bind every output to a real local name:

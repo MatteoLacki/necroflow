@@ -18,6 +18,7 @@ from typing import (
     get_origin,
 )
 
+from necroflow.containers import docker_input_names, split_prefix
 from necroflow.contexts import NamedValues
 from necroflow.nodes import Node, NodeType, _is_nodetype
 from necroflow.fingerprints import validate_command_callback
@@ -314,10 +315,20 @@ class Rule(Generic[_ReturnT]):
                 f"Rule {name!r}: argv list commands are unsupported; "
                 "use a shell string or a Python callback returning a shell string"
             )
+        self.docker_inputs = docker_input_names(inputs.specs)
+        container_input = None
         if callable(command):
             validate_command_callback(command)
         elif command is not None:
             self._validate_command(name, inputs, outputs, command, self.constraints)
+            container_input, body = split_prefix(command, self.docker_inputs)
+            if container_input is not None and not body.strip():
+                raise ValueError(f"Rule {name!r}: container command body is empty")
+        # Callbacks may select a Docker input only once they run, so any
+        # callback with a Docker input must carry the container policy.
+        self.container_capable = container_input is not None or bool(
+            callable(command) and self.docker_inputs
+        )
 
     @staticmethod
     def _validate_outputs(name: str, outputs: Outputs) -> None:

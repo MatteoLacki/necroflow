@@ -5,11 +5,18 @@ import re
 import shlex
 import shutil
 import time
+import tomllib
 from dataclasses import asdict
+from pathlib import Path
 
-from necroflow import DAG, NodeType, Pipeline, command, output
+from necroflow import DAG, Docker, NodeType, Pipeline, command, output
 
-from containers import CONTAINER_POLICY, ROOT, images, run_container
+ROOT = Path(__file__).resolve().parent
+
+
+def load_job(root=ROOT):
+    """Return image pins and shared Docker settings from the job TOML."""
+    return tomllib.loads((root / "job.toml").read_text())
 
 
 class Read1(NodeType):
@@ -72,8 +79,12 @@ def report_config(path: str):
     return config
 
 
-@command("salmon index --threads 1 -t {fasta} -i {index}", threads=1, ram="2Gi")
-def index(fasta: Reference, image: str, container_policy: int):
+@command(
+    "{env}:salmon index --threads {threads} -t {fasta} -i {index}",
+    threads=1,
+    ram="2Gi",
+)
+def index(fasta: Reference, env: Docker):
     index = output(Index)
     return index
 
@@ -81,8 +92,9 @@ def index(fasta: Reference, image: str, container_policy: int):
 def fastqc_command(args):
     sample = args.config.sample
     r1, r2 = f"{sample}_1.fq", f"{sample}_2.fq"
-    return "\n".join(
+    return "{env}:" + "\n".join(
         [
+            "set -eu",
             f"ln -sf {shlex.quote(str(args.inputs.r1))} {shlex.quote(r1)}",
             f"ln -sf {shlex.quote(str(args.inputs.r2))} {shlex.quote(r2)}",
             f"mkdir -p {shlex.quote(str(args.outputs.qc))}",
@@ -92,25 +104,24 @@ def fastqc_command(args):
 
 
 @command(fastqc_command, threads=1, ram="2Gi")
-def fastqc(r1: Read1, r2: Read2, sample: str, image: str, container_policy: int):
+def fastqc(r1: Read1, r2: Read2, sample: str, env: Docker):
     qc = output(FastQC)
     return qc
 
 
 @command(
-    "salmon quant --threads 1 --libType=U -i {index} -1 {r1} -2 {r2} -o {quant}",
+    "{env}:salmon quant --threads {threads} --libType=U "
+    "-i {index} -1 {r1} -2 {r2} -o {quant}",
     threads=1,
     ram="2Gi",
 )
-def quantify(
-    index: Index, r1: Read1, r2: Read2, sample: str, image: str, container_policy: int
-):
+def quantify(index: Index, r1: Read1, r2: Read2, sample: str, env: Docker):
     quant = output(Quant)
     return quant
 
 
 def multiqc_command(args):
-    commands = []
+    commands = ["set -eu"]
     staged = []
     for sample, qc, quant in zip(
         args.config.samples,
@@ -126,7 +137,7 @@ def multiqc_command(args):
         'echo "custom_logo: $PWD/nextflow_logo.png" >> multiqc_config.yaml',
         f"multiqc --force -n multiqc_report.html -o {shlex.quote(str(args.outputs.report))} {' '.join(staged)}",
     ]
-    return "\n".join(commands)
+    return "{env}:" + "\n".join(commands)
 
 
 @command(multiqc_command, threads=1, ram="2Gi")
@@ -134,22 +145,25 @@ def multiqc(
     reports: tuple[ReportInput, ...],
     config: ReportConfig,
     samples: tuple[str, ...],
-    image: str,
-    container_policy: int,
+    env: Docker,
 ):
     report = output(Report)
     return report
 
 
-def build(root=ROOT, image_pins=None):
+def build(root=ROOT, job=None):
     """Discover pairs using Python and share a single canonical index."""
-    pins = images() if image_pins is None else image_pins
+    job = load_job() if job is None else job
     data = root / "data" / "short"
     dag = DAG(root / "work" / "necroflow" / "nodes")
     p = Pipeline(dag)
+    docker = job["docker"]
     env = lambda tool: {
-        "image": pins[tool]["image"],
-        "container_policy": CONTAINER_POLICY,
+        "env": Docker(
+            job["images"][tool]["image"],
+            platform=docker["platform"],
+            run_args=docker["run_args"],
+        )
     }
     fasta = reference(p, path=str(data / "reference.fa"))
     shared_index = index(p, fasta, **env("salmon"))
@@ -184,9 +198,7 @@ def build(root=ROOT, image_pins=None):
 def main():
     start = time.monotonic()
     dag, selected = build()
-    report = dag.run(
-        resource_caps={"threads": 2, "ram": 4 * 1024**3}, rule_call_runner=run_container
-    )
+    report = dag.run(resource_caps={"threads": 2, "ram": 4 * 1024**3})
     destination = ROOT / "results" / "necroflow"
     destination.mkdir(parents=True, exist_ok=True)
     for name, node in selected.items():

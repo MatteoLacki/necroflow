@@ -1,5 +1,6 @@
 __version__ = "0.0.7"
 
+from necroflow.containers import Docker
 from necroflow.dag import DAG
 from necroflow.nodes import Node, NodeType
 from necroflow.rules import (
@@ -23,6 +24,7 @@ from necroflow.contexts import CommandArgs, NamedValues
 
 __all__ = [
     "__version__",
+    "Docker",
     "Node",
     "RuleCall",
     "RuleCallState",

@@ -67,6 +67,13 @@ directories are not probed, migrated, or reused.
 
 During path resolution, necroflow validates generated paths against the filesystem's `NAME_MAX` and `PATH_MAX` limits. If a rule name, filename, output directory, or complete generated path would exceed those limits, path resolution fails before execution starts.
 
+Rules that may run in Docker (a `{env}:` template prefix, or a callback with a
+`Docker` input) add a `container_policy` version to the provenance execution
+context. It is bumped when framework-owned launch semantics change. Host-only
+calls keep their payload unchanged. `dependencies.toml` records the selected
+input as `execution.container_input`; the Docker settings appear under `config`.
+Removing a local Docker image invalidates nothing.
+
 ### Rule work directories
 
 Commands may use the built-in `{workdir}` placeholder to refer to the rule-call

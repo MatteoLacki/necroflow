@@ -183,6 +183,13 @@ Package version is exposed as `necroflow.__version__`; `pyproject.toml` reads it
 
 Rule constraints can be interpolated into command templates. `{threads}` always resolves: it uses the declared `threads` constraint or defaults to `1`. Other direct placeholders, such as `{ram}` or `{gpu}`, are allowed only when that constraint is declared. `{constraint:name}` forces a constraint lookup and is useful when a normal config input has the same name, e.g. `{threads}` can remain the config value while `{constraint:threads}` is the scheduler thread requirement. Command-facing values are raw declared constraint values (`"32Gi"` stays `"32Gi"`); executor resource accounting still uses parsed integer values via `Rule.resources`.
 
+## Docker execution
+
+`{env}:` at the start of a command runs it in Docker when `env` is annotated
+`Docker`; callbacks return the literal prefix. `Docker` is read-only config, so
+image, platform, and run args are lineage. See `docs/rules.md#docker-execution`.
+Docker is the only runtime; Podman/Apptainer are not implemented.
+
 ## Shellpath
 
 `Pipeline(..., shellpath=PATH)` and CLI `--shellpath PATH` choose the executable

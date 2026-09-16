@@ -53,7 +53,12 @@ necroflow
 │   ├── escaped literal shell braces via {{...}}
 │   ├── static shell templates
 │   ├── Python callbacks receiving resolved CommandArgs
-│   └── configurable shellpath
+│   ├── configurable shellpath
+│   └── Docker execution via leading {env}: prefix
+│       ├── Docker(image@sha256, platform, run_args) config value
+│       ├── overridable default run args; {uid}/{gid} expanded at launch
+│       ├── read-only input binds at node paths, writable workdir
+│       └── container_policy in provenance of container-capable rules
 │
 ├── Caching and paths
 │   ├── content-addressed node paths

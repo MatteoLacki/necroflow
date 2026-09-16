@@ -242,7 +242,10 @@ config or DAG.
 
 It then hashes one configured invocation into `provenance_hash` from the local
 `rule_hash`, effective config, selected shell, ordered parent identities, and
-any named mixed plain values.
+any named mixed plain values. Container-capable rules (`Rule.container_capable`:
+a `{name}:` template prefix naming a `Docker` input, or a callback with a `Docker`
+input) also add `container_policy` to the execution context; `Docker` values
+themselves are ordinary config.
 The framework-owned hasher reads those values directly from the freshly built
 `RuleCall`, before output paths are resolved. Constraints and `repeat` are not
 identity inputs and are never passed through an intermediate fingerprint view.
@@ -454,7 +457,7 @@ Planning begins inside `dag.run()` under the node-store lock. It converts reques
 
 Missing and stale RuleCalls become ready after every parent call is up to date. Default FIFO ordering follows canonical RuleCall registration. Custom schedulers receive ready calls, remaining calls, and available resource capacity. Executor retains dependency gates, resource admission, submission, retries, and state transitions.
 
-One submission runs one complete RuleCall. The default runner delegates to `RuleCall.run(log_path)`; callable command realization happens there and is cached on the canonical call. The runner must produce every declared output.
+One submission runs one complete RuleCall. The default runner delegates to `RuleCall.run(log_path)`; callable command realization happens there and is cached on the canonical call. Realization also strips a leading `{name}:` Docker prefix; `RuleCall.container` then returns the selected `Docker` value and `RuleCall.run` launches it with `docker run`. The runner must produce every declared output.
 
 ## 13. Materialization commits cache state
 

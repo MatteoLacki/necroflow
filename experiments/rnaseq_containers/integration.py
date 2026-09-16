@@ -1,18 +1,16 @@
 """Explicit Docker integration checks; run after `make compare`."""
 
 import csv
-import functools
 import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 
-from necroflow import DAG, NodeType, Pipeline, command, output
+from necroflow import DAG, Docker, NodeType, Pipeline, command, output
 
 from compare import main as compare_results
-from containers import CONTAINER_POLICY, ROOT, images, run_container
-from pipeline import build, main as run_pipeline
+from pipeline import ROOT, build, load_job, main as run_pipeline
 from prepare import nextflow
 
 
@@ -20,20 +18,20 @@ class Probe(NodeType):
     filename = "probe.txt"
 
 
-@command("printf hello > {probe}", threads=1)
-def success(image: str, container_policy: int):
+@command("{env}:printf hello > {probe}", threads=1)
+def success(env: Docker):
     probe = output(Probe)
     return probe
 
 
-@command("exit 7", threads=1)
-def failure(image: str, container_policy: int):
+@command("{env}:exit 7", threads=1)
+def failure(env: Docker):
     probe = output(Probe)
     return probe
 
 
-@command("true", threads=1)
-def missing(image: str, container_policy: int):
+@command("{env}:true", threads=1)
+def missing(env: Docker):
     probe = output(Probe)
     return probe
 
@@ -41,7 +39,13 @@ def missing(image: str, container_policy: int):
 def probe(rule, root):
     dag = DAG(root / rule.__name__)
     p = Pipeline(dag)
-    node = rule(p, image=images()["fastqc"]["image"], container_policy=CONTAINER_POLICY)
+    job = load_job()
+    env = Docker(
+        job["images"]["fastqc"]["image"],
+        platform=job["docker"]["platform"],
+        run_args=job["docker"]["run_args"],
+    )
+    node = rule(p, env=env)
     p.finish()
     dag.require([node])
     return dag, node
@@ -49,9 +53,7 @@ def probe(rule, root):
 
 def run_dag():
     dag, selected = build()
-    report = dag.run(
-        resource_caps={"threads": 2, "ram": 4 * 1024**3}, rule_call_runner=run_container
-    )
+    report = dag.run(resource_caps={"threads": 2, "ram": 4 * 1024**3})
     return report, selected
 
 
@@ -90,9 +92,8 @@ def main():
         prefix="container probe ", dir=ROOT / "work"
     ) as temporary:
         root = Path(temporary)
-        runner = functools.partial(run_container, root=root)
         dag, node = probe(success, root)
-        dag.run(rule_call_runner=runner)
+        dag.run()
         assert node.path.read_text() == "hello"
         assert node.path.stat().st_uid == os.getuid()
         for rule, error in [
@@ -101,7 +102,7 @@ def main():
         ]:
             dag, node = probe(rule, root)
             try:
-                dag.run(rule_call_runner=runner)
+                dag.run()
             except error as exc:
                 if rule is failure:
                     assert exc.returncode == 7

@@ -11,7 +11,7 @@ import tarfile
 import time
 import urllib.request
 
-from containers import ROOT, images
+from pipeline import ROOT, load_job
 
 REFERENCE = "ggal_1_48850000_49020000.Ggal71.500bpflank.fa"
 SAMPLES = ("ggal_gut", "ggal_liver")
@@ -145,14 +145,16 @@ def setup():
     fetch(spec, executable)
     executable.chmod(0o755)
     versions = {}
-    for tool, spec in images().items():
+    job = load_job()
+    platform = job["docker"]["platform"]
+    for tool, spec in job["images"].items():
         image = spec["image"]
         found = subprocess.run(
             ["docker", "image", "inspect", image], capture_output=True
         )
         if found.returncode:
             subprocess.run(
-                ["docker", "pull", "--platform=linux/amd64", image], check=True
+                ["docker", "pull", f"--platform={platform}", image], check=True
             )
         info = json.loads(
             subprocess.check_output(["docker", "image", "inspect", image])
@@ -188,7 +190,7 @@ def setup():
 def nextflow():
     work = ROOT / "work" / "nextflow"
     work.mkdir(parents=True, exist_ok=True)
-    pins = images()
+    pins = load_job()["images"]
     # JSON string quoting also produces valid Groovy double-quoted strings here.
     quote = json.dumps
     config = work / "experiment.config"

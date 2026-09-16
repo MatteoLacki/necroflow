@@ -1,8 +1,9 @@
 # RNA-seq containers: Nextflow → Necroflow
 
 This experiment runs Necroflow as a normal host Python program. Each scientific
-RuleCall launches a separate Docker container. Nextflow runs the same small
-RNA-seq workflow and inputs for comparison. No Necroflow core changes are needed.
+RuleCall launches a separate Docker container through Necroflow's native
+`{env}:` command prefix. Nextflow runs the same small RNA-seq workflow and inputs
+for comparison.
 The repository's main Makefile is unchanged.
 
 ## Run
@@ -70,25 +71,26 @@ FastQC 0.12.1, Salmon 1.10.3, and MultiQC 1.27.1. Six additional lightweight hos
 rules expose reference, four read files, and report configuration as symlinks.
 `run.py` imports the definitions under a stable module name before execution.
 
-`containers.py` supplies the existing `rule_call_runner` hook. Rules carrying an
-`image` config value run in Docker; host input rules use `RuleCall.run`. The runner
-uses explicit argv, host UID/GID, no task network, one CPU and 2 GiB per container.
-The scheduler allows two tasks / 4 GiB total. The experiment tree is mounted at
-its original absolute path read-only, with only the current task directory mounted
-writable. This also makes input symlink targets visible. Each container gets a
-writable temporary HOME; logs go to the RuleCall's `.rip/job.log`.
+Scientific rules take `env: Docker` and start their commands with `{env}:`
+(the FastQC and MultiQC callbacks return that prefix literally, followed by
+`set -eu`). Plain `dag.run()` launches them in Docker; the six host input rules
+have no prefix and run on the host. `job.toml` holds the digest-pinned images and
+one shared `[docker]` table: platform `linux/amd64` and run args with host
+UID/GID, no task network, one CPU and 2 GiB per container, a temporary HOME, and
+`--pull=never` (`make setup` pulls and verifies images). The scheduler allows two
+tasks / 4 GiB total. Each Node input is bound read-only at its node-store path
+from its resolved target, and only the current task directory is writable. Logs go
+to the RuleCall's `.rip/job.log`.
 
-Each scientific rule receives its digest-pinned image through normal config, so
-image identity enters the existing provenance hash. Changing a tool digest changes
-that tool's call identity and downstream lineage. No mutable tags are executed.
-`CONTAINER_POLICY` is also hashed: bump it when changing runner execution semantics.
-This is explicit experiment policy, not automatic framework-wide environment hashing.
+Image, platform, and run args are ordinary config, so they enter provenance.
+Changing a tool digest changes that tool's call identity and downstream lineage.
+No mutable tags are executed.
 
 FastQC input filenames and MultiQC staging names match upstream names. MultiQC
 uses `--force` to permit reruns at Necroflow's stable workdir and scans only current
 staged inputs. Source and node paths remain absolute; moving the checkout changes
-input-path provenance. No cluster backend, remote Docker daemon, or Apptainer support
-is implemented. Cancellation/container cleanup under host interruption is untested.
+input-path provenance. No cluster backend, remote Docker daemon, Podman, or Apptainer
+support is implemented. Cancellation/container cleanup under host interruption is untested.
 
 ## Baseline and data provenance
 
@@ -97,7 +99,7 @@ revision `5c89d3859abbe54893d4e1ae0f21115dcebd9d1d`, Apache-2.0 upstream license
 Its workflow/modules are downloaded unchanged. Generated Nextflow config selects
 our per-tool images, resource limits, trace, and result paths. Nextflow 25.10.0 and
 upstream archive SHA-256 checksums live in `sources.json`; image digests/build tags
-live in `images.json`. Setup verifies actual container tool versions and architecture.
+live in `job.toml`. Setup verifies actual container tool versions and architecture.
 
 The upstream fixture has 2937 pairs per named sample and a 173,911-byte reference
 containing one sequence. Gut and liver fixture reads are byte-identical: these are
