@@ -123,28 +123,15 @@ Invalidators are evaluated when the owning RuleCall becomes classifiable. After 
 
 A RuleCall is the cache unit. Requesting any co-output activates, validates, hashes, retains, reports, and cleans every declared output together. Only requested Nodes are copied into visible `results/`.
 
-After success, each consumer records `consumed_sha256` for every immutable parent Node in `dependencies.toml`. Classification waits until parent calls settle, then compares recorded hashes with current parent bytes. Missing or malformed consumed hashes are stale. A rebuilt parent producing identical bytes preserves the consumer cache; changed bytes replay it.
+After success, each consumer records `consumed_sha256` for every parent Node in `dependencies.toml`. Classification waits until parent calls settle, then compares recorded hashes with current parent bytes. Missing or malformed consumed hashes are stale. A rebuilt parent producing identical bytes preserves the consumer cache; changed bytes replay it.
 
 Current hashes use `.rip/{filename}.hash` as an mtime-gated fast path. The stored digest is trusted when output mtime is no newer than hash-file mtime; otherwise current bytes are hashed. Hashes are memoized during one invocation. External edits preserving or backdating mtime are unsupported.
 
-### Mutable Rules
-
-Set `mutable=True` on a single-output Rule whose persistent state may change in place without external byte edits invalidating consumers:
-
-```python
-@command("update-db {db}", mutable=True)
-def update_db(...):
-    db = output(Database)
-    return db
-```
-
-Multiple outputs on a mutable Rule are rejected. Mutable calls remain normal graph, provenance, scheduling, and failure units. If a mutable parent executes during the current run, consumers replay. Missing, forced, compromised, invalidator-changed, and failed mutable parents retain normal propagation. External content-only changes are ignored.
-
-Autoclean never deletes mutable RuleCall workdirs. Necroflow provides no transaction or external-writer coordination.
+Persistent state that changes outside the DAG does not belong in a node workdir. A workdir is a function of its declared inputs, so any identity change gives a fresh empty one; state that must outlive that belongs outside the node store, passed in as a path.
 
 - Re-running with identical identity and unchanged evidence is a cache hit.
-- Changing upstream parameters, commands, contracts, or Rule mutability produces new paths.
-- ``.rip/dependencies.toml` stores both hashes, the exact canonical recipe payload, accumulated config, declared outputs, canonical parents, and immutable `consumed_sha256` values.
+- Changing upstream parameters, commands, or contracts produces new paths.
+- ``.rip/dependencies.toml` stores both hashes, the exact canonical recipe payload, accumulated config, declared outputs, canonical parents, and `consumed_sha256` values.
 - `.rip/{filename}.hash` stores each declared output SHA-256.
 - `.rip/state` stores call state (`running`, `up_to_date`, `failed`, or `interrupted`). A leftover or unknown non-success value compromises the whole call.
 

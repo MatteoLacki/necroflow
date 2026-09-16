@@ -131,10 +131,11 @@ These have been true since the June refactors and are load-bearing design decisi
   edge and enters provenance as a named canonical value along with positional input order. Only
   matching plain values may be defaults, and positional defaults must be trailing. Mixed variadic
   element unions remain unsupported.
-- **Mutable Rules ignore external content-only edits.** `Rule(..., mutable=True)` is allowed only
-  for a single-output RuleCall. Mutable parents retain identity, ordering, provenance, and failure
-  propagation. Rebuilding a mutable parent during the current run forces consumers to rerun; external
-  byte edits alone do not. Autoclean preserves mutable RuleCall state.
+- **Persistent external state does not belong in a workdir.** A workdir is a function of its
+  declared inputs, so any identity change gives a fresh empty one; state that must outlive that
+  lives outside the node store and is passed in as a path. A `mutable=True` Rule flag existed for
+  this until 2026-09-16 and was removed: it stopped external byte edits from staling consumers but
+  could not stop the workdir itself being discarded whenever identity moved.
 - **Variadic Node inputs retain groups.** `tuple[NodeType, ...]` accepts an ordered
   tuple, while `Annotated[tuple[NodeType, ...], Many(...)]` applies inclusive size
   bounds. RuleCall/fingerprint/command contexts retain named tuple groups;

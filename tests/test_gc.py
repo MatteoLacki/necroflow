@@ -32,13 +32,12 @@ CURRENT_PRODUCER = Rule(
 )
 
 
-def _run_cached_rule(nodes_dir, command="printf old > {result}", *, mutable=False):
+def _run_cached_rule(nodes_dir, command="printf old > {result}"):
     rule = Rule(
         "produce",
         Inputs(value=str),
         Outputs(result=Result),
         command,
-        mutable=mutable,
     )
     dag = DAG(nodes_dir)
     pipeline = Pipeline(dag)
@@ -101,18 +100,6 @@ def test_gc_yes_deletes_cache_from_obsolete_rule(tmp_path, capsys):
 
     assert not obsolete_call.exists()
     assert str(obsolete_call) in capsys.readouterr().out
-
-
-def test_gc_never_deletes_obsolete_mutable_state(tmp_path, capsys):
-    nodes_dir = tmp_path / "nodes"
-    mutable_call = _run_cached_rule(nodes_dir, mutable=True)
-    scope = tmp_path / "gc_rules.py"
-    _write_gc_scope(scope)
-
-    _gc(nodes_dir, scope, "-y")
-
-    assert mutable_call.exists()
-    assert "Protected mutable state: 1" in capsys.readouterr().out
 
 
 def test_gc_recursively_deletes_descendants_of_obsolete_rules(tmp_path):

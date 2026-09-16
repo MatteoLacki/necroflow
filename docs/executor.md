@@ -35,7 +35,7 @@ If any declared output is missing, the whole call is `MISSING`. Exit zero with a
 
 Planning starts from `dag.required_nodes`, converts each Node to its RuleCall, then follows `parent_calls`. Active calls retain canonical DAG registration order.
 
-Compiled calls outside this closure are inactive. Existing inactive workdirs are `ORPHAN`; absent inactive calls remain unclassified. Orphans run never. With `autoclean=True`, their whole non-mutable workdirs may be removed.
+Compiled calls outside this closure are inactive. Existing inactive workdirs are `ORPHAN`; absent inactive calls remain unclassified. Orphans run never. With `autoclean=True`, their whole workdirs may be removed.
 
 Identity uses `call.relative_path` and `node.relative_path`, never `id()`.
 
@@ -60,15 +60,14 @@ A `.rip/state` file containing anything except `up_to_date` is compromised. Miss
 
 ### Consumed parent hashes
 
-On success, `dependencies.toml` records every parent Node in declaration order. Immutable parents include:
+On success, `dependencies.toml` records every parent Node in declaration order:
 
 ```toml
 node_key = "producer/<provenance_hash>/out.txt"
-mutable = false
 consumed_sha256 = "<hash consumed by this call>"
 ```
 
-When classifying a consumer, Necroflow compares `consumed_sha256` with each immutable parent output current SHA-256. Missing, malformed, reordered, or mismatched parent metadata makes the consumer stale.
+When classifying a consumer, Necroflow compares `consumed_sha256` with each parent output current SHA-256. Missing, malformed, reordered, or mismatched parent metadata makes the consumer stale.
 
 This makes parent process history irrelevant. A parent rebuilt during this invocation but producing identical bytes leaves an immutable consumer cached. Different bytes replay it.
 
@@ -83,20 +82,6 @@ Necroflow trusts the stored hash only when output mtime is not newer than the ha
 Files hash their bytes. Directories hash sorted non-`.rip` relative paths plus file bytes.
 
 External edits that preserve or backdate output mtime are unsupported and can evade detection.
-
-### Mutable Rules
-
-Mutability is execution policy on Rule, not a NodeType annotation:
-
-```python
-@command("update-db {db}", mutable=True)
-def update_db(...):
-    ...
-```
-
-A mutable Rule must declare exactly one output. External byte changes to that output do not stale consumers. But if the mutable parent executes during the current run, all consumers replay, regardless of resulting hash. Missing, forced, compromised, invalidator-changed, and failed mutable parents retain normal propagation.
-
-This deliberately avoids supporting multiple mutable siblings or nondeterministic immutable outputs.
 
 ### Invalidators
 
@@ -206,13 +191,10 @@ With `keep_going=True`, independent branches continue. Final `ExceptionGroup` ca
 
 Descendants of calls that would run remain unknown until real parent bytes exist. CLI `explain` reports these calls with `state = null`, `will_run = null`, and reason `parent_will_run`. Explain nests output Nodes under each RuleCall.
 
-Mutable external content changes may appear as advisory `mutable_parent_content_ignored`; they do not alter state.
-
 ## Autoclean
 
 Cleanup is RuleCall-atomic:
 
-- mutable workdirs are never deleted;
 - requested calls and active final calls are protected;
 - orphan cleanup removes whole inactive workdirs;
 - after successful execution, an intermediate parent may be removed once all active consumers are up to date.
@@ -313,7 +295,6 @@ consumed:
 ```toml
 [[parents]]
 node_key = "source/<provenance_hash>/raw.txt"
-mutable = false
 consumed_sha256 = "<64 lowercase hexadecimal characters>"
 ```
 
@@ -356,12 +337,9 @@ checksum consumed SHA == rebuilt source SHA → cached
 report                                      → cached
 ```
 
-Process history alone does not invalidate immutable consumers. If source bytes
+Process history alone does not invalidate consumers. If source bytes
 change, `analyze` and `checksum` become stale. `report` waits for `analyze`, then
 reruns only when the resulting `data` bytes disagree with its consumed hash.
-
-For a mutable source, an external byte edit without source execution is ignored.
-Executing the mutable source during this run makes its consumers stale.
 
 If `analyze` fails, `report` becomes dependency-failed without submission and
 receives no execution event. With `keep_going=True`, independent `checksum` may

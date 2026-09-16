@@ -707,32 +707,6 @@ def test_autoclean_preserves_intermediate_when_cooutput_is_final(tmp_path):
     assert pipeline.c.path.exists()
 
 
-def test_autoclean_preserves_mutable_intermediate(tmp_path):
-    """Autoclean must never discard persistent mutable state after consumption."""
-
-    class MutableStore(NodeType):
-        filename = "state.sqlite3"
-
-    create = Rule(
-        "create_store",
-        Inputs(seed=str),
-        Outputs(store=MutableStore),
-        "touch {store}",
-        mutable=True,
-    )
-    consume = Rule(
-        "consume_store", Inputs(store=MutableStore), Outputs(b=B), "touch {b}"
-    )
-    pipeline = Pipeline(DAG(tmp_path))
-    pipeline.store = create(pipeline, seed="x")
-    pipeline.result = consume(pipeline, pipeline.store)
-
-    run_pipeline(pipeline, autoclean=True)
-
-    assert pipeline.store.path.exists()
-    assert pipeline.result.path.exists()
-
-
 def test_autoclean_false_leaves_orphan(tmp_path):
     P1 = Pipeline(DAG(tmp_path))
     P1.a = R_make_a(P1, x="x")

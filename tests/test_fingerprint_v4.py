@@ -51,43 +51,18 @@ def test_command_change_changes_rule_hash(tmp_path):
     assert first.rule_hash != second.rule_hash
 
 
-def test_output_mutability_changes_rule_hash(tmp_path):
-    class StatefulResult(NodeType):
-        filename = "state.sqlite3"
-
-    immutable_rule = Rule(
-        "produce_state",
-        Inputs(value=str),
-        Outputs(result=StatefulResult),
-        "touch {result}",
-    )
-    mutable_rule = Rule(
-        "produce_state",
-        Inputs(value=str),
-        Outputs(result=StatefulResult),
-        "touch {result}",
-        mutable=True,
-    )
-    pipeline = Pipeline(DAG(tmp_path))
-    immutable = immutable_rule(pipeline, value="same")
-    mutable = mutable_rule(pipeline, value="same")
-
-    assert immutable.rule_hash != mutable.rule_hash
-
-
 def test_success_metadata_records_outputs_and_exact_parent_keys(tmp_path):
-    class MutableState(NodeType):
+    class State(NodeType):
         filename = "state.sqlite3"
 
     source_rule = Rule(
         "state",
         Inputs(value=str),
-        Outputs(state=MutableState),
+        Outputs(state=State),
         "touch {state}",
-        mutable=True,
     )
     consume_rule = Rule(
-        "consume", Inputs(state=MutableState), Outputs(result=Result), "touch {result}"
+        "consume", Inputs(state=State), Outputs(result=Result), "touch {result}"
     )
     dag = DAG(tmp_path)
     pipeline = Pipeline(dag)
@@ -103,7 +78,6 @@ def test_success_metadata_records_outputs_and_exact_parent_keys(tmp_path):
     result_metadata = tomlkit.parse(
         (pipeline.result.path.parent / ".rip" / "dependencies.toml").read_text()
     )
-    assert source_metadata["mutable"] is True
     assert source_metadata["outputs"][0]["filename"] == "state.sqlite3"
     assert source_metadata["recipe"]["rule"] == "state"
     assert hash_rule_identity(source_metadata["recipe"]) == (
@@ -112,7 +86,7 @@ def test_success_metadata_records_outputs_and_exact_parent_keys(tmp_path):
     assert result_metadata["parents"][0]["node_key"] == (
         pipeline.state.relative_path.as_posix()
     )
-    assert set(result_metadata["parents"][0]) == {"node_key", "mutable"}
+    assert set(result_metadata["parents"][0]) == {"node_key", "consumed_sha256"}
 
 
 def test_rule_hash_is_stable_across_loader_purposes(tmp_path):

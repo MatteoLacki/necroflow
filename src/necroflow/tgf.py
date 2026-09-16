@@ -14,8 +14,6 @@ def _node_label(node: Node) -> str:
         suffix += f":{node.output_name}" if suffix else node.output_name
     if suffix:
         parts[0] += f"[{suffix}]"
-    if node.rule_call.mutable:
-        parts.append("[mutable]")
     # needs human review: config omitted from label because long embedded
     # config values can otherwise make the graph unreadable.
     if node.rule.constraints:

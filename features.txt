@@ -7,7 +7,6 @@ necroflow
 │   ├── NodeType subtype families for format contracts
 │   ├── NodeType union inputs for alternative type contracts
 │   ├── fixed mixed NodeType/value unions with runtime parent selection
-│   ├── mutable single-output Rules with cache-neutral external edits
 │   ├── Node typed output/edge/result selectors
 │   ├── RuleCall atomic identity, cache, state, execution, report, cleanup
 │   ├── Module-level rule declarations

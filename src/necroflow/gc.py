@@ -66,7 +66,6 @@ def _entry(call_dir: Path):
         outputs = metadata["outputs"]
         if not isinstance(outputs, list):
             return None
-        mutable = metadata.get("mutable") is True
         parents = [str(parent["node_key"]) for parent in metadata["parents"]]
         for parent_key in parents:
             parts = Path(parent_key).parts
@@ -84,7 +83,6 @@ def _entry(call_dir: Path):
     return {
         "path": call_dir,
         "rule_hash": rule_hash,
-        "mutable": mutable,
         "parents": parents,
     }
 
@@ -193,7 +191,7 @@ def collect(
             (
                 entry["path"]
                 for key, entry in entries.items()
-                if key in incompatible_keys and not entry["mutable"]
+                if key in incompatible_keys
             ),
             key=str,
         )
@@ -220,13 +218,6 @@ def collect(
         candidates = incompatible + non_current
         total_size = sum(_size(path) for path in candidates)
         print(f"Total: {len(candidates)} directories, {total_size} bytes")
-        protected_mutable = sum(
-            1
-            for key, entry in entries.items()
-            if key in incompatible_keys and entry["mutable"]
-        )
-        if protected_mutable:
-            print(f"Protected mutable state: {protected_mutable}")
         if not candidates:
             return
         if not yes:

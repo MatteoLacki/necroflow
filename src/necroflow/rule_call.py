@@ -136,7 +136,6 @@ class RuleCall:
             rule_name=self.rule.__name__,
             command=self.command,
             recipe_identity=self.rule.recipe_identity,
-            mutable=self.mutable,
             input_types=self.rule.inputs.specs,
             output_types=self.rule.outputs.specs,
         )
@@ -209,11 +208,6 @@ class RuleCall:
     @property
     def workdir(self) -> Path:
         return self.dag.nodes_dir / self.relative_path
-
-    @property
-    def mutable(self) -> bool:
-        """Return whether consumers ignore this call's content-only edits."""
-        return self.rule.mutable
 
     @property
     def state_file(self) -> Path:
@@ -290,8 +284,8 @@ class RuleCall:
         )
 
     def remove_workdir(self) -> bool:
-        """Delete this call's workdir unless it is mutable or already absent."""
-        if self.mutable or not self.workdir.exists():
+        """Delete this call's workdir unless it is already absent."""
+        if not self.workdir.exists():
             return False
         shutil.rmtree(self.workdir)
         return True
@@ -318,16 +312,14 @@ class RuleCall:
             hash_cache = {}
         parents = []
         for parent in self.parents:
-            metadata = {
-                "node_key": parent.relative_path.as_posix(),
-                "mutable": parent.rule_call.mutable,
-            }
-            if not parent.rule_call.mutable:
-                metadata["consumed_sha256"] = current_output_hash(parent, hash_cache)
-            parents.append(metadata)
+            parents.append(
+                {
+                    "node_key": parent.relative_path.as_posix(),
+                    "consumed_sha256": current_output_hash(parent, hash_cache),
+                }
+            )
         data = {
             "rule": self.rule.__name__,
-            "mutable": self.mutable,
             "config": self._accumulated_config(),
             "outputs": [
                 {

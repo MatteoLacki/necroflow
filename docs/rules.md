@@ -491,23 +491,6 @@ both filtered precursors and indexed". Use a union for alternatives:
 Mixed unions such as `PrecursorTable | str | None` additionally allow a plain
 positional value or absence under the mixed-input rules above.
 
-## Mutable Rules
-
-Mutability belongs to a producer Rule, not its output type. Set `mutable=True` for persistent single-output state whose external byte changes should not invalidate consumers:
-
-```python
-@command("update-db {database}", mutable=True)
-def update_database(seed: str):
-    database = output(Database)
-    return database
-```
-
-The default is `False`; non-boolean values fail Rule construction. A mutable Rule must declare exactly one output. Mutability participates in the local rule hash, so changing it changes this call and downstream identity.
-
-Mutable calls remain ordinary parents for commands, graph traversal, scheduling, provenance, and failure propagation. External content-only edits do not stale consumers. If a mutable call executes during the current run, every consumer replays. Missing, forced, compromised, invalidator-changed, or failed mutable parents retain normal behavior. Mutable workdirs are never autocleaned.
-
-Necroflow does not serialize external writers or provide transactions. Multiple mutable siblings are prohibited by the single-output constraint.
-
 Unions are for inputs only. A rule output should be a concrete `NodeType`, not a
 union, because necroflow needs one exact artifact type to choose the filename,
 node identity, downstream type, and provenance shape. If two rules can produce

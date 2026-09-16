@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import shlex
-import time
 from typing import Annotated, Union
 
 import pytest
@@ -29,10 +28,6 @@ class Bam(NodeType):
 
 class OtherBam(NodeType):
     filename = "other.bam"
-
-
-class MutableBam(NodeType):
-    filename = "mutable.bam"
 
 
 class Reference(NodeType):
@@ -63,15 +58,12 @@ def _source(
     pipeline: Pipeline,
     label: str,
     node_type: type[NodeType] = Bam,
-    *,
-    mutable: bool = False,
 ):
     return Rule(
         "source",
         Inputs(label=str),
         Outputs(source=node_type),
         "touch {source}",
-        mutable=mutable,
     )(pipeline, label=label)
 
 
@@ -305,33 +297,6 @@ def test_variadic_union_accepts_each_declared_node_type(tmp_path):
     result = merge(pipeline, (bam, other))
 
     assert result.parents == [bam, other]
-
-
-def test_variadic_union_applies_mutability_per_concrete_parent(tmp_path):
-    """Mixed variadic groups ignore only their concrete mutable members."""
-    dag = DAG(tmp_path)
-    pipeline = Pipeline(dag)
-    ordinary = _source(pipeline, "ordinary")
-    mutable = _source(pipeline, "mutable", MutableBam, mutable=True)
-    merge = Rule(
-        "mutable_union_merge",
-        Inputs(bams=tuple[Bam | MutableBam, ...]),
-        Outputs(merged=Merged),
-        "touch {merged}",
-    )
-    result = merge(pipeline, (ordinary, mutable))
-    dag.require([result])
-    dag.run()
-
-    time.sleep(0.05)
-    mutable.path.write_text("changed")
-    plan_execution(dag)
-    assert result.rule_call.state == RuleCallState.UP_TO_DATE
-
-    time.sleep(0.05)
-    ordinary.path.write_text("changed")
-    plan_execution(dag)
-    assert result.rule_call.state == RuleCallState.STALE
 
 
 def test_variadic_fingerprint_tracks_order_grouping_and_many_bounds(tmp_path):

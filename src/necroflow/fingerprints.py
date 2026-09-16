@@ -249,13 +249,12 @@ def _command_identity(command: Any, recipe_identity: str | None) -> Any:
 
 
 def _rule_identity(
-    *, rule_name, command, recipe_identity, mutable, input_types, output_types
+    *, rule_name, command, recipe_identity, input_types, output_types
 ) -> dict[str, Any]:
     return {
         "domain": RULE_HASH_DOMAIN,
         "rule": rule_name,
         "command": _command_identity(command, recipe_identity),
-        "mutable": mutable,
         "input_types": {
             name: _type_name(annotation) for name, annotation in input_types.items()
         },
@@ -283,7 +282,6 @@ def declared_rule_hash(rule) -> str:
             rule_name=rule.__name__,
             command=rule.command,
             recipe_identity=rule.recipe_identity,
-            mutable=rule.mutable,
             input_types=rule.inputs.specs,
             output_types=rule.outputs.specs,
         )

@@ -173,30 +173,6 @@ def test_directory_entry_rename_invalidates_stored_hash_fast_path(tmp_path):
     assert second_pipeline.result.rule_call.state == RuleCallState.STALE
 
 
-def test_mutable_edit_is_ignored_but_mutable_rebuild_replays_consumer(tmp_path):
-    """Mutable bytes are ignored; executing mutable producer replays consumer."""
-    mutable_source = Rule(
-        "mutable_source",
-        Inputs(),
-        Outputs(source=Source),
-        "printf stable > {source}",
-        mutable=True,
-    )
-    first = _pipeline(tmp_path, source_rule=mutable_source)
-    run(first.dag)
-    first.source.path.write_text("external")
-    second = _pipeline(tmp_path, source_rule=mutable_source)
-    plan = plan_execution(second.dag)
-    assert second.result.rule_call.state == RuleCallState.UP_TO_DATE
-
-    third = _pipeline(tmp_path, source_rule=mutable_source)
-    report = run(
-        third.dag,
-        forced_stale_call_keys={third.source.rule_call.relative_path},
-    )
-    assert report[third.result.rule_call.relative_path.as_posix()].cached is False
-
-
 def test_missing_consumed_hash_marks_consumer_stale(tmp_path):
     """Missing consumed SHA is unsafe, so consumer must rerun."""
     first = _pipeline(tmp_path)

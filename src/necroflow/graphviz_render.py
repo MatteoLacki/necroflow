@@ -63,14 +63,13 @@ def render_png(
         g["threads"] = max(g["threads"], threads)
         g["outputs"].append(node.output_name or "")
 
-    edges: dict[tuple[str, str], bool] = {}
+    edges: set[tuple[str, str]] = set()
     for node in dag.nodes:
         t = _group_key(node.relative_path.as_posix())
         for parent in node.parents:
             s = _group_key(parent.relative_path.as_posix())
             if s != t:
-                edge = (s, t)
-                edges[edge] = edges.get(edge, True) and parent.rule_call.mutable
+                edges.add((s, t))
 
     G = nx.DiGraph()
     G.add_nodes_from(order)
@@ -138,13 +137,7 @@ def render_png(
         lines.append("")
 
     for s, t in sorted(edges):
-        if edges[(s, t)]:
-            lines.append(
-                f"  {_dot_id(s)} -> {_dot_id(t)} "
-                '[style="dashed", label="mutable", fontcolor="#66707c"];'
-            )
-        else:
-            lines.append(f"  {_dot_id(s)} -> {_dot_id(t)};")
+        lines.append(f"  {_dot_id(s)} -> {_dot_id(t)};")
     lines.append("}")
 
     dot_src = "\n".join(lines)

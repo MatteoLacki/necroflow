@@ -325,7 +325,6 @@ def _node_json(node, *, nodes_dir: Path | None = None) -> dict:
         "output_name": node.output_name,
         "rule": node.rule.__name__ if node.rule else "unknown",
         "node_type": node.node_type.__name__ if node.node_type else None,
-        "mutable": node.rule_call.mutable,
         "state": (
             node.rule_call.state.value
             if isinstance(node.rule_call.state, RuleCallState)
@@ -351,7 +350,6 @@ def _edge_json(nodes: list) -> list[dict]:
         {
             "from": parent.relative_path.as_posix(),
             "to": node.relative_path.as_posix(),
-            "mutable": parent.rule_call.mutable,
         }
         for node in nodes
         for parent in node.parents
@@ -433,7 +431,6 @@ def _explain_payload(args) -> dict:
     plan = plan_execution(
         dag,
         forced_stale_call_keys=forced_stale_call_keys,
-        include_advisories=True,
     )
     active = plan.active
     active_keys = plan.active_keys
@@ -465,7 +462,6 @@ def _explain_payload(args) -> dict:
             {
                 "key": call.relative_path.as_posix(),
                 "rule": call.rule.__name__,
-                "mutable": call.mutable,
                 "state": state,
                 "will_run": will_run,
                 "workdir": str(call.workdir),

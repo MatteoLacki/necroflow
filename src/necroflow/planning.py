@@ -39,7 +39,6 @@ class ExecutionPlan:
     reasons: dict[Path, tuple[Reason, ...]] = field(default_factory=dict)
     hash_cache: dict[Path, str] = field(default_factory=dict)
     forced_call_keys: set[Path] = field(default_factory=set)
-    include_advisories: bool = False
 
     @property
     def active_keys(self) -> set[Path]:
@@ -51,16 +50,6 @@ def _valid_sha256(value: object) -> bool:
         isinstance(value, str)
         and len(value) == 64
         and all(char in "0123456789abcdef" for char in value)
-    )
-
-
-def _mutable_parent_changed(parent, plan: ExecutionPlan) -> bool:
-    hash_file = parent.rule_call.workdir / ".rip" / (parent.path.name + ".hash")
-    if not hash_file.exists():
-        return False
-    stored = hash_file.read_text().strip()
-    return _valid_sha256(stored) and (
-        current_output_hash(parent, plan.hash_cache) != stored
     )
 
 
@@ -121,25 +110,6 @@ def classify_call(
                         }
                     )
                     continue
-                if parent.rule_call.mutable:
-                    if parent.rule_call.relative_path in executed:
-                        reasons.append(
-                            {
-                                "kind": "mutable_parent_rebuilt",
-                                "parent_key": parent_key,
-                            }
-                        )
-                    elif plan.include_advisories and _mutable_parent_changed(
-                        parent, plan
-                    ):
-                        reasons.append(
-                            {
-                                "kind": "mutable_parent_content_ignored",
-                                "parent_key": parent_key,
-                                "advisory": True,
-                            }
-                        )
-                    continue
                 consumed = recorded.get("consumed_sha256")
                 if not _valid_sha256(consumed):
                     reasons.append(
@@ -157,7 +127,7 @@ def classify_call(
                         }
                     )
 
-    stale_reasons = [reason for reason in reasons if not reason.get("advisory")]
+    stale_reasons = list(reasons)
     if stale_reasons:
         call.state = RuleCallState.STALE
         plan.reasons[call.relative_path] = tuple(reasons)
@@ -200,7 +170,6 @@ def plan_execution(
     dag: DAG,
     *,
     forced_stale_call_keys: set[Path] | None = None,
-    include_advisories: bool = False,
 ) -> ExecutionPlan:
     """Build call closure and classify only calls with settled parents."""
     required = dag.required_call_keys
@@ -216,7 +185,6 @@ def plan_execution(
         active=active,
         orphans=orphans,
         forced_call_keys=set(forced_stale_call_keys or ()),
-        include_advisories=include_advisories,
     )
     classify_available(plan)
     for call in active:

@@ -212,9 +212,7 @@ input_values = {
 declaration order and each tuple’s element order. Mixed plain values never enter
 `parents` and therefore create no DAG edge. Command resolution reunites both
 mappings in declaration order: Nodes become paths, while plain values remain
-unchanged under `CommandArgs.inputs`. Each parent has already copied
-its concrete output type's inherited `mutable` boolean when it was compiled;
-mutability is not supplied per Rule call or per input annotation.
+unchanged under `CommandArgs.inputs`.
 
 ## 5. A candidate RuleCall receives v4 recipe and provenance identity
 
@@ -292,9 +290,8 @@ node.path = S.dag.nodes_dir / node.relative_path
 ```
 
 `Node` stores only `output_name`, `node_type`, `relative_path`, `path`, `rule_call`, `state`,
-and `info`. `config`, `rule`, `command`, `parents`, `mutable`, and `output_nodes` are not
-copied onto the Node — they are properties that read through `node.rule_call` (`mutable`
-reads `node.node_type.mutable` instead, since it is fixed by the output type, not the call).
+and `info`. `config`, `rule`, `command`, `parents`, and `output_nodes` are not
+copied onto the Node — they are properties that read through `node.rule_call`.
 One `RuleCall` per invocation stays the single place those values live.
 
 For a multi-output call:

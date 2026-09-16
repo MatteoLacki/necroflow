@@ -190,7 +190,7 @@ def _cleanup_parents(call: RuleCall, plan: _AutocleanPlan) -> int:
     cleaned = 0
     for parent in call.parent_calls:
         key = parent.relative_path
-        if parent.mutable or key in plan.final_keys:
+        if key in plan.final_keys:
             continue
         if (
             all(

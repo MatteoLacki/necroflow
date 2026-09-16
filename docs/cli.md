@@ -86,8 +86,6 @@ necroflow graph --png graph.png job.toml
 
 Text output uses Trivial Graph Format with parent-to-child edges. `--png` requires
 the `dev` extra and Graphviz `dot`; it groups rule calls by dependency depth.
-Nodes owned by mutable Rules are marked in TGF labels; their Graphviz edges are
-dashed and labelled; JSON Nodes and edges include a `mutable` boolean.
 
 List requested output paths without running jobs:
 
@@ -130,7 +128,6 @@ GC prints provenance-incompatible rule-call directories and folders that fail
 the current layout or metadata checks in separate batches, followed by their
 total size. It then asks `Delete these directories? [y/N]`; `-y` skips
 confirmation. The node-store lock is held while scanning and deleting. Rule
-calls with mutable outputs are protected from provenance-based deletion;
 malformed or non-current folders are not. A current local rule call is also
 deleted when its recorded provenance descends from an obsolete parent rule. GC
 has no job TOML dependency and never evaluates concrete job configurations.
@@ -159,6 +156,6 @@ necroflow explain --node counts job.toml
 necroflow explain --json job.toml
 ```
 
-`explain` reports requested RuleCalls and ancestors in FIFO registration order, nesting all declared output Nodes under each call. It shows predicted workdir, state, command, resources, tri-state `will_run`, and reasons such as `output_missing`, `up_to_date`, `parent_will_run`, `consumed_hash_missing`, `parent_content_changed`, `mutable_parent_rebuilt`, `mutable_parent_content_ignored`, `forced_invalidation`, `invalidator_changed`, and `compromised_prior_state`. Descendants of calls that would run remain unknown until real parent bytes exist.
+`explain` reports requested RuleCalls and ancestors in FIFO registration order, nesting all declared output Nodes under each call. It shows predicted workdir, state, command, resources, tri-state `will_run`, and reasons such as `output_missing`, `up_to_date`, `parent_will_run`, `consumed_hash_missing`, `parent_content_changed`, `forced_invalidation`, `invalidator_changed`, and `compromised_prior_state`. Descendants of calls that would run remain unknown until real parent bytes exist.
 
 [Previous: Where Outputs Live and Caching](caching.md) | [README](../README.md) | [Next: Job TOML and Parameter Grids](job-toml.md)
