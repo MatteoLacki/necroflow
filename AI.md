@@ -2,6 +2,14 @@
 
 For a compact map of the current software surface, start with `features.txt`.
 
+## Dependency decision
+
+Keep `tomlkit`; do not remove or replace it solely to reduce dependency count.
+It has no third-party runtime dependencies and supplies TOML writing, grid
+semantics, and formatting-preserving config edits. Read the
+[decision and removal-cost assessment](docs/development.md#keep-the-tomlkit-dependency)
+before revisiting this choice.
+
 ## Subpipelines and finished construction
 
 `P.subpipeline(prefix)` returns a prefixed view over the same root Pipeline.
