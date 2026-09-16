@@ -1,0 +1,12 @@
+{
+  "upstream": {
+    "revision": "5c89d3859abbe54893d4e1ae0f21115dcebd9d1d",
+    "url": "https://codeload.github.com/nextflow-io/rnaseq-nf/tar.gz/5c89d3859abbe54893d4e1ae0f21115dcebd9d1d",
+    "sha256": "c5b9f556a6a8d27ae533a7a1c8b0d97e1403d5b6eee432e84a0b8d3875616e07"
+  },
+  "nextflow": {
+    "version": "25.10.0",
+    "url": "https://github.com/nextflow-io/nextflow/releases/download/v25.10.0/nextflow-25.10.0-dist",
+    "sha256": "294376ec555695ee0b92e21477600f97c113f2d1ed3fb1f480daf2ee439c4626"
+  }
+}
