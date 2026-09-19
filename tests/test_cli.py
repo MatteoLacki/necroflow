@@ -142,7 +142,8 @@ def test_results_can_use_separate_nodes_and_results_dirs(tmp_path):
     doc = tomlkit.parse(content)
     assert doc["outputs"]["log"]["path"] == "log/run.log"
     assert doc["outputs"]["log"]["origin_node_key"] == P.log.relative_path.as_posix()
-    assert len(doc["outputs"]["log"]["content_sha256"]) == 64
+    content_hash = doc["outputs"]["log"]["content_hash"]
+    assert content_hash.startswith("blake3:") and len(content_hash) == len("blake3:") + 64
 
 
 def test_materialization_rejects_malformed_manifest(tmp_path):
@@ -882,7 +883,7 @@ def test_main_materializes_results_while_node_store_is_locked(
 ):
     nodes_dir = tmp_path / "nodes"
 
-    def assert_locked(results_dir, combos):
+    def assert_locked(results_dir, combos, **_hashing):
         lock_path = nodes_dir / ".rip" / "necroflow.lock"
         with lock_path.open("a") as handle:
             with pytest.raises(BlockingIOError):

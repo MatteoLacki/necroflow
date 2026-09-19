@@ -15,6 +15,7 @@ from typing import Any
 import tomlkit
 
 from necroflow import logger as _logger
+from necroflow.hashers import Hasher
 from necroflow.tgf import write_ancestor_tgf
 from necroflow.dag import DAG
 from necroflow.fs import _acquire_lock
@@ -286,7 +287,7 @@ def _complete_call(
         raise RuntimeError(
             "command succeeded but output missing: " + ", ".join(map(str, missing))
         )
-    call.write_dependencies(plan.hash_cache)
+    call.write_dependencies(plan.hash_cache, plan.hasher)
     if call.outputs:
         write_ancestor_tgf(call.outputs[0])
     call.mark_done("up_to_date")
@@ -315,10 +316,12 @@ def run(
     rule_call_runner=None,
     forced_stale_call_keys: set[Path] | None = None,
     on_complete: Callable[[dict[str, RuleCallExecution]], None] | None = None,
+    hasher: Hasher | str | None = None,
 ) -> dict[str, RuleCallExecution]:
     """Execute required RuleCalls atomically; return report keyed by call path.
 
     • forced_stale_call_keys is a set of canonical RuleCall.relative_path values forced to rerun despite valid cache.
+    • hasher names the output content hasher (default BLAKE3); see `necroflow.hashers`.
     """
     if not isinstance(dag, DAG):
         raise TypeError(f"run requires a DAG, got {type(dag).__name__}")
@@ -331,7 +334,13 @@ def run(
         caps.update(resource_caps)
 
     with _acquire_lock(dag.nodes_dir):
-        plan = plan_execution(dag, forced_stale_call_keys=forced_stale_call_keys)
+        # Nothing runs yet, so hashes taken while planning may use every thread.
+        plan = plan_execution(
+            dag,
+            forced_stale_call_keys=forced_stale_call_keys,
+            hasher=hasher,
+            hash_threads=caps["threads"],
+        )
         n_cleaned = _clean_orphans(plan, autoclean=autoclean, dry_run=dry_run)
         report: dict[str, RuleCallExecution] = {}
         n_skipped = _record_cached(report, plan.active)
@@ -369,6 +378,11 @@ def run(
                     call.state is None or call.state in unfinished
                     for call in plan.active
                 ):
+                    # Mid-run classification may rehash parents; give it only
+                    # the threads no running call holds.
+                    plan.hash_threads = max(
+                        1, caps["threads"] - running_resources.get("threads", 0)
+                    )
                     classify_available(plan, executed_call_keys=executed_call_keys)
                     n_skipped += _record_cached(report, plan.active)
                     _promote_ready(plan.active)

@@ -39,7 +39,7 @@ results/experiment__hg38__bwa/counts/counts.txt
 [outputs.counts]
 path = "counts/counts.txt"
 origin_node_key = "count/<provenance_hash>/counts.txt"
-content_sha256 = "<64 lowercase hexadecimal characters>"
+content_hash = "blake3:<64 lowercase hexadecimal characters>"
 ```
 
 The key (`counts`) matches `P.counts = count(...)` in the factory function.
@@ -123,7 +123,13 @@ Invalidators are evaluated when the owning RuleCall becomes classifiable. After 
 
 A RuleCall is the cache unit. Requesting any co-output activates, validates, hashes, retains, reports, and cleans every declared output together. Only requested Nodes are copied into visible `results/`.
 
-After success, each consumer records `consumed_sha256` for every parent Node in `dependencies.toml`. Classification waits until parent calls settle, then compares recorded hashes with current parent bytes. Missing or malformed consumed hashes are stale. A rebuilt parent producing identical bytes preserves the consumer cache; changed bytes replay it.
+After success, each consumer records `consumed_hash` for every parent Node in `dependencies.toml`. Classification waits until parent calls settle, then compares recorded hashes with current parent bytes. Missing, malformed, or other-hasher consumed hashes are stale. A rebuilt parent producing identical bytes preserves the consumer cache; changed bytes replay it.
+
+### Content hashers
+
+Output bytes are hashed by a pluggable hasher: BLAKE3 by default, `sha256` built in, or a local class via `--hasher file.py:Class` (a `name` attribute plus `hash_path(path, threads) -> hex`). Every stored digest is tagged `<name>:<hex>`, so a digest is only ever compared with one made by the same hasher. After switching hashers, each consumer's old consumed hash counts as missing and the consumer reruns once; it cannot be mistaken for a match.
+
+Hashing uses threads without oversubscribing: a call's outputs are hashed with that call's own `threads` resource, which it still holds while being completed; hashes taken while planning, before anything runs, and when copying results, after everything has finished, use the full `-c` cap; parents rehashed mid-run use only the threads no running call holds. BLAKE3 splits each file across those threads; `sha256` ignores them.
 
 Current hashes use `.rip/{filename}.hash` as an mtime-gated fast path. The stored digest is trusted when output mtime is no newer than hash-file mtime; otherwise current bytes are hashed. Hashes are memoized during one invocation. External edits preserving or backdating mtime are unsupported.
 
@@ -131,8 +137,8 @@ Persistent state that changes outside the DAG does not belong in a node workdir.
 
 - Re-running with identical identity and unchanged evidence is a cache hit.
 - Changing upstream parameters, commands, or contracts produces new paths.
-- ``.rip/dependencies.toml` stores both hashes, the exact canonical recipe payload, accumulated config, declared outputs, canonical parents, and `consumed_sha256` values.
-- `.rip/{filename}.hash` stores each declared output SHA-256.
+- ``.rip/dependencies.toml` stores both hashes, the exact canonical recipe payload, accumulated config, declared outputs, canonical parents, and `consumed_hash` values.
+- `.rip/{filename}.hash` stores each declared output's tagged content hash.
 - `.rip/state` stores call state (`running`, `up_to_date`, `failed`, or `interrupted`). A leftover or unknown non-success value compromises the whole call.
 
 ### External dataset ingestion

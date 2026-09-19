@@ -86,7 +86,8 @@ def test_success_metadata_records_outputs_and_exact_parent_keys(tmp_path):
     assert result_metadata["parents"][0]["node_key"] == (
         pipeline.state.relative_path.as_posix()
     )
-    assert set(result_metadata["parents"][0]) == {"node_key", "consumed_sha256"}
+    assert set(result_metadata["parents"][0]) == {"node_key", "consumed_hash"}
+    assert result_metadata["parents"][0]["consumed_hash"].startswith("blake3:")
 
 
 def test_rule_hash_is_stable_across_loader_purposes(tmp_path):

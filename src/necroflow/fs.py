@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 from contextlib import contextmanager
 import fcntl
 import os
 from pathlib import Path
-
-_HASH_CHUNK_SIZE = 1024 * 1024
-
 
 def _normalize_shellpath(shellpath: str | Path | None) -> str | None:
     """Resolve and validate an optional executable shell path."""
@@ -76,25 +72,6 @@ def _check_path_limits(path: Path) -> None:
         length = len(os.fsencode(os.fspath(path)))
         if length > path_max:
             raise ValueError(f"path too long ({length} > PATH_MAX {path_max}): {path}")
-
-
-def _update_hash_from_file(digest, path: Path) -> None:
-    with path.open("rb") as file:
-        while chunk := file.read(_HASH_CHUNK_SIZE):
-            digest.update(chunk)
-
-
-def _content_hash(path: Path) -> str:
-    """SHA-256 of file bytes, or of all non-.rip files in a directory."""
-    digest = hashlib.sha256()
-    if path.is_file():
-        _update_hash_from_file(digest, path)
-    else:
-        for file in sorted(path.rglob("*")):
-            if file.is_file() and ".rip" not in file.parts:
-                digest.update(str(file.relative_to(path)).encode())
-                _update_hash_from_file(digest, file)
-    return digest.hexdigest()
 
 
 def _output_mtime(path: Path) -> int:

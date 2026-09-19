@@ -174,12 +174,12 @@ def test_directory_entry_rename_invalidates_stored_hash_fast_path(tmp_path):
 
 
 def test_missing_consumed_hash_marks_consumer_stale(tmp_path):
-    """Missing consumed SHA is unsafe, so consumer must rerun."""
+    """Missing consumed hash is unsafe, so consumer must rerun."""
     first = _pipeline(tmp_path)
     run(first.dag)
     metadata_path = first.result.rule_call.workdir / ".rip" / "dependencies.toml"
     metadata = tomlkit.parse(metadata_path.read_text())
-    del metadata["parents"][0]["consumed_sha256"]
+    del metadata["parents"][0]["consumed_hash"]
     metadata_path.write_text(tomlkit.dumps(metadata))
 
     second = _pipeline(tmp_path)
@@ -208,3 +208,22 @@ def test_missing_one_cooutput_marks_whole_call_missing(tmp_path):
     plan_execution(second_dag)
 
     assert second.result.rule_call.state == RuleCallState.MISSING
+
+
+def test_switching_hasher_makes_consumers_rerun_once(tmp_path):
+    """A consumed hash from another hasher is never compared, only replaced."""
+    first = _pipeline(tmp_path)
+    run(first.dag, hasher="sha256")
+
+    second = _pipeline(tmp_path)
+    plan = plan_execution(second.dag, hasher="blake3")
+    assert second.result.rule_call.state == RuleCallState.STALE
+    reason = plan.reasons[second.result.rule_call.relative_path][0]
+    assert reason["kind"] == "consumed_hash_other_hasher"
+    assert reason["hasher"] == "blake3"
+    assert reason["consumed_hash"].startswith("sha256:")
+
+    run(second.dag, hasher="blake3")
+    third = _pipeline(tmp_path)
+    plan_execution(third.dag, hasher="blake3")
+    assert third.result.rule_call.state == RuleCallState.UP_TO_DATE

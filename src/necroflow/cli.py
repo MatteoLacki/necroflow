@@ -49,7 +49,8 @@ from necroflow import (
 )
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import parse_resource
-from necroflow.fs import _check_path_limits, _content_hash, _normalize_shellpath
+from necroflow.fs import _check_path_limits, _normalize_shellpath
+from necroflow.hashers import DEFAULT_HASHER, Hasher, load_hasher, tagged_hash
 from necroflow.graphviz_render import render_png
 from necroflow.planning import plan_execution
 from necroflow.gc import collect
@@ -85,6 +86,17 @@ def _load_scheduler(spec: str) -> Callable:
         raise SystemExit(
             "error: --scheduler must be fifo or "
             f"path.py:function; got {spec!r}: {exc}"
+        ) from exc
+
+
+def _load_hasher(spec: str) -> Hasher:
+    """Resolve a built-in hasher name or load a user hasher class."""
+    try:
+        return load_hasher(spec)
+    except Exception as exc:
+        raise SystemExit(
+            "error: --hasher must be blake3, sha256 or "
+            f"path.py:ClassName; got {spec!r}: {exc}"
         ) from exc
 
 
@@ -431,6 +443,8 @@ def _explain_payload(args) -> dict:
     plan = plan_execution(
         dag,
         forced_stale_call_keys=forced_stale_call_keys,
+        hasher=_load_hasher(args.hasher),
+        hash_threads=_parse_resource_caps(args)["threads"],
     )
     active = plan.active
     active_keys = plan.active_keys
@@ -609,13 +623,19 @@ def _run(args) -> None:
         args, nodes_dir=nodes_dir
     )
     _preflight_result_paths(results_dir, combos)
+    hasher = _load_hasher(args.hasher)
+    resource_caps = _parse_resource_caps(args)
 
     def materialize(report):
-        _materialize_results(results_dir, combos)
+        # Runs after every call has finished, so it may use the whole cap.
+        _materialize_results(
+            results_dir, combos, hasher=hasher, threads=resource_caps["threads"]
+        )
         _write_execution_summaries(results_dir, combos, report)
 
     dag.run(
-        resource_caps=_parse_resource_caps(args),
+        resource_caps=resource_caps,
+        hasher=hasher,
         scheduler=_load_scheduler(args.scheduler),
         keep_going=args.keep_going,
         autoclean=args.autoclean,
@@ -887,9 +907,13 @@ def _copy_result(source: Path, destination: Path) -> None:
 def _materialize_results(
     results_dir: Path,
     combos: list[_Combo],
+    *,
+    hasher: Hasher | None = None,
+    threads: int = 1,
 ) -> None:
     """Atomically replace managed per-job results and their manifest."""
     _validate_result_paths(results_dir, combos)
+    hasher = load_hasher(hasher)
     for label, _pipeline, requested_outputs in combos:
         combo_dir = results_dir / label
         combo_dir.mkdir(parents=True, exist_ok=True)
@@ -921,7 +945,7 @@ def _materialize_results(
                 entry = tomlkit.table()
                 entry["path"] = rel.as_posix()
                 entry["origin_node_key"] = node.relative_path.as_posix()
-                entry["content_sha256"] = _content_hash(temporary)
+                entry["content_hash"] = tagged_hash(hasher, temporary, threads)
                 manifest_outputs[binding.label] = entry
 
             _clear_generated_results(combo_dir, owned_paths)
@@ -986,6 +1010,15 @@ def _add_run_options(parser) -> None:
         dest="constraints",
         metavar="KEY=VALUE",
         help="Resource cap, e.g. --constraint ram=300Mi. Repeatable. Overrides -c for threads.",
+    )
+    parser.add_argument(
+        "--hasher",
+        default=DEFAULT_HASHER,
+        metavar="NAME|PATH.py:CLASS",
+        help=(
+            "Output content hasher: blake3 (default), sha256, or a local Python "
+            "class. Switching hashers makes every consumer rerun once."
+        ),
     )
     parser.add_argument(
         "--keep-going",

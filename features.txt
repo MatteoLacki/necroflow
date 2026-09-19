@@ -69,7 +69,7 @@ necroflow
 │   ├── path length validation
 │   ├── destination-filesystem result-path preflight before copying
 │   ├── output content hashes with mtime-gated stored-hash fast path
-│   ├── consumed immutable-parent SHA-256 metadata
+│   ├── consumed immutable-parent content-hash metadata (pluggable hasher, BLAKE3 default)
 │   ├── invalidator tokens on NodeType
 │   └── .rip metadata directories
 │

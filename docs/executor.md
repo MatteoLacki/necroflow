@@ -64,10 +64,10 @@ On success, `dependencies.toml` records every parent Node in declaration order:
 
 ```toml
 node_key = "producer/<provenance_hash>/out.txt"
-consumed_sha256 = "<hash consumed by this call>"
+consumed_hash = "blake3:<hash consumed by this call>"
 ```
 
-When classifying a consumer, Necroflow compares `consumed_sha256` with each parent output current SHA-256. Missing, malformed, reordered, or mismatched parent metadata makes the consumer stale.
+When classifying a consumer, Necroflow compares `consumed_hash` with each parent output's current hash from the same hasher. Missing, malformed, other-hasher, reordered, or mismatched parent metadata makes the consumer stale.
 
 This makes parent process history irrelevant. A parent rebuilt during this invocation but producing identical bytes leaves an immutable consumer cached. Different bytes replay it.
 
@@ -75,7 +75,7 @@ Classification reads metadata but never writes it. Only successful call completi
 
 ### Hash fast path and mtime
 
-For each output, `.rip/{filename}.hash` stores the last successful SHA-256. Within one run, computed current hashes are memoized by Node key.
+For each output, `.rip/{filename}.hash` stores the last successful tagged hash. Within one run, computed current hashes are memoized by Node key. A stored hash from another hasher is ignored and recomputed.
 
 Necroflow trusts the stored hash only when output mtime is not newer than the hash-file mtime. A newer output is hashed from current bytes. Thus mtime is hash invalidation for ordinary external edits, not cache identity.
 
@@ -129,7 +129,7 @@ See [Scheduler Protocol](schedulers.md).
 
 ## Resources and parallelism
 
-Default cap is `threads = os.cpu_count()`. `resource_caps` overrides or adds caps. Uncapped resources do not limit admission.
+Default cap is `threads = os.cpu_count()`. `resource_caps` overrides or adds caps. Uncapped resources do not limit admission. `hasher` selects the output content hasher (default BLAKE3); see `docs/caching.md`.
 
 Scheduler order is priority, not guaranteed start order under resource pressure. Executor admits selected calls whose capped resource totals fit. When nothing runs, one oversized call may run alone to prevent deadlock.
 
@@ -295,7 +295,7 @@ consumed:
 ```toml
 [[parents]]
 node_key = "source/<provenance_hash>/raw.txt"
-consumed_sha256 = "<64 lowercase hexadecimal characters>"
+consumed_hash = "blake3:<64 lowercase hexadecimal characters>"
 ```
 
 There is one call-level duration and one `RuleCallExecution`, containing both
@@ -350,7 +350,7 @@ still finish; otherwise the first failure aborts the run.
 - Node = typed output, dependency edge, result selector.
 - RuleCall = cache, state, scheduling, execution, report, cleanup unit.
 - mtime = stored-hash invalidation fast path, not freshness policy.
-- consumed SHA-256 = immutable dependency freshness policy.
+- consumed content hash = immutable dependency freshness policy.
 - scheduling = RuleCall FIFO by default.
 - visible CLI results = requested Node copies.
 

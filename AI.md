@@ -97,7 +97,7 @@ filename-less outputs immediately; output names are not filename fallbacks.
 
 ## RuleCall cache
 
-RuleCall is atomic cache, state, scheduling, execution, report, and cleanup unit. Requesting one co-output activates all declared outputs; only CLI result copying remains Node-selective. Consumer `dependencies.toml` records `consumed_sha256` for every parent Node. Child classification waits for parent settlement: identical rebuilt bytes preserve cache, changed bytes replay. Output hashes use mtime only to invalidate the stored-hash fast path.
+RuleCall is atomic cache, state, scheduling, execution, report, and cleanup unit. Requesting one co-output activates all declared outputs; only CLI result copying remains Node-selective. Consumer `dependencies.toml` records `consumed_hash` (tagged `<hasher>:<hex>`, BLAKE3 by default) for every parent Node. Child classification waits for parent settlement: identical rebuilt bytes preserve cache, changed bytes replay. Output hashes use mtime only to invalidate the stored-hash fast path.
 
 Persistent state that changes outside the DAG does not belong in a node workdir: a workdir is a function of its declared inputs, so any identity change gives a fresh empty one. Such state belongs outside the node store, passed in as a path. A `mutable=True` Rule flag existed for this until 2026-09-16 and was removed -- it stopped external byte changes from staling consumers, but could do nothing about the workdir itself being discarded whenever identity moved, which is the failure that actually costs work.
 

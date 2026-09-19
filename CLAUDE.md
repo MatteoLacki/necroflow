@@ -79,10 +79,15 @@ These have been true since the June refactors and are load-bearing design decisi
   or any unrecognized state value, marks the RuleCall compromised and forces a re-run.
   The concurrency lock is `fcntl.flock` on
   `.rip/necroflow.lock` — one instance per node store.
-- **Content-addressed, not time-addressed.** Each consumer records `consumed_sha256` for
+- **Content-addressed, not time-addressed.** Each consumer records `consumed_hash` for
   every immutable parent output in `dependencies.toml`. Current hashes use an mtime-gated fast path
   through `.rip/{filename}.hash`; externally edited outputs are rehashed. A rebuilt parent with
   identical bytes must NOT invalidate consumers.
+- **Content hashers are pluggable.** Default BLAKE3; `sha256` built in; `--hasher file.py:Class`
+  (a `name` plus `hash_path(path, threads)`). Every stored digest is tagged `<name>:<hex>`, and a
+  consumed hash from another hasher counts as missing, so switching hashers reruns each consumer
+  once and can never produce a false match. Output hashes use the call's own `threads`; planning
+  uses the `-c` cap before anything runs and only the free threads mid-run.
 - **Complete call hashes name directories.** Fingerprint v4 uses framed canonical values and paths
   `{rule}/{provenance_hash}/{filename}`. The stored rule hash covers recipe structure; the provenance hash includes
   it plus config, shell, parent lineage, and selected mixed-input plain values. Co-outputs share
@@ -167,7 +172,7 @@ def my_scheduler(ready: list[RuleCall], remaining: list[RuleCall],
 
 `necroflow.executor.run(dag, resource_caps=None, scheduler=None, keep_going=False,
 autoclean=False, dry_run=False, rule_call_runner=None, forced_stale_call_keys=None,
-on_complete=None)
+on_complete=None, hasher=None)
 -> dict[str, RuleCallExecution]`
 
 Dict keyed by `call.relative_path.as_posix()`. `DAG.run()` forwards all kwargs and stores same
@@ -185,7 +190,8 @@ src/necroflow/
   rules.py           — Rule internals plus command, text-file, and symlink-file declarations,
                        parse_resource with SI/binary suffixes
   schedulers.py      — RuleCall Scheduler protocol and fifo_scheduler
-  fs.py              — node-store locking, path/shell validation, hashing, and output mtimes
+  fs.py              — node-store locking, path/shell validation, and output mtimes
+  hashers.py         — pluggable output content hashers (BLAKE3 default, SHA-256), digest tags
   dag.py             — canonical registry, required-call closure, dependency metadata, executor
   planning.py        — lazy consumed-hash classification and reasons
   pipeline.py        — Pipeline (prefixed views, labels, finish)

@@ -20,6 +20,7 @@ from necroflow.containers import (
     split_prefix,
 )
 from necroflow.contexts import CommandArgs, NamedValues
+from necroflow.hashers import Hasher, load_hasher, tagged_hash
 from necroflow.fingerprints import (
     IDENTITY_FORMAT,
     PROVENANCE_HASH_DOMAIN,
@@ -29,7 +30,6 @@ from necroflow.fingerprints import (
     hash_rule_identity,
     python_identity,
 )
-from necroflow.fs import _content_hash
 
 if TYPE_CHECKING:
     from necroflow.nodes import Node
@@ -304,18 +304,30 @@ class RuleCall:
         visited[self.relative_path] = config
         return config
 
-    def write_dependencies(self, hash_cache: dict[Path, str] | None = None) -> None:
-        """Persist lineage, consumed hashes, output hashes, and invalidators."""
+    def write_dependencies(
+        self,
+        hash_cache: dict[Path, str] | None = None,
+        hasher: Hasher | None = None,
+    ) -> None:
+        """Persist lineage, consumed hashes, output hashes, and invalidators.
+
+        Hashing uses this call's own `threads` resource: the executor still
+        holds those threads for the call while it is being completed.
+        """
         from necroflow.planning import current_output_hash
 
         if hash_cache is None:
             hash_cache = {}
+        hasher = load_hasher(hasher)
+        threads = self.resources["threads"]
         parents = []
         for parent in self.parents:
             parents.append(
                 {
                     "node_key": parent.relative_path.as_posix(),
-                    "consumed_sha256": current_output_hash(parent, hash_cache),
+                    "consumed_hash": current_output_hash(
+                        parent, hash_cache, hasher, threads
+                    ),
                 }
             )
         data = {
@@ -373,7 +385,7 @@ class RuleCall:
         for output in self.outputs:
             if not output.path.exists():
                 continue
-            digest = _content_hash(output.path)
+            digest = tagged_hash(hasher, output.path, threads)
             (rip / (output.path.name + ".hash")).write_text(digest)
             hash_cache[output.relative_path] = digest
             invalidator = output.node_type.invalidator

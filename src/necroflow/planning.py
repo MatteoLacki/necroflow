@@ -6,15 +6,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from necroflow.dag import DAG
-from necroflow.fs import _content_hash, _output_mtime
+from necroflow.fs import _output_mtime
+from necroflow.hashers import Hasher, is_tagged_by, load_hasher, tagged_hash
 from necroflow.nodes import Node
 from necroflow.rule_call import RuleCall, RuleCallState
 
 Reason = dict[str, object]
 
 
-def current_output_hash(node: Node, memo: dict[Path, str]) -> str:
-    """Return current bytes hash, trusting stored hash while mtime proves safety."""
+def current_output_hash(
+    node: Node, memo: dict[Path, str], hasher: Hasher, threads: int
+) -> str:
+    """Return current tagged bytes hash, trusting the stored one while mtime
+    proves safety and it was made by `hasher`."""
     cached = memo.get(node.relative_path)
     if cached is not None:
         return cached
@@ -22,35 +26,33 @@ def current_output_hash(node: Node, memo: dict[Path, str]) -> str:
     digest = None
     if hash_file.exists() and _output_mtime(node.path) <= hash_file.stat().st_mtime_ns:
         stored = hash_file.read_text().strip()
-        if len(stored) == 64 and all(char in "0123456789abcdef" for char in stored):
+        if is_tagged_by(stored, hasher):
             digest = stored
     if digest is None:
-        digest = _content_hash(node.path)
+        digest = tagged_hash(hasher, node.path, threads)
     memo[node.relative_path] = digest
     return digest
 
 
 @dataclass
 class ExecutionPlan:
-    """Required RuleCalls, orphan calls, cache evidence, and hash memo."""
+    """Required RuleCalls, orphan calls, cache evidence, and hash memo.
+
+    `hash_threads` is how many threads a hash computed outside any task may
+    use; the executor lowers it to the free threads while calls are running.
+    """
 
     active: list[RuleCall]
     orphans: list[RuleCall]
     reasons: dict[Path, tuple[Reason, ...]] = field(default_factory=dict)
     hash_cache: dict[Path, str] = field(default_factory=dict)
     forced_call_keys: set[Path] = field(default_factory=set)
+    hasher: Hasher = field(default_factory=load_hasher)
+    hash_threads: int = 1
 
     @property
     def active_keys(self) -> set[Path]:
         return {call.relative_path for call in self.active}
-
-
-def _valid_sha256(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == 64
-        and all(char in "0123456789abcdef" for char in value)
-    )
 
 
 def classify_call(
@@ -110,20 +112,32 @@ def classify_call(
                         }
                     )
                     continue
-                consumed = recorded.get("consumed_sha256")
-                if not _valid_sha256(consumed):
+                consumed = recorded.get("consumed_hash")
+                if consumed is None:
                     reasons.append(
                         {"kind": "consumed_hash_missing", "parent_key": parent_key}
                     )
                     continue
-                current = current_output_hash(parent, plan.hash_cache)
+                if not is_tagged_by(consumed, plan.hasher):
+                    reasons.append(
+                        {
+                            "kind": "consumed_hash_other_hasher",
+                            "parent_key": parent_key,
+                            "consumed_hash": consumed,
+                            "hasher": plan.hasher.name,
+                        }
+                    )
+                    continue
+                current = current_output_hash(
+                    parent, plan.hash_cache, plan.hasher, plan.hash_threads
+                )
                 if current != consumed:
                     reasons.append(
                         {
                             "kind": "parent_content_changed",
                             "parent_key": parent_key,
-                            "consumed_sha256": consumed,
-                            "current_sha256": current,
+                            "consumed_hash": consumed,
+                            "current_hash": current,
                         }
                     )
 
@@ -170,6 +184,8 @@ def plan_execution(
     dag: DAG,
     *,
     forced_stale_call_keys: set[Path] | None = None,
+    hasher: Hasher | str | None = None,
+    hash_threads: int = 1,
 ) -> ExecutionPlan:
     """Build call closure and classify only calls with settled parents."""
     required = dag.required_call_keys
@@ -185,6 +201,8 @@ def plan_execution(
         active=active,
         orphans=orphans,
         forced_call_keys=set(forced_stale_call_keys or ()),
+        hasher=load_hasher(hasher),
+        hash_threads=max(1, hash_threads),
     )
     classify_available(plan)
     for call in active:

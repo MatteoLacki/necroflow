@@ -60,7 +60,7 @@ This document condenses the manuscript arguments into a review-oriented outline.
 ## 9. Staleness Detection
 
 - Cached outputs must not merely exist; they must still correspond to their recorded inputs and implementation. (`sec:design:stale`)
-- Necroflow supports modification-time checks and stronger SHA-256 checks. (`sec:design:stale`, `sec:impl:cli`)
+- Necroflow supports modification-time checks and stronger content-hash checks (pluggable; BLAKE3 by default). (`sec:design:stale`, `sec:impl:cli`)
 - Strong checking is presented as a correctness option for situations where timestamps alone are insufficient, with an explicit cost tradeoff. (`sec:design:stale`)
 - Staleness state is connected to the output-local lineage record so it can be inspected and explained. (`sec:design:stale`, `sec:design:prov`)
 

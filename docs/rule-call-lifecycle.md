@@ -458,7 +458,7 @@ One submission runs one complete RuleCall. The default runner delegates to `Rule
 
 ## 13. Materialization commits cache state
 
-After provisional success, executor validates all co-outputs and writes call-level state, report, dependency metadata, output hashes, invalidator tokens, run stats, and ancestor graph. Each immutable parent metadata entry stores the SHA-256 consumed by this call.
+After provisional success, executor validates all co-outputs and writes call-level state, report, dependency metadata, output hashes, invalidator tokens, run stats, and ancestor graph. Each immutable parent metadata entry stores the tagged content hash consumed by this call.
 
 Child classification happens after parent settlement. A rebuilt immutable parent with identical bytes leaves the child cached; changed bytes replay it. A rebuilt mutable parent always replays consumers, while external content-only edits to an unexecuted mutable parent are ignored.
 
