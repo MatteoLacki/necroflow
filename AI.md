@@ -161,6 +161,17 @@ combined with either split-dir flag. Manifest keys are exact requested Pipeline
 labels. Each manifest entry records the visible path, canonical origin node key,
 and content hash. Linux uses `cp -a --reflink=auto`; macOS uses `cp -a -c`.
 
+### CLI JSON node paths
+
+`src/necroflow/cli.py` serializes `outputs.node_relative_path` and the
+`relative_path` fields on Nodes in `graph` and `explain` from
+`node.relative_path.as_posix()`. These values equal the corresponding node key
+and stay relative to the DAG node store. The CLI root spelling may be relative
+or a symlink while the DAG root is resolved, so recomputing these fields with
+`node.path.relative_to()` against the CLI argument is incorrect.
+`tests/test_cli.py::test_json_node_paths_are_relative_to_store` covers default,
+relative, absolute, legacy `--outdir`, and symlink roots for all three commands.
+
 ## Built-in text file rules
 
 `text_file_rule(name, output, input_name="text", encoding="utf-8")` returns a single-output rule that writes a string config value directly to the output file. It is intended for large tool configs that come from job TOML tables, e.g. serialize `config["sage"]` with `json.dumps(..., sort_keys=True, indent=2) + "\n"` and pass it as `text`.

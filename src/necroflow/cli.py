@@ -328,10 +328,11 @@ def _result_relative_path(node, label: str | None = None) -> Path:
     return Path(_node_display_label(node, label)) / node.path.name
 
 
-def _node_json(node, *, nodes_dir: Path | None = None) -> dict:
+def _node_json(node) -> dict:
     """Serialize one node and its execution metadata for CLI JSON."""
     data = {
         "key": node.relative_path.as_posix(),
+        "relative_path": node.relative_path.as_posix(),
         "label": node.rule_call.dag.label_for(node),
         "labels": list(node.rule_call.dag.labels_for(node)),
         "output_name": node.output_name,
@@ -347,11 +348,6 @@ def _node_json(node, *, nodes_dir: Path | None = None) -> dict:
         "constraints": dict(getattr(node.rule, "constraints", {})) if node.rule else {},
         "config": dict(node.config),
     }
-    if nodes_dir is not None and node.path is not None:
-        try:
-            data["relative_path"] = node.path.relative_to(nodes_dir).as_posix()
-        except ValueError:
-            data["relative_path"] = str(node.path)
     return data
 
 
@@ -369,14 +365,13 @@ def _edge_json(nodes: list) -> list[dict]:
     ]
 
 
-def _outputs_payload(combos, *, nodes_dir: Path, results_dir: Path) -> dict:
+def _outputs_payload(combos, *, results_dir: Path) -> dict:
     """Describe requested node-store and visible result paths for each job."""
     jobs = []
     for label, pipeline, request in combos:
         requested = []
         for binding in request:
             node = binding.node
-            node_rel = node.path.relative_to(nodes_dir)
             result_rel = _result_relative_path(node, binding.label)
             requested.append(
                 {
@@ -386,20 +381,20 @@ def _outputs_payload(combos, *, nodes_dir: Path, results_dir: Path) -> dict:
                     "node_path": str(node.path),
                     "result_path": str(results_dir / label / result_rel),
                     "relative_path": result_rel.as_posix(),
-                    "node_relative_path": node_rel.as_posix(),
+                    "node_relative_path": node.relative_path.as_posix(),
                 }
             )
         jobs.append({"label": label, "requested": requested})
     return {"jobs": jobs}
 
 
-def _graph_payload(dag, combos, *, nodes_dir: Path) -> dict:
+def _graph_payload(dag, combos) -> dict:
     """Serialize a DAG, its edges, and per-job requests for graph JSON."""
     requested = {node.relative_path for node in dag.required_nodes}
     return {
         "nodes": [
             {
-                **_node_json(node, nodes_dir=nodes_dir),
+                **_node_json(node),
                 "requested": node.relative_path in requested,
             }
             for node in dag.nodes
@@ -484,9 +479,7 @@ def _explain_payload(args) -> dict:
                 "config": dict(call.config),
                 "command": command,
                 "reasons": plan.reasons[call.relative_path],
-                "outputs": [
-                    _node_json(output, nodes_dir=nodes_dir) for output in call.outputs
-                ],
+                "outputs": [_node_json(output) for output in call.outputs],
             }
         )
     return {
@@ -662,7 +655,7 @@ def _graph(args) -> None:
         args, nodes_dir=nodes_dir
     )
     if args.json:
-        _emit_json(_graph_payload(dag, combos, nodes_dir=nodes_dir))
+        _emit_json(_graph_payload(dag, combos))
         return
     if args.png:
         title = ", ".join(Path(j).stem for j in args.jobs)
@@ -683,9 +676,7 @@ def _outputs(args) -> None:
     )
     _preflight_result_paths(results_dir, combos)
     if args.json:
-        _emit_json(
-            _outputs_payload(combos, nodes_dir=nodes_dir, results_dir=results_dir)
-        )
+        _emit_json(_outputs_payload(combos, results_dir=results_dir))
         return
     for label, pipeline, request in combos:
         print(f"[{label}]")

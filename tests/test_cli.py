@@ -143,7 +143,9 @@ def test_results_can_use_separate_nodes_and_results_dirs(tmp_path):
     assert doc["outputs"]["log"]["path"] == "log/run.log"
     assert doc["outputs"]["log"]["origin_node_key"] == P.log.relative_path.as_posix()
     content_hash = doc["outputs"]["log"]["content_hash"]
-    assert content_hash.startswith("blake3:") and len(content_hash) == len("blake3:") + 64
+    assert (
+        content_hash.startswith("blake3:") and len(content_hash) == len("blake3:") + 64
+    )
 
 
 def test_materialization_rejects_malformed_manifest(tmp_path):
@@ -1552,6 +1554,58 @@ def _json_stdout(capsys):
     import json
 
     return json.loads(capsys.readouterr().out)
+
+
+@pytest.mark.parametrize("command", ["outputs", "graph", "explain"])
+@pytest.mark.parametrize(
+    "root_kind", ["default", "relative", "absolute", "legacy", "symlink"]
+)
+def test_json_node_paths_are_relative_to_store(
+    tmp_path, factory_file, capsys, monkeypatch, command, root_kind
+):
+    """JSON node paths remain canonical relative keys for every root spelling."""
+    monkeypatch.chdir(tmp_path)
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    nodes_dir = tmp_path / "nodes"
+    if root_kind == "default":
+        flags = []
+    elif root_kind == "relative":
+        flags = ["--nodes-dir", "nodes"]
+    elif root_kind == "absolute":
+        flags = ["--nodes-dir", str(nodes_dir)]
+    elif root_kind == "legacy":
+        flags = ["--outdir", "nodes"]
+    else:
+        nodes_dir.mkdir()
+        alias = tmp_path / "alias"
+        alias.symlink_to(nodes_dir, target_is_directory=True)
+        flags = ["--nodes-dir", str(alias)]
+
+    main([command, "--json", *flags, str(job)])
+
+    payload = _json_stdout(capsys)
+    if command == "outputs":
+        rows = payload["jobs"][0]["requested"]
+        path_field, relative_field, key_field = (
+            "node_path",
+            "node_relative_path",
+            "node_key",
+        )
+    else:
+        rows = (
+            payload["nodes"]
+            if command == "graph"
+            else [node for call in payload["calls"] for node in call["outputs"]]
+        )
+        path_field, relative_field, key_field = "path", "relative_path", "key"
+    assert rows
+    for row in rows:
+        relative = Path(row[relative_field])
+        assert not relative.is_absolute()
+        assert row[relative_field] == row[key_field]
+        assert nodes_dir / relative == Path(row[path_field])
+        assert not Path(row[path_field]).exists()
 
 
 def test_outputs_json_lists_requested_paths(tmp_path, factory_file, capsys):
