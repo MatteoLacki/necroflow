@@ -13,7 +13,6 @@ provide a `name` attribute and a `hash_path(path, threads)` method.
 from __future__ import annotations
 
 import hashlib
-import mmap
 import re
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -23,6 +22,9 @@ from necroflow.config import load_callable
 DEFAULT_HASHER = "blake3"
 
 _HASH_CHUNK_SIZE = 1024 * 1024
+# Large enough that BLAKE3 splits each chunk across its threads, small enough
+# that hashing never holds more than one chunk however big the output is.
+_PARALLEL_CHUNK_SIZE = 64 * 1024 * 1024
 _NAME_PATTERN = re.compile(r"[a-z0-9][a-z0-9_.-]*")
 
 
@@ -68,7 +70,7 @@ class Sha256Hasher:
 
 
 class Blake3Hasher:
-    """BLAKE3 over the output bytes, spreading each file across `threads`."""
+    """BLAKE3 over the output bytes, spreading each chunk across `threads`."""
 
     name = "blake3"
 
@@ -76,16 +78,17 @@ class Blake3Hasher:
         import blake3
 
         digest = blake3.blake3(max_threads=max(1, threads))
+        buffer = bytearray(_PARALLEL_CHUNK_SIZE)
+        view = memoryview(buffer)
         for relative, file in _output_files(path):
             if relative:
                 digest.update(relative.encode())
-            with file.open("rb") as handle:
-                if file.stat().st_size == 0:
-                    continue
-                # One whole-file buffer is what lets BLAKE3 split the work
-                # across threads; mmap makes that buffer free.
-                with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as view:
-                    digest.update(view)
+            # Chunked reads, not mmap: a mapped file's pages count towards
+            # this process's memory as they are read, which for a 140 GB
+            # output column exhausts RAM.
+            with file.open("rb", buffering=0) as handle:
+                while size := handle.readinto(buffer):
+                    digest.update(view[:size])
         return digest.hexdigest()
 
 

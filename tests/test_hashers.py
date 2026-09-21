@@ -182,3 +182,32 @@ def test_load_hasher_rejects_names_that_would_break_tags(tmp_path):
     )
     with pytest.raises(ValueError, match="hasher name"):
         load_hasher(f"{plugin}:Bad")
+
+
+def test_blake3_reads_large_files_in_bounded_chunks(tmp_path, monkeypatch):
+    """Memory must not grow with file size: never map or read a whole file."""
+    monkeypatch.setattr(hashers, "_PARALLEL_CHUNK_SIZE", 1024)
+    path = tmp_path / "large.bin"
+    content = bytes(range(256)) * 20  # 5 chunks
+    path.write_bytes(content)
+    requested = []
+    real_open = Path.open
+
+    class Recorder:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.handle.__exit__(*args)
+
+        def readinto(self, buffer):
+            requested.append(len(buffer))
+            return self.handle.readinto(buffer)
+
+    monkeypatch.setattr(Path, "open", lambda self, *a, **k: Recorder(real_open(self, *a, **k)))
+
+    assert Blake3Hasher().hash_path(path, threads=4) == blake3.blake3(content).hexdigest()
+    assert requested and set(requested) == {1024}
