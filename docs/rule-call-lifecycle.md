@@ -305,6 +305,15 @@ Rule names and output filenames must each be one safe relative path component.
 The actual filesystem's component and total path limits are checked before the
 rule returns.
 
+Co-outputs must resolve to distinct paths within their shared hashed workdir.
+Duplicate paths raise `ValueError` during the rule call, before DAG interning or
+filesystem mutation. The error identifies the rule, both output names and
+NodeTypes, and the conflicting filename. Change one output's `NodeType.filename`
+to fix it; if both outputs use the same type, declare a separate subclass with a
+different filename. Renaming an output variable alone does not change its path.
+Inputs retain their parent calls' paths, so matching basenames across distinct
+workdirs are valid; inputs are not automatically copied into the consumer's workdir.
+
 ## 7. The DAG interns the RuleCall immediately
 
 The DAG is a dictionary-backed canonical registry:

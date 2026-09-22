@@ -430,21 +430,59 @@ def test_direct_nodetype_construction_is_rejected():
         A()
 
 
-def test_rule_rejects_cooutputs_with_the_same_realized_filename(tmp_path):
-    """One rule call cannot map two output names onto the same filesystem path."""
+@pytest.mark.parametrize("same_type", [False, True])
+def test_rule_rejects_cooutputs_with_the_same_realized_filename(tmp_path, same_type):
+    """Co-output collisions explain the fix before DAG or filesystem mutation."""
 
     class AlsoA(NodeType):
         filename = "a.txt"
 
+    second_type = A if same_type else AlsoA
     rule = Rule(
         "duplicate_outputs",
         Inputs(value=str),
-        Outputs(first=A, second=AlsoA),
+        Outputs(first=A, second=second_type),
         "touch {first} {second}",
     )
+    nodes_dir = tmp_path / "nodes"
+    dag = DAG(nodes_dir)
 
-    with pytest.raises(ValueError, match="declares duplicate output path"):
-        rule(Pipeline(DAG(tmp_path)), value="x")
+    with pytest.raises(ValueError, match="declares duplicate output path") as error:
+        rule(Pipeline(dag), value="x")
+
+    message = str(error.value)
+    assert "rule 'duplicate_outputs'" in message
+    assert "outputs 'first' (A)" in message
+    assert f"'second' ({second_type.__name__})" in message
+    assert "same filename 'a.txt'" in message
+    assert "Change one output's NodeType.filename to a distinct filename" in message
+    assert "separate NodeType subclass" in message
+    assert "renaming only the output variable does not change its filename" in message
+    assert dag.calls == {}
+    assert dag.nodes == []
+    assert not nodes_dir.exists()
+
+
+def test_rule_allows_matching_input_and_output_basenames_in_distinct_workdirs(tmp_path):
+    """Inputs keep their parent paths, so equal basenames across calls are safe."""
+    pipeline = Pipeline(DAG(tmp_path / "nodes"))
+    first = R_make_a(pipeline, x="first")
+    second = R_make_a(pipeline, x="second")
+    consume = Rule(
+        "consume",
+        Inputs(first=A, second=A),
+        Outputs(result=A),
+        "cat {first} {second} > {result}",
+    )
+
+    result = consume(pipeline, first, second)
+
+    assert first.path.name == second.path.name == result.path.name == "a.txt"
+    assert len({first.path.parent, second.path.parent, result.path.parent}) == 3
+    args = result.rule_call.command_args()
+    assert args.inputs.first == first.path
+    assert args.inputs.second == second.path
+    assert args.outputs.result == result.path
 
 
 def test_pipeline_requires_a_dag_owner():

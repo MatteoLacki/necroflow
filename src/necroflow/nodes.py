@@ -97,7 +97,7 @@ class Node:
         )
         workdir = call.workdir
         nodes: list[Node] = []
-        output_paths: set[Path] = set()
+        output_paths: dict[Path, str] = {}
         for oname, otype in outputs_specs.items():
             output_filename = otype.filename
             assert output_filename is not None
@@ -106,11 +106,19 @@ class Node:
             )
             relative_path = call.relative_path / filename
             if relative_path in output_paths:
+                previous_name = output_paths[relative_path]
+                previous_type = outputs_specs[previous_name]
                 raise ValueError(
                     f"rule {rule.__name__!r} declares duplicate output path "
-                    f"{relative_path}"
+                    f"{relative_path}: outputs {previous_name!r} "
+                    f"({previous_type.__name__}) and {oname!r} "
+                    f"({otype.__name__}) resolve to the same filename "
+                    f"{relative_path.name!r} in one hashed workdir. "
+                    "Change one output's NodeType.filename to a distinct filename "
+                    "(use a separate NodeType subclass if both outputs share a type); "
+                    "renaming only the output variable does not change its filename."
                 )
-            output_paths.add(relative_path)
+            output_paths[relative_path] = oname
             nodes.append(
                 Node(
                     output_name=oname,
