@@ -131,6 +131,11 @@ See [Scheduler Protocol](schedulers.md).
 
 Default cap is `threads = os.cpu_count()`. `resource_caps` overrides or adds caps. Uncapped resources do not limit admission. `hasher` selects the output content hasher (default BLAKE3); see `docs/caching.md`.
 
+A rule declaring `threads="all"` resolves against the run's thread cap: `run()` and
+`cli explain` call `RuleCall.bind_thread_cap(cap)` on every call before scheduling or
+resolving commands, so `resources["threads"]` and the realized command reflect the
+actual cap for that run, not a per-rule guess. See [Rules](rules.md#all-available-threads).
+
 Scheduler order is priority, not guaranteed start order under resource pressure. Executor admits selected calls whose capped resource totals fit. When nothing runs, one oversized call may run alone to prevent deadlock.
 
 Resources remain reserved across retries.
