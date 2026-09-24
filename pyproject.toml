@@ -32,6 +32,7 @@ dev = [
     "twine",
     "pytest",
     "pytest-cov",
+    "pytest-xdist",
     "pyright",
     "networkx",
 ]
