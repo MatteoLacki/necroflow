@@ -482,7 +482,7 @@ Planning begins inside `dag.run()` under the node-store lock. It converts reques
 
 Missing and stale RuleCalls become ready after every parent call is up to date. Default FIFO ordering follows canonical RuleCall registration. Custom schedulers receive ready calls, remaining calls, and available resource capacity. Executor retains dependency gates, resource admission, submission, retries, and state transitions.
 
-One submission runs one complete RuleCall. The default runner delegates to `RuleCall.run(log_path)`; callable command realization happens there and is cached on the canonical call. Realization also strips a leading `{name}:` Docker prefix; `RuleCall.container` then returns the selected `Docker` value and `RuleCall.run` launches it with `docker run`. The runner must produce every declared output.
+One submission runs one complete RuleCall. Before each attempt, the executor clears the call's declared outputs (`RuleCall.clear_outputs()`), so a replay into an existing identity-addressed directory never finds a prior output already there; other files under `{workdir}` are left alone. The default runner delegates to `RuleCall.run(log_path)`; callable command realization happens there and is cached on the canonical call. Realization also strips a leading `{name}:` Docker prefix; `RuleCall.container` then returns the selected `Docker` value and `RuleCall.run` launches it with `docker run`. The runner must produce every declared output.
 
 ## 13. Materialization commits cache state
 

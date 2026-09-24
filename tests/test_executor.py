@@ -48,6 +48,9 @@ class ShellOut(NodeType):
 
 
 R_make_a = Rule("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
+R_make_a_exclusive = Rule(
+    "make_a_exclusive", Inputs(x=str), Outputs(a=A), "[ ! -e {a} ] && touch {a}"
+)
 R_make_a_workdir = Rule(
     "make_a_workdir",
     Inputs(x=str),
@@ -348,6 +351,28 @@ def test_forced_parent_same_bytes_keeps_child_cached(tmp_path):
 
     assert P.a.path.stat().st_mtime > mtime_a
     assert P.b.path.stat().st_mtime == mtime_b
+
+
+def test_replay_clears_declared_output_before_rerun(tmp_path):
+    """A command that refuses to overwrite its own output must still survive a replay.
+
+    Identity (and so the workdir path) is unchanged by a forced-stale replay, so
+    without clearing declared outputs first, this rule's own exclusive-create
+    guard would find its prior output already there and fail.
+    """
+    shell = shutil.which("sh") or "/bin/sh"
+    P = Pipeline(DAG(tmp_path), shellpath=shell)
+    P.a = R_make_a_exclusive(P, x="x")
+    run_pipeline(P)
+    mtime_a = P.a.path.stat().st_mtime
+
+    import time
+
+    time.sleep(0.05)
+    report = run_pipeline(P, forced_stale_call_keys={P.a.rule_call.relative_path})
+
+    assert report[P.a.rule_call.relative_path.as_posix()].state == "up_to_date"
+    assert P.a.path.stat().st_mtime > mtime_a
 
 
 def test_compromised_parent_same_bytes_keeps_child_cached(tmp_path):

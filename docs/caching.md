@@ -86,7 +86,7 @@ def compute(input: Input):
     return result
 ```
 
-The `{workdir}` directory is created before the command runs. Files written there are kept by default, just like declared outputs, because the directory is part of the cached rule-call result. The name `workdir` is reserved for this built-in placeholder and cannot be used as an input or output name.
+The `{workdir}` directory is created before the command runs. Before each command attempt — including a replay into an existing directory, and each retry under `repeat` — necroflow deletes any of the call's declared outputs left over from a previous attempt or run, so a command never finds its own prior output already there. Other files written under `{workdir}` (e.g. scratch subdirectories) are untouched and kept by default, because the directory is part of the cached rule-call result. The name `workdir` is reserved for this built-in placeholder and cannot be used as an input or output name.
 
 Declared inputs, config values, and outputs may be unused by a command; they
 still participate in identity. Any static-template placeholder that does

@@ -258,6 +258,7 @@ def _run_with_retries(call: RuleCall, runner) -> None:
     maximum = call.rule.repeat
     for attempt in range(1, maximum + 1):
         try:
+            call.clear_outputs()
             runner(call, call.log_path())
             return
         except subprocess.CalledProcessError as exc:

@@ -302,6 +302,22 @@ class RuleCall:
         shutil.rmtree(self.workdir)
         return True
 
+    def clear_outputs(self) -> None:
+        """Delete any declared outputs left from a previous attempt or run.
+
+        Identity (and so the workdir path) does not change when only a
+        parent's bytes change, so a replay reuses its existing directory.
+        Declared outputs are cleared before every command attempt so a
+        replay never sees a prior output file or directory; other files
+        written under `{workdir}` are left alone.
+        """
+        for output in self.outputs:
+            path = output.path
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                shutil.rmtree(path)
+
     def _accumulated_config(self, visited: dict[Path, dict] | None = None) -> dict:
         """Merge this call config over every ancestor config, nearest wins."""
         if visited is None:
