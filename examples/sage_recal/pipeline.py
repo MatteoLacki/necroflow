@@ -10,17 +10,24 @@ lineage (subset spectra + original config, then full spectra + recalibrated conf
 each call gets its own cache address and only the second call reruns when recalibration
 changes.
 
-Factory signature follows necroflow's CLI contract (`factory(config: dict) -> Pipeline`,
-see necroflow/src/necroflow/templates/canonical/pipeline.py) so this file runs unmodified
-both via `import` (structural tests) and via `necroflow --pipeline pipeline.py:... --config
-job.toml` (the Docker image, see ../README.md).
+The workflow follows necroflow's CLI contract: `(P: Pipeline, config: dict) -> None`.
+It runs both through direct Python calls and through `necroflow job.toml`, whose
+`.pipeline` key selects `pipeline.py:recalibrated_sage_search`.
 """
 
 from __future__ import annotations
 
 import json
 
-from necroflow import NodeType, Pipeline, command, symlink_file, text_file, output
+from necroflow import (
+    NodeType,
+    Pipeline,
+    command,
+    symlink_file,
+    text_file,
+    output,
+    workflow,
+)
 
 
 # --- node types ---
@@ -121,15 +128,16 @@ def raw_fasta(path: str):
     return raw_fasta
 
 
+@workflow
 def raw_spectra(P: Pipeline, path: str):
     """Dispatch to raw_mzml/raw_mgf by the real file's extension -- see the comment
     above SpectraFile's definition for why a mismatched extension is a silent,
     zero-spectra Sage failure."""
     lower = str(path).lower()
     if lower.endswith(".mgf"):
-        return raw_mgf(P, path=path)
+        return raw_mgf(path=path)
     if lower.endswith(".mzml") or lower.endswith(".mzml.gz"):
-        return raw_mzml(P, path=path)
+        return raw_mzml(path=path)
     raise ValueError(
         f"unsupported spectra file extension: {path!r} (expected .mzml or .mgf)"
     )
@@ -213,6 +221,7 @@ def update_sage_config(sage_config: SageConfig, tolerance: RecalibrationToleranc
     return recalibrated_sage_config
 
 
+@workflow
 def recalibrated_sage_search(P: Pipeline, config: dict) -> None:
     """Two-pass Sage search: the first pass searches a subset of the spectra to
     estimate mass error, then the second pass re-runs the full spectra file with
@@ -233,12 +242,11 @@ def recalibrated_sage_search(P: Pipeline, config: dict) -> None:
     made things worse, because the calibration sample never saw the full error range
     to correct for. A wide calibration-only tolerance fixes that."""
     P.spectra = raw_spectra(P, config["spectra_path"])
-    P.fasta = raw_fasta(P, path=config["fasta_path"])
+    P.fasta = raw_fasta(path=config["fasta_path"])
     P.sage_config = write_sage_config(
-        P, text=json.dumps(config["sage"], sort_keys=True, indent=2) + "\n"
+        text=json.dumps(config["sage"], sort_keys=True, indent=2) + "\n"
     )
     P.calibration_sage_config = write_sage_config(
-        P,
         text=json.dumps(
             {**config["sage"], **config["calibration_tol"]}, sort_keys=True, indent=2
         )
@@ -247,26 +255,25 @@ def recalibrated_sage_search(P: Pipeline, config: dict) -> None:
 
     # First search: top-K subset, wide exploratory tolerance, for mass-error estimation.
     P.recal_subset = select_recalibration_spectra(
-        P, P.spectra, top_k=config["recal_top_k"]
+        P.spectra, top_k=config["recal_top_k"]
     )
     P.recal_json, P.recal_pin, P.recal_tsv, P.recal_fragments = run_sage(
-        P, P.recal_subset, P.fasta, P.calibration_sage_config
+        P.recal_subset, P.fasta, P.calibration_sage_config
     )
 
     # Recalibrate: fit tolerances AND correct the full spectra file's m/z from the
     # first-pass identifications (see recalibrate_spectra's docstring for why both).
     P.tolerance, P.recalibrated_spectra = recalibrate_spectra(
-        P,
         P.recal_tsv,
         P.spectra,
         fdr=config["fdr"],
         q_column=config.get("recal_q_column", "peptide_q"),
     )
-    P.recalibrated_config = update_sage_config(P, P.sage_config, P.tolerance)
+    P.recalibrated_config = update_sage_config(P.sage_config, P.tolerance)
 
     # Second search: full, m/z-corrected spectra file, recalibrated tolerances.
     P.json, P.pin, P.tsv, P.fragments = run_sage(
-        P, P.recalibrated_spectra, P.fasta, P.recalibrated_config
+        P.recalibrated_spectra, P.fasta, P.recalibrated_config
     )
 
 

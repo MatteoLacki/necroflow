@@ -18,11 +18,11 @@ See [COMPARISON.md](COMPARISON.md) for a detailed comparison with Snakemake, Nex
 
 ## Define a pipeline
 
-A command-line run points at a Python pipeline factory. Rules describe typed outputs and shell commands; the factory wires rule calls into a pipeline.
+A command-line run points at a Python workflow. Rules describe typed outputs and shell commands; the workflow wires rule calls into a pipeline.
 
 ```python
 # pipeline.py
-from necroflow import DAG, NodeType, Pipeline, command, symlink_file, output
+from necroflow import DAG, NodeType, Pipeline, command, symlink_file, output, workflow
 
 class Fastq(NodeType):
     filename = "reads.fastq.gz"
@@ -48,10 +48,11 @@ def count(bam: Bam, gene_model: str):
     counts = output(Counts)
     return counts
 
+@workflow
 def rna_pipeline(P: Pipeline, config: dict) -> None:
-    P.fastq = raw_fastq(P, path=config["path"])
-    P.bam = align(P, P.fastq, ref=config["ref"])
-    P.counts = count(P, P.bam, gene_model=config["gene_model"])
+    P.fastq = raw_fastq(path=config["path"])
+    P.bam = align(P.fastq, ref=config["ref"])
+    P.counts = count(P.bam, gene_model=config["gene_model"])
 ```
 
 ## Request pipeline results
@@ -73,27 +74,30 @@ omitted, necroflow requests every labelled sink Node. More on jobs in [Job TOML 
 `P.subpipeline(prefix)` returns a view over the same Pipeline. Assignments through the view are registered on the root with the prefix, while rule identity and DAG deduplication remain unchanged:
 
 ```python
-def sample_pipeline(P: Pipeline, reference, sample: dict) -> None:
-    P.fastq = raw_fastq(P, path=sample["reads"])
-    P.bam = align(P, P.fastq, reference)
-    P.counts = count(P, P.bam)
+from necroflow import workflow
 
+@workflow
+def sample_pipeline(P: Pipeline, reference, sample: dict) -> None:
+    P.fastq = raw_fastq(path=sample["reads"])
+    P.bam = align(P.fastq, ref=reference)
+    P.counts = count(P.bam, gene_model=sample["gene_model"])
+
+@workflow
 def cohort_pipeline(P: Pipeline, config: dict) -> None:
-    P.reference = prepare_reference(P, path=config["reference"])
     for sample in config["samples"]:
         sample_pipeline(
             P.subpipeline(f"samples/{sample['name']}"),
-            P.reference,
+            config["reference"],
             sample,
         )
 ```
 
-The resulting labels include `samples/A/bam` and `samples/A/counts`. Prefixes are request/result names only and never enter fingerprints. The CLI calls `P.finish()` after a successful factory return. Direct Python callers must finish the root before selecting `P.sinks()`; finishing freezes the root and every subpipeline view.
+The resulting labels include `samples/A/bam` and `samples/A/counts`. Prefixes are request/result names only and never enter fingerprints. The CLI calls `P.finish()` after a successful workflow return. Direct Python callers must finish the root before selecting `P.sinks()`; finishing freezes the root and every subpipeline view.
 
 ## Core ideas
 
 - **Rules** describe how to produce outputs from inputs — shell command templates with typed I/O and lint-clean `name = output(NodeType)` declarations.
-- **Pipelines** wire rule calls together for a single config; prefixed subpipeline views make reusable loop-generated outputs requestable.
+- **Workflows** wire rule calls together for a single config using a `Pipeline` for labels; prefixed subpipeline views make reusable loop-generated outputs requestable.
 - **DAG** runs many pipelines at once, deduplicating shared upstream work across samples automatically.
 - **Paths** are derived from a lineage-derived fingerprint of the full input chain — same inputs always produce the same path, different inputs produce different paths. The filesystem is the cache.
 
@@ -111,32 +115,52 @@ necroflow supports POSIX systems (Linux and macOS). We do not offer native Windo
 
 ## Compose pipeline fragments
 
-A command-line pipeline factory receives a `Pipeline` view of the shared DAG and mutates it:
-`factory(P, config) -> None`. The CLI creates one DAG with the node-store path,
-then creates `P` with that DAG, the fingerprint policy, and shell context before
-calling the factory. Consequently,
-every rule call receives `P` first and returns Nodes whose absolute paths and
-fingerprints are already final and already interned in the DAG.
+A command-line workflow has the signature `build_workflow(P, config) -> None`.
+The CLI creates the shared DAG and an open `Pipeline`, then calls the workflow.
+`@workflow` activates its first positional Pipeline argument while the function
+runs. Rules retrieve that context automatically; their Nodes already have final
+paths and fingerprints and are interned in the DAG when the calls return.
+
+The decorator restores the previous context on return or exception. Decorated
+subworkflows can therefore activate `P.subpipeline(prefix)` temporarily. Ordinary
+helpers inherit the active context; helpers switching views must be decorated or
+pass their Pipeline explicitly to rules. Labels still require `P.name = node` or
+`P[label] = node`; returning a Node does not publish it.
+
+Explicit calls such as `align(P, reads, ref="hg38")` remain supported, including
+outside workflows. An explicit Pipeline takes precedence for that call without
+changing the active context. Calls with neither an explicit Pipeline nor an
+active workflow raise `RuntimeError` explaining both options.
+
+The first workflow argument must be an open Pipeline: missing/wrong owners raise
+`TypeError`, and finished owners raise `RuntimeError`. Each message identifies the
+workflow and states the requirement. Coroutine, generator, and async-generator
+functions raise `TypeError` at decoration because their bodies defer execution
+beyond the synchronous context.
 
 For reusable internal fragments, pass an existing pipeline to a helper that
 adds its named nodes. This lets several fragments contribute to one public
-factory without changing the CLI factory signature:
+workflow without changing the CLI workflow signature:
 
 ```python
-def add_alignment(P, config):
-    P.fastq = raw_fastq(P, path=config["path"])
-    P.bam = align(P, P.fastq, ref=config["ref"])
+from necroflow import workflow
 
+@workflow
+def add_alignment(P, config):
+    P.fastq = raw_fastq(path=config["path"])
+    P.bam = align(P.fastq, ref=config["ref"])
+
+@workflow
 def rna_pipeline(P, config):
     add_alignment(P, config)
-    P.counts = count(P, P.bam, gene_model=config["gene_model"])
+    P.counts = count(P.bam, gene_model=config["gene_model"])
 ```
 
 An assembler mutates the supplied pipeline, so its labels must not conflict
 with labels added by another fragment. Use this form for components that belong
 to one pipeline. The caller creates a fresh `Pipeline(dag)` for each independent
 config. Equivalent upstream calls are canonicalized immediately in the shared
-DAG; after each factory, the caller marks its sinks or explicit outputs with
+DAG; after each workflow, the caller marks its sinks or explicit outputs with
 `dag.require(...)`.
 
 Attribute and item labels share one namespace. Use `P.counts` for ordinary
@@ -156,7 +180,7 @@ with Pipeline API attributes such as `nodes` are item-only.
 
 ## Run from the CLI
 
-Create a job TOML that references the factory and carries the concrete parameters for one run.
+Create a job TOML that references the workflow and carries the concrete parameters for one run.
 
 ```toml
 # job.toml

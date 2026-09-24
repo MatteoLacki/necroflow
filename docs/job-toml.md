@@ -11,16 +11,16 @@
 # optional — Pipeline labels to request (defaults to all sink labels)
 ".requests" = ["counts", "dataset/qc"]
 
-# user config — passed as the second factory argument after Pipeline
+# user config — passed as the second workflow argument after Pipeline
 ref    = "hg38"
 sample = "NA12878"
 ```
 
 Keys starting with `.` are necroflow metadata and are stripped before the dict
-reaches the factory. User config can freely use names such as `pipeline` or `request`.
-The loaded callable must have the shape `factory(P: Pipeline, config: dict) ->
+reaches the workflow. User config can freely use names such as `pipeline` or `request`.
+The loaded callable must have the shape `build_workflow(P: Pipeline, config: dict) ->
 None`. Necroflow constructs `P` with `--nodes-dir` and `--shellpath` before
-invoking the factory. Fingerprinting is framework-owned; `.fingerprint` is
+invoking the workflow. Fingerprinting is framework-owned; `.fingerprint` is
 rejected rather than forwarded.
 
 `.requests` must be an array of strings. Each string is an exact Pipeline label;
@@ -51,6 +51,6 @@ colliding.
 Pass `--long-names` to use full nested parameter paths instead:
 `experiment__ref+hg38__aligner+bwa`, `experiment__ref+hg38__aligner+bowtie2`, etc.
 Grid expansion also applies to `pipeline` itself, so a single job TOML can fan
-out across different factory functions.
+out across different workflow functions.
 
 [Previous: Command-Line Interface](cli.md) | [README](../README.md) | [Next: Config Validation](config-validation.md)

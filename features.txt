@@ -140,10 +140,11 @@ necroflow
 │       └── necroflow-config-set for TOML/JSON open-update-save steps
 │
 ├── Job TOML
-│   ├── .pipeline factory reference
-│   ├── CLI-supplied Pipeline via factory(P, config) -> None
+│   ├── .pipeline workflow reference
+│   ├── CLI-supplied Pipeline via build_workflow(P, config) -> None
+│   ├── @workflow scoped rule calls; explicit rule(P, ...) also supported
 │   ├── .requests target selection
-│   ├── metadata-stripped config passed to factory
+│   ├── metadata-stripped config passed to workflow
 │   ├── __grid expansion
 │   ├── multiple job files
 │   └── stable combo labels

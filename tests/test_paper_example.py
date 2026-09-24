@@ -16,7 +16,7 @@ def _load_example():
     return module
 
 
-def test_paper_example_factories_have_consistent_contracts():
+def test_paper_example_workflows_have_consistent_contracts():
     example = _load_example()
     config = example.example_config()
 

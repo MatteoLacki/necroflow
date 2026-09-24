@@ -211,7 +211,7 @@ def test_pipeline_finish_freezes_root_and_all_subpipeline_views():
 
 
 def test_only_root_pipeline_can_finish_shared_construction():
-    """A nested factory must not accidentally freeze its caller's Pipeline."""
+    """A nested workflow must not accidentally freeze its caller's Pipeline."""
     P = Pipeline(DAG(TEST_NODES_DIR))
     sample = P.subpipeline("sample")
 

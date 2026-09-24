@@ -6,10 +6,10 @@ pipeline_spec — the raw '.pipeline' string from the job TOML,
                 e.g. 'pipelines/rna.py:build'.  Resolved by load_callable from
                 a file path and a function name.
 
-factory       — a user-supplied Python function loaded from a pipeline_spec.
-                Signature: factory(Pipeline, config: dict) -> None.
+workflow      — a user-supplied Python function loaded from a pipeline_spec.
+                Signature: build_workflow(Pipeline, config: dict) -> None.
 
-job TOML      — a TOML file describing one run: which factory to call, which
+job TOML      — a TOML file describing one run: which workflow to call, which
                 outputs to request, and what config parameters to pass.
                 Must contain a '.pipeline' key; all other keys become config.
 
@@ -245,12 +245,12 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
                     )
                 if validators:
                     _validate_job_config(job_config, validators, job_path)
-                factory = load_callable(job_config.pipeline_spec, kind="pipeline")
+                workflow_fn = load_callable(job_config.pipeline_spec, kind="pipeline")
                 pipeline = Pipeline(dag, shellpath=shellpath)
-                result = factory(pipeline, job_config.config)
+                result = workflow_fn(pipeline, job_config.config)
                 if result is not None:
                     raise TypeError(
-                        f"pipeline factory {job_config.pipeline_spec!r} must mutate "
+                        f"workflow {job_config.pipeline_spec!r} must mutate "
                         "the supplied Pipeline and return None"
                     )
                 pipeline.finish()

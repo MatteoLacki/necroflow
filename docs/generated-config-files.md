@@ -5,10 +5,9 @@
 Tool-specific config can live in necroflow in two useful ways.
 
 First, keep large tool configs inside the main job TOML as ordinary tables. This
-is useful when the job TOML is the run contract: one file contains the pipeline
-factory, sample-specific parameters, tool settings, and optional grid axes. The
-settings then participate naturally in necroflow fingerprints because the
-pipeline factory serializes the table into a normal rule input.
+is useful when the job TOML is the run contract: one file contains the workflow, sample-specific parameters, tool settings, and
+optional grid axes. The settings then participate naturally in necroflow fingerprints because the
+workflow serializes the table into a normal rule input.
 
 Second, keep tool configs as separate files and put only their paths in the job
 TOML. This is the Snakemake-style layout: each tool can own its native config
@@ -22,13 +21,16 @@ A separate config file can be passed as a normal string parameter when that is
 all the downstream command needs:
 
 ```python
+from necroflow import workflow
+
 @command("sage --config {sage_config_path} --mzml {spectra} --out {sage_out}")
 def run_sage(spectra: Mzml, sage_config_path: str):
     sage_out = output(SageOut)
     return sage_out
+@workflow
 def pipeline(P: Pipeline, config: dict) -> None:
     P.sage_out = run_sage(
-        P, P.spectra, sage_config_path=config["sage_config"]
+        P.spectra, sage_config_path=config["sage_config"]
     )
 ```
 
@@ -45,7 +47,7 @@ When the external config should be a typed artifact in the DAG, add an import or
 copy rule and pass the resulting node downstream:
 
 ```python
-from necroflow import NodeType, Pipeline, command, output
+from necroflow import NodeType, Pipeline, command, output, workflow
 
 class SageConfig(NodeType):
     filename = "sage.json"
@@ -60,9 +62,10 @@ def import_sage_config(path: str):
 def run_sage(spectra: Mzml, sage_config: SageConfig):
     sage_out = output(SageOut)
     return sage_out
+@workflow
 def pipeline(P: Pipeline, config: dict) -> None:
-    P.sage_config = import_sage_config(P, path=config["sage_config"])
-    P.sage_out = run_sage(P, P.spectra, P.sage_config)
+    P.sage_config = import_sage_config(path=config["sage_config"])
+    P.sage_out = run_sage(P.spectra, P.sage_config)
 ```
 
 This keeps the config as a normal upstream artifact. If in-place edits to the
@@ -74,7 +77,7 @@ producer itself a necroflow rule.
 
 For tools that normally consume a large config file, but whose settings belong in
 the main job TOML, register a built-in text-file rule and pass serialized config
-text from the pipeline factory. The text is written directly by Python, so it
+text from the workflow. The text is written directly by Python, so it
 avoids shell quoting problems and command-line length limits from patterns such
 as `printf {config}`.
 
@@ -95,7 +98,7 @@ def run_sage(spectra: SageInputStaged, fasta: Fasta, sage_config: SageConfig):
     return outdir, run_info
 ```
 
-A job TOML table can then be passed through as ordinary factory config:
+A job TOML table can then be passed through as ordinary workflow config:
 
 ```toml
 [sage]

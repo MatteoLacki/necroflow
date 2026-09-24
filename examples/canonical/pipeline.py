@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from necroflow import NodeType, Pipeline, command, text_file, output
+from necroflow import NodeType, Pipeline, command, text_file, output, workflow
 
 
 class RawText(NodeType):
@@ -46,11 +46,11 @@ def summarize(processed_text: ProcessedText):
     return summary
 
 
+@workflow
 def canonical_pipeline(P: Pipeline, config: dict) -> None:
-    P.raw = import_text(P, path=str(config["input"]))
+    P.raw = import_text(path=str(config["input"]))
     P.tool_config = write_tool_config(
-        P,
         text=json.dumps(config.get("tool", {}), sort_keys=True, indent=2) + "\n",
     )
-    P.processed = process_text(P, P.raw, P.tool_config)
-    P.summary = summarize(P, P.processed)
+    P.processed = process_text(P.raw, P.tool_config)
+    P.summary = summarize(P.processed)

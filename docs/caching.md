@@ -42,7 +42,7 @@ origin_node_key = "count/<provenance_hash>/counts.txt"
 content_hash = "blake3:<64 lowercase hexadecimal characters>"
 ```
 
-The key (`counts`) matches `P.counts = count(...)` in the factory function.
+The key (`counts`) matches `P.counts = count(...)` in the workflow function.
 
 See `examples/necroalchemy_grid.toml` and `examples/necroalchemy_factory.py`
 for a runnable example.

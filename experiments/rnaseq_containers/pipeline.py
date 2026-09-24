@@ -9,7 +9,7 @@ import tomllib
 from dataclasses import asdict
 from pathlib import Path
 
-from necroflow import DAG, Docker, NodeType, Pipeline, command, output
+from necroflow import DAG, Docker, NodeType, Pipeline, command, output, workflow
 
 ROOT = Path(__file__).resolve().parent
 
@@ -151,12 +151,10 @@ def multiqc(
     return report
 
 
-def build(root=ROOT, job=None):
+@workflow
+def rnaseq_workflow(p: Pipeline, root, job):
     """Discover pairs using Python and share a single canonical index."""
-    job = load_job() if job is None else job
     data = root / "data" / "short"
-    dag = DAG(root / "work" / "necroflow" / "nodes")
-    p = Pipeline(dag)
     docker = job["docker"]
     env = lambda tool: {
         "env": Docker(
@@ -165,8 +163,8 @@ def build(root=ROOT, job=None):
             run_args=docker["run_args"],
         )
     }
-    fasta = reference(p, path=str(data / "reference.fa"))
-    shared_index = index(p, fasta, **env("salmon"))
+    fasta = reference(path=str(data / "reference.fa"))
+    shared_index = index(fasta, **env("salmon"))
     reports, samples, selected = [], [], {}
     for path in sorted(data.glob("*_1.fq")):
         sample = path.name.removesuffix("_1.fq")
@@ -175,9 +173,9 @@ def build(root=ROOT, job=None):
         mate = path.with_name(f"{sample}_2.fq")
         if not mate.is_file():
             raise ValueError(f"Missing mate: {mate}")
-        a, b = read1(p, path=str(path)), read2(p, path=str(mate))
-        qc = fastqc(p, a, b, sample=sample, **env("fastqc"))
-        quant = quantify(p, shared_index, a, b, sample=sample, **env("salmon"))
+        a, b = read1(path=str(path)), read2(path=str(mate))
+        qc = fastqc(a, b, sample=sample, **env("fastqc"))
+        quant = quantify(shared_index, a, b, sample=sample, **env("salmon"))
         for label, node in [(f"fastqc/{sample}", qc), (f"quant/{sample}", quant)]:
             p[label] = node
             selected[label] = node
@@ -185,11 +183,17 @@ def build(root=ROOT, job=None):
         reports.extend([qc, quant])
     if not samples:
         raise ValueError(f"No paired reads in {data}")
-    config = report_config(p, path=str(root / "downloads" / "upstream" / "multiqc"))
-    p.report = multiqc(
-        p, tuple(reports), config, samples=tuple(samples), **env("multiqc")
-    )
+    config = report_config(path=str(root / "downloads" / "upstream" / "multiqc"))
+    p.report = multiqc(tuple(reports), config, samples=tuple(samples), **env("multiqc"))
     selected["multiqc"] = p.report
+    return selected
+
+
+def build(root=ROOT, job=None):
+    job = load_job() if job is None else job
+    dag = DAG(root / "work" / "necroflow" / "nodes")
+    p = Pipeline(dag)
+    selected = rnaseq_workflow(p, root, job)
     p.finish()
     dag.require(selected.values())
     return dag, selected

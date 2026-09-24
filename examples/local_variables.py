@@ -1,6 +1,6 @@
 """Build a rule chain with a rebound local variable and one public label."""
 
-from necroflow import DAG, NodeType, Pipeline, command, output, text_file
+from necroflow import DAG, NodeType, Pipeline, command, output, text_file, workflow
 
 
 class Text(NodeType):
@@ -28,14 +28,15 @@ def add_prefix(source: Text):
     return result
 
 
+@workflow
 def local_variable_pipeline(P: Pipeline, config: dict) -> None:
     """Rebind one local name through the chain and label only its result."""
-    current = write_text(P, text=config["text"] + "\n")
-    current = uppercase(P, current)
-    current = add_prefix(P, current)
+    current = write_text(text=config["text"] + "\n")
+    current = uppercase(current)
+    current = add_prefix(current)
     # THIS WILL NOT WORK WITH P.current:
-    # P.current = write_text(P, text=config["text"] + "\n")
-    # P.current = uppercase(P, current) # BOOM!
+    # P.current = write_text(text=config["text"] + "\n")
+    # P.current = uppercase(current) # BOOM!
     # second time P.current occurs as assignment against the key uniqueness principle
     # needed to assure pipeline nodes are uniquely requestable.
     P.result = current

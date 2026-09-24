@@ -121,7 +121,7 @@ dependency groups.
 ## Variadic Node inputs
 
 Use `tuple[NodeType, ...]` when a rule consumes an ordered number of Nodes
-that is only known while the pipeline factory runs. The call receives one actual
+that is only known while the workflow runs. The call receives one actual
 tuple for that named input:
 
 ```python
@@ -289,15 +289,18 @@ shape through pipeline assignments.
 
 ## Conditional pipelines
 
-Pipeline factory functions are plain Python, so `if/else` branching on config values works naturally:
+Workflow functions are plain Python, so `if/else` branching on config values works naturally:
 
 ```python
+from necroflow import workflow
+
+@workflow
 def my_pipeline(P: Pipeline, config) -> None:
-    P.a = align(P, path=config.path, ref=config.ref)
+    P.a = align(path=config.path, ref=config.ref)
     if config.call_variants:
-        P.result = call_snps(P, P.a)
+        P.result = call_snps(P.a)
     else:
-        P.result = count_reads(P, P.a)
+        P.result = count_reads(P.a)
 ```
 
 The branching config value (`config.call_variants`) does not need to be passed to any node. The rule name already encodes which branch was taken in the fingerprint, so `call_snps` and `count_reads` always produce distinct output paths regardless.
@@ -324,10 +327,13 @@ Rule results do not need labels immediately. Ordinary Python variables can hold
 and rebind intermediate Nodes:
 
 ```python
+from necroflow import workflow
+
+@workflow
 def text_pipeline(P, config):
-    current = write_text(P, text=config["text"])
-    current = uppercase(P, current)
-    current = add_prefix(P, current)
+    current = write_text(text=config["text"])
+    current = uppercase(current)
+    current = add_prefix(current)
 
     P.result = current
 ```
@@ -345,8 +351,11 @@ This pattern is useful for sequential transformations. When every loop
 iteration should remain visible as a result, use a prefixed subpipeline view:
 
 ```python
+from necroflow import workflow
+
+@workflow
 def step_pipeline(P: Pipeline, source, step) -> None:
-    P.result = process(P, source, mode=step)
+    P.result = process(source, mode=step)
 
 for i, step in enumerate(steps):
     step_pipeline(P.subpipeline(f"steps/{i}"), step_node, step)
@@ -362,9 +371,9 @@ See the [complete runnable example](../examples/local_variables.py).
 
 The idiomatic pattern for multi-sample or multi-condition work is one shared
 `DAG` and a separate `Pipeline(dag)` per config. Equivalent rule calls are
-interned immediately; after each factory, call `P.finish()`, then
+interned immediately; after each workflow, call `P.finish()`, then
 `dag.require(P.sinks())` or require explicitly selected labels. The CLI calls
-`finish()` automatically after a successful factory return.
+`finish()` automatically after a successful workflow return.
 Attribute and item labels (`P.result` and `P["result"]`) share one namespace.
 Item labels may be canonical relative POSIX paths, so generated targets can use
 `P[f"{dataset}/{config}"]`; request them with the identical string. Components

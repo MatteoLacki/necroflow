@@ -24,7 +24,7 @@ run:
 2. It loads job TOMLs, resolves table inheritance, and expands `__grid`
    configurations.
 3. It runs configured validation callbacks.
-4. It imports and invokes each Pipeline factory. Rule calls are fingerprinted
+4. It imports and invokes each Workflow. Rule calls are fingerprinted
    and interned into the shared DAG.
 5. It resolves requested outputs and forced invalidations.
 6. It performs structural diagnostics on each compiled Pipeline.
@@ -73,7 +73,7 @@ an error.
 Doctor never executes rule commands, submits scheduler jobs, creates declared
 outputs, creates result copies, or changes node run-state files.
 
-It is not a static TOML linter, however. Pipeline factories are ordinary Python
+It is not a static TOML linter, however. Workflows are ordinary Python
 and must run to construct the DAG. Doctor also invokes configured validation
 and fingerprint callbacks. Those callbacks can have their own side effects.
 

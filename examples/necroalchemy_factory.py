@@ -1,4 +1,4 @@
-"""Pipeline factory for the necroalchemy CLI example.
+"""Workflow for the necroalchemy CLI example.
 
 The necroflow CLI adds this file's directory to sys.path, so necroalchemy
 can be imported directly.
@@ -23,9 +23,11 @@ Multiple job TOML files are accepted; each expands independently and all
 pipelines share the same DAG (upstream nodes common across configs run once).
 """
 
+from necroflow import workflow
 from necroalchemy import alchemy_pipeline
 
 
+@workflow
 def factory(P, cfg: dict) -> None:
     """Build one alchemy pipeline from a plain config dict."""
     alchemy_pipeline(P, cfg["word"], n=cfg["n"])

@@ -22,6 +22,7 @@ from necroflow.containers import docker_input_names, split_prefix
 from necroflow.contexts import NamedValues
 from necroflow.nodes import Node, NodeType, _is_nodetype
 from necroflow.fingerprints import validate_command_callback
+from necroflow.workflow import _active_pipeline
 
 BUILTIN_COMMAND_PLACEHOLDERS = {"workdir"}
 
@@ -473,16 +474,6 @@ class Rule(Generic[_ReturnT]):
         result.setdefault("threads", 1)
         return result
 
-    def _validate_pipeline(self, pipeline) -> None:
-        """Require the positional owner to be a Pipeline."""
-        from necroflow.pipeline import Pipeline
-
-        if not isinstance(pipeline, Pipeline):
-            raise TypeError(
-                f"{self.__name__}: first argument must be the owning Pipeline, "
-                f"got {type(pipeline).__name__}"
-            )
-
     def _validate_positional_inputs(self, pipeline, args: tuple[Any, ...]) -> None:
         """Validate positional Node, variadic, and hybrid values."""
         name = self.__name__
@@ -598,9 +589,19 @@ class Rule(Generic[_ReturnT]):
             value = nodes[0]
         return cast(_ReturnT, value)
 
-    def __call__(self, pipeline, /, *args: Any, **kwargs: Any) -> _ReturnT:
-        """Validate one invocation and return its canonical output Nodes."""
-        self._validate_pipeline(pipeline)
+    def __call__(self, *args: Any, **kwargs: Any) -> _ReturnT:
+        """Compile using an explicit Pipeline or the active workflow context."""
+        from necroflow.pipeline import Pipeline
+
+        if args and isinstance(args[0], Pipeline):
+            pipeline, args = args[0], args[1:]
+        else:
+            pipeline = _active_pipeline.get()
+        if pipeline is None:
+            raise RuntimeError(
+                f"{self.__name__}: Rule calls require an active @workflow or "
+                "an explicit Pipeline as the first argument."
+            )
         pipeline._assert_open()
         bound = self._bind_call(args, kwargs)
         args = tuple(bound[name] for name, _contract in self._pos_inputs)

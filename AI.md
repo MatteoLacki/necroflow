@@ -10,6 +10,14 @@ semantics, and formatting-preserving config edits. Read the
 [decision and removal-cost assessment](docs/development.md#keep-the-tomlkit-dependency)
 before revisiting this choice.
 
+## Workflow context
+
+`@workflow` accepts an open Pipeline as the first positional argument and activates
+it for synchronous rule calls. Nested decorated calls restore the caller's context,
+including after exceptions. Explicit `rule(P, ...)` remains supported and takes
+precedence per call. Attribute/item assignments still register all public labels;
+return values do not. CLI workflows retain `(P, config) -> None`.
+
 ## Subpipelines and finished construction
 
 `P.subpipeline(prefix)` returns a prefixed view over the same root Pipeline.
@@ -18,13 +26,13 @@ the root, while all views expose the same complete labels and nodes. Prefixes
 are canonical non-empty relative POSIX request paths, compose when nested, and
 remain outside both fingerprints. Equivalent rule calls through different
 views therefore intern to the same canonical Nodes. External input Nodes are
-passed explicitly to reusable subpipeline factory functions.
+passed explicitly to reusable subworkflow functions.
 
 `P.finish()` freezes the root and every view. Later rule calls fail before
 fingerprinting or DAG interning; later bindings and subpipeline creation also
 fail. Only the root may finish, root finishing is idempotent, and `P.sinks()`
 requires finished construction. The CLI calls `finish()` automatically after
-each successful factory return; direct Python callers call it before selecting
+each successful workflow return; direct Python callers call it before selecting
 sinks. Pipeline sections were removed; PNG graphs use dependency-depth groups.
 
 ## Rule command placeholders
@@ -143,7 +151,7 @@ The CLI accepts repeated `--invalidate LABEL` and `--reap NAME` options. Labels 
 
 ## Job config validation
 
-The CLI accepts repeatable `--validation PATH.py:FUNCTION` flags. Each validator is a Python callable receiving the expanded, metadata-stripped job config dict, exactly like the pipeline factory. Validators run after `__grid` expansion and before factory construction; they should raise to reject malformed configs. This is callback-based because raw job TOML can contain grids, so pre-validating the unexpanded file is not equivalent to validating the concrete configs factories receive.
+The CLI accepts repeatable `--validation PATH.py:FUNCTION` flags. Each validator is a Python callable receiving the expanded, metadata-stripped job config dict, exactly like the workflow. Validators run after `__grid` expansion and before workflow evaluation; they should raise to reject malformed configs. This is callback-based because raw job TOML can contain grids, so pre-validating the unexpanded file is not equivalent to validating the concrete configs workflows receive.
 
 `necroflow.config.iter_job_configs()` is intentionally validation-free: it yields expanded, metadata-stripped `JobConfig` objects. Python-only callers that want validation should call their validator explicitly inside the `for job in iter_job_configs(...)` loop. Cerberus is an optional extra via `necroflow[validation]`; core necroflow does not import it unless user validator code does.
 

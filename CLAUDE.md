@@ -112,14 +112,20 @@ These have been true since the June refactors and are load-bearing design decisi
   shared DAG. A rule call fingerprints and interns its `RuleCall` immediately; equivalent calls
   return identical Node objects. Attribute/item assignment records qualified Pipeline-local labels.
   Several labels may alias one Node; Nodes do not carry a singular pipeline label.
+- **Workflows scope ownership, labels stay explicit.** `@workflow` requires an open
+  Pipeline as its first positional argument, activates it while a synchronous function
+  runs, and restores the previous context on return or exception. Rules accept either
+  that context or an explicit leading Pipeline; explicit ownership wins per call.
+  Missing/wrong owners and deferred function kinds have explanatory errors. The
+  decorator neither labels returned Nodes nor finishes the Pipeline.
 - **Subpipelines are prefixed views.** `P.subpipeline(prefix)` shares its root Pipeline's DAG,
   shell policy, nodes, labels, and finished state while qualifying attribute/item access with a
   canonical non-empty request prefix. Prefixes remain outside fingerprints, and nested prefixes
-  compose. Reusable subpipeline factories receive external input Nodes explicitly.
+  compose. Reusable subworkflows receive external input Nodes explicitly.
 - **Pipeline construction has an explicit boundary.** `P.finish()` freezes the root and every
   subpipeline view. Later rules fail before fingerprinting/interning; later bindings and view
   creation also fail. Only the root may finish, `finish()` is idempotent, and `P.sinks()` requires
-  finished construction. The CLI finishes each Pipeline after its factory returns successfully.
+  finished construction. The CLI finishes each Pipeline after its workflow returns successfully.
 - **Pipeline labels are safe visible paths.** Item labels may be canonical relative POSIX
   paths. Assignment rejects absolute, empty, dot-prefixed, `.`/`..`, repeated/trailing
   separator, Linux byte-limit, and file/directory-conflicting result paths. Labels select
@@ -148,7 +154,7 @@ These have been true since the June refactors and are load-bearing design decisi
 - **Addresses are eager.** The Pipeline owns fingerprint/shell policy while its DAG owns the
   node-store root. A rule call returns Nodes with final fingerprints, relative paths, and absolute
   paths; there is no late resolution, DAG reindexing, or delayed deduplication.
-- **Execution is DAG-only.** After a factory returns, call `P.finish()`, then
+- **Execution is DAG-only.** After a workflow returns, call `P.finish()`, then
   `dag.require(P.sinks())` (or explicit label-selected Nodes), then `dag.run()`.
   `DAG.add` and `run(Pipeline)` do not exist.
 
@@ -195,6 +201,7 @@ src/necroflow/
   dag.py             — canonical registry, required-call closure, dependency metadata, executor
   planning.py        — lazy consumed-hash classification and reasons
   pipeline.py        — Pipeline (prefixed views, labels, finish)
+  workflow.py        — synchronous @workflow decorator and scoped rule ownership
   tgf.py             — TGF rendering, Node labels, per-call ancestor graph
   executor.py        — atomic RuleCall run(), reports, resources, lock, cleanup, failures
   logger.py          — thread-safe job logging

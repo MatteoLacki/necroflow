@@ -6,7 +6,7 @@ Necroflow plans, caches, schedules, executes, reports, and cleans one canonical 
 
 ## Lifecycle
 
-After a factory returns:
+After a workflow returns:
 
 ```python
 P.finish()

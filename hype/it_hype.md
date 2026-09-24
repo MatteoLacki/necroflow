@@ -21,7 +21,7 @@ def my_pipeline(P: Pipeline, config: dict) -> None:
   una chiamata più una piccola modifica locale nell'uso delle variabili — senza riscrivere i nomi
   dei file.
 - Python per intero durante la costruzione del grafo: cicli, condizioni, funzioni, test con
-  pytest. Le sotto-pipeline (`P.subpipeline`) sono semplici factory, e i prefissi condivisi si
+  pytest. Le sotto-pipeline (`P.subpipeline`) sono semplici workflow, e i prefissi condivisi si
   calcolano una volta sola.
 - Si legge come normale codice procedurale. Conta in fase di revisione: le modifiche restano
   localizzate nei punti di chiamata, quindi è facile verificare se un agente IA ha capito

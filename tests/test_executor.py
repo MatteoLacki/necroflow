@@ -369,7 +369,7 @@ def test_compromised_parent_same_bytes_keeps_child_cached(tmp_path):
 
 
 def test_conditional_pipeline(tmp_path):
-    """if/else branching in a pipeline factory is fully supported.
+    """if/else branching in a workflow is fully supported.
 
     Two pipelines sharing the same upstream node but taking different branches:
     - the shared upstream output is produced once and cached for both

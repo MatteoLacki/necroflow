@@ -310,8 +310,8 @@ def _real_output(outdir: Path, filename: str) -> Path:
     return matches[0]
 
 
-def test_pipeline_factory_return_value_errors_cleanly(tmp_path):
-    """CLI pipeline factories must mutate the supplied Pipeline and return None."""
+def test_workflow_return_value_errors_cleanly(tmp_path):
+    """CLI workflows must mutate the supplied Pipeline and return None."""
 
     factory = tmp_path / "returning.py"
     factory.write_text("def factory(pipeline, config):\n    return config\n")
@@ -1637,7 +1637,7 @@ def test_subpipeline_labels_are_requestable_from_cli(tmp_path, capsys):
     """The CLI must finish the root and resolve qualified subpipeline requests."""
     factory = tmp_path / "subpipelines.py"
     factory.write_text(textwrap.dedent("""\
-            from necroflow import NodeType, command, output
+            from necroflow import NodeType, command, output, workflow
 
             class Result(NodeType):
                 filename = "result.txt"
@@ -1647,9 +1647,11 @@ def test_subpipeline_labels_are_requestable_from_cli(tmp_path, capsys):
                 result = output(Result)
                 return result
 
+            @workflow
             def sample_pipeline(P, value):
-                P.result = build(P, value=value)
+                P.result = build(value=value)
 
+            @workflow
             def factory(P, config):
                 for sample in config["samples"]:
                     sample_pipeline(P.subpipeline(f"samples/{sample}"), sample)

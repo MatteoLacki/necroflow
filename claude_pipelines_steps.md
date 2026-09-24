@@ -355,7 +355,7 @@ for index, parent in enumerate(values):
 ```
 
 `reference` is the root-level Node handed in as a plain argument — the sanctioned way to feed
-external inputs to a reusable subpipeline factory. The DAG check is what makes it safe.
+external inputs to a reusable subworkflow. The DAG check is what makes it safe.
 
 Now the provenance hash has lineage:
 

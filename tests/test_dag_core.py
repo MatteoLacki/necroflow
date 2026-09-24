@@ -293,9 +293,9 @@ def test_command_factory_rejects_ambiguous_declarations(declaration, message):
 
 
 def test_rule_call_requires_pipeline_and_node_inputs(tmp_path):
-    """Rule calls must receive their owning Pipeline followed by managed Nodes."""
+    """Rules need an explicit or scoped owner and correctly typed managed inputs."""
 
-    with pytest.raises(TypeError, match="first argument must be the owning Pipeline"):
+    with pytest.raises(RuntimeError, match="active @workflow or an explicit Pipeline"):
         R_make_txt("not-a-pipeline", word="x")
 
     pipeline = Pipeline(DAG(tmp_path))

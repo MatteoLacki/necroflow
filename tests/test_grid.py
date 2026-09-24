@@ -80,7 +80,7 @@ def test_2d_grid_unique_labels():
 def test_plain_types_returned():
     doc = parse('word__grid = ["hello"]\nn__grid = [5]\n')
     ((_, cfg),) = iter_configs(doc, base_stem="exp")
-    # tomlkit proxies are subclasses of built-in types; isinstance checks what factory code uses
+    # tomlkit proxies are subclasses of built-in types; isinstance checks what workflow code uses
     assert isinstance(cfg["word"], str)
     assert isinstance(cfg["n"], int)
 

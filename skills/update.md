@@ -1,6 +1,6 @@
 ---
 name: migrate-main-pipeline
-description: Migrates necroflow pipelines written for the main-branch Rules-container API to the current explicit Pipeline/DAG and module-level rule API. Use when porting code containing Rules(), @R.command, Type[name] outputs, Pipeline() factories, resolve_paths(), dag.add(), or execute(Pipeline).
+description: Migrates necroflow pipelines written for the main-branch Rules-container API to the current explicit Pipeline/DAG and module-level rule API. Use when porting code containing Rules(), @R.command, Type[name] outputs, workflows constructing Pipeline(), resolve_paths(), dag.add(), or execute(Pipeline).
 ---
 
 # Migrate a main-branch pipeline
@@ -28,7 +28,7 @@ def factory(config) -> Pipeline:
     return P
 
 # current
-from necroflow import Pipeline, command, output, symlink_file
+from necroflow import Pipeline, command, output, symlink_file, workflow
 
 @symlink_file
 def source(path: str):
@@ -40,9 +40,10 @@ def convert(src: Source):
     dst = output(Result)
     return dst
 
+@workflow
 def factory(P: Pipeline, config) -> None:
-    P.source = source(P, path=config["path"])
-    P.result = convert(P, P.source)
+    P.source = source(path=config["path"])
+    P.result = convert(P.source)
 ```
 
 ## Workflow
@@ -63,16 +64,19 @@ def factory(P: Pipeline, config) -> None:
 5. Replace `R.text_file(...)` and `R.symlink_file(...)` with decorated built-in
    declarations when possible, or the corresponding `*_rule(...)` value.
    Replace every `R.name(...)` call with the module-level rule value `name(...)`.
-6. Pass the owning `Pipeline` as the first argument to every rule call:
-   `rule(P, node_inputs..., config_name=value)`. Keep Node inputs positional and
+6. Decorate workflow functions with `@workflow`; pass their owning `Pipeline`
+   as the first positional workflow argument. Rules then use
+   `rule(node_inputs..., config_name=value)`. Explicit `rule(P, ...)` remains
+   supported outside or inside workflows. Keep Node inputs positional and
    config inputs keyword-only. Pass variadic Node inputs as one tuple; use
    `Annotated[tuple[Type, ...], Many(...)]` only when bounds are required.
-7. Convert CLI factories from `factory(config) -> Pipeline` into
+7. Convert CLI workflows from `factory(config) -> Pipeline` into
    `factory(P: Pipeline, config) -> None`. Remove `P = Pipeline()` and
    `return P`; keep explicit `P.name = ...` or `P["path/name"] = ...` labels.
    Job TOML `.pipeline` and string `.requests` entries normally remain valid.
 8. For direct Python entry points, create one `DAG(nodes_dir)`, construct each
-   `Pipeline(dag)`, call its factory, select `P.sinks()` or explicit `P[label]`
+   `Pipeline(dag)`, call its workflow, finish the root with `P.finish()`, then select
+   `P.sinks()` or explicit `P[label]`
    Nodes with `dag.require(...)`, then call `dag.run()`. Delete
    `resolve_paths()` and `dag.add()`; Nodes already have final fingerprints,
    relative paths, and absolute paths when rules return.

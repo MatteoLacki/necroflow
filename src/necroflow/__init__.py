@@ -21,6 +21,7 @@ from necroflow.executor import RuleCallExecution, run
 from necroflow.schedulers import fifo_scheduler
 from necroflow.config import JobConfig, iter_job_configs
 from necroflow.contexts import CommandArgs, NamedValues
+from necroflow.workflow import workflow
 
 __all__ = [
     "__version__",
@@ -41,6 +42,7 @@ __all__ = [
     "text_file",
     "text_file_rule",
     "Pipeline",
+    "workflow",
     "DAG",
     "run",
     "fifo_scheduler",

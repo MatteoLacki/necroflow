@@ -14,6 +14,7 @@ from necroflow import (
     Pipeline,
     command,
     output,
+    workflow,
 )
 
 
@@ -93,3 +94,20 @@ def accepts_node(node: Node) -> None:
 
 accepts_node(pipeline.left)
 accepts_node(pipeline.right)
+
+
+@workflow
+def scoped_sample(P: Pipeline, text: str) -> Node:
+    P.source = make_source(text=text)
+    P.left, P.right = split_source(P.source)
+    P.callback = callback_rule(P.source)
+    return P.left
+
+
+@workflow
+def scoped_cohort(P: Pipeline, text: str) -> None:
+    P.result = scoped_sample(P.subpipeline("sample"), text)
+    P.merged = merge_sources((make_default_source(),))
+
+
+scoped_cohort(Pipeline(DAG("/tmp/necroflow-workflow-typing")), "value")

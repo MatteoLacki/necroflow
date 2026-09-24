@@ -53,8 +53,8 @@ This document condenses the manuscript arguments into a review-oriented outline.
 
 - A `Pipeline` can collect rule calls, and a `DAG` can combine pipelines and canonicalize shared nodes. (`sec:design:abstractions`, `sec:impl:executor`)
 - Shared work is recognized by computation identity rather than by manually coordinating target filenames between separate scripts. (`sec:design:abstractions`, `sec:design:paths`)
-- Independent pipeline factories can each construct the same upstream subpipeline, then branch into separate analyses; adding both pipelines to one DAG executes the identical prefix once. (`sec:development-effort`, `lst:shared-subpipeline`)
-- This preserves independent, testable pipeline factories while sharing only work whose input, reference, command, and parameters are identical; a changed lineage deliberately creates a separate node. (`sec:development-effort`, `lst:shared-subpipeline`, `sec:design:paths`)
+- Independent workflows can each construct the same upstream subpipeline, then branch into separate analyses; adding both pipelines to one DAG executes the identical prefix once. (`sec:development-effort`, `lst:shared-subpipeline`)
+- This preserves independent, testable workflows while sharing only work whose input, reference, command, and parameters are identical; a changed lineage deliberately creates a separate node. (`sec:development-effort`, `lst:shared-subpipeline`, `sec:design:paths`)
 - This supports modular pipelines and side-by-side branches while retaining a single coherent dependency graph. (`sec:design:abstractions`)
 
 ## 9. Staleness Detection

@@ -83,6 +83,8 @@ These were the vibe-coded starting points that all got replaced. Don't recreate 
 ### Magic auto-registration via `ContextVar`
 The first pipeline API was `with Pipeline() as P:` — rules auto-registered nodes into the active `ContextVar`. Clever but untestable and surprising.
 Replaced with explicit attribute assignment `P.bam = align(...)`. Explicit beats implicit.
+The current `@workflow` ContextVar supplies rule ownership only; labels still
+require `P.name = node` or `P[label] = node`. It does not auto-register labels.
 
 ### External deps for things pure Python can do
 `pipeline.plot()` used `networkx` + `matplotlib` for DAG rendering. Removed. Replaced with a small pure-Python TGF writer. No dependency beats a dependency.

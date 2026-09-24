@@ -5,7 +5,7 @@ Run:
 """
 
 from pathlib import Path
-from necroflow import DAG, NodeType, Pipeline, command, output
+from necroflow import DAG, NodeType, Pipeline, command, output, workflow
 
 
 class Text(NodeType):
@@ -48,11 +48,12 @@ def merge(upper: Upper, lower: Lower):
     return merged
 
 
+@workflow
 def diamond(P, word: str) -> None:
-    P.text = make_text(P, word=word)
-    P.upper = to_upper(P, P.text)
-    P.lower = to_lower(P, P.text)
-    P.merged = merge(P, P.upper, P.lower)
+    P.text = make_text(word=word)
+    P.upper = to_upper(P.text)
+    P.lower = to_lower(P.text)
+    P.merged = merge(P.upper, P.lower)
 
 
 OUTDIR = Path("/tmp/schedulers_example")

@@ -20,7 +20,7 @@ def my_pipeline(P: Pipeline, config: dict) -> None:
 - Results are ordinary variables, rules are ordinary functions. Adding a step = adding a call
   plus a small local change in how the variables are used — no rewriting of file names.
 - Full Python while the graph is being built: loops, conditionals, functions, pytest tests.
-  Subpipelines (`P.subpipeline`) are plain factories, and shared prefixes are computed once.
+  Subpipelines (`P.subpipeline`) are plain workflows, and shared prefixes are computed once.
 - It reads like normal procedural code. That matters during review: changes stay local to the
   call sites, so it is easy to check whether an AI agent understood the intent — or to write
   the logic yourself and hand the rule implementations to somebody else. A pipeline is a kind

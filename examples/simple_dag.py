@@ -1,12 +1,12 @@
 """Typed bioinformatics pipeline example used by the Necroflow paper.
 
-The factories are safe to import and inspect without requiring BWA, samtools,
+The workflows are safe to import and inspect without requiring BWA, samtools,
 featureCounts, or bcftools. Commands run only when a DAG is executed.
 """
 
 from types import SimpleNamespace
 
-from necroflow import DAG, NodeType, Pipeline, command, output
+from necroflow import DAG, NodeType, Pipeline, command, output, workflow
 
 
 class Fastq(NodeType):
@@ -85,28 +85,32 @@ def annotate(vcf: Vcf, database: str):
     return annotated_vcf
 
 
+@workflow
 def aligned_reads(P: Pipeline, config) -> None:
     """Construct the import, alignment, and sorting prefix."""
-    P.fastq = raw_fastq(P, path=config.path)
-    P.bam, P.align_log = align(P, P.fastq, reference=config.reference)
-    P.sorted_bam = sort_bam(P, P.bam)
+    P.fastq = raw_fastq(path=config.path)
+    P.bam, P.align_log = align(P.fastq, reference=config.reference)
+    P.sorted_bam = sort_bam(P.bam)
 
 
+@workflow
 def quantification_pipeline(P: Pipeline, config) -> None:
     aligned_reads(P, config)
-    P.counts = quantify(P, P.sorted_bam, gene_model=config.gene_model)
+    P.counts = quantify(P.sorted_bam, gene_model=config.gene_model)
 
 
+@workflow
 def variant_pipeline(P: Pipeline, config) -> None:
     aligned_reads(P, config)
-    P.vcf = call_variants(P, P.sorted_bam, reference=config.reference)
+    P.vcf = call_variants(P.sorted_bam, reference=config.reference)
 
 
+@workflow
 def extended_pipeline(P: Pipeline, config) -> None:
     quantification_pipeline(P, config)
     if config.call_variants:
-        P.vcf = call_variants(P, P.sorted_bam, reference=config.reference)
-        P.annotated_vcf = annotate(P, P.vcf, database=config.variant_database)
+        P.vcf = call_variants(P.sorted_bam, reference=config.reference)
+        P.annotated_vcf = annotate(P.vcf, database=config.variant_database)
 
 
 def example_config(**overrides):

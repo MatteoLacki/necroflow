@@ -1,8 +1,8 @@
-# What Happens When a Rule Is Called in a Pipeline Factory
+# What Happens When a Rule Is Called in a Workflow
 
 [Previous: Rules and Typed Outputs](rules.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)
 
-A factory compiles one configured view of a shared DAG. Rule calls calculate
+A workflow compiles one configured view of a shared DAG. Rule calls calculate
 identity, paths, and canonicalize equivalent computations immediately. Command
 realization and filesystem materialization remain deferred until execution.
 
@@ -27,23 +27,26 @@ cohort with shared reference data, one subpipeline per sample, and a nested
 quality-control subpipeline. The second is the simple sorting Pipeline:
 
 ```python
-from necroflow import DAG, Pipeline
+from necroflow import DAG, Pipeline, workflow
 
+@workflow
 def qc_pipeline(Q: Pipeline, bam) -> None:
-    Q.metrics = collect_metrics(Q, bam)
-    Q.report = render_qc(Q, Q.metrics)
+    Q.metrics = collect_metrics(bam)
+    Q.report = render_qc(Q.metrics)
 
 
+@workflow
 def sample_pipeline(S: Pipeline, reference, annotation, sample: dict) -> None:
-    S.fastq = raw_fastq(S, path=sample["reads"])
-    S.bam, S.align_log = align(S, S.fastq, reference)
+    S.fastq = raw_fastq(path=sample["reads"])
+    S.bam, S.align_log = align(S.fastq, reference)
     qc_pipeline(S.subpipeline("qc"), S.bam)
-    S.counts = count_reads(S, S.bam, annotation)
+    S.counts = count_reads(S.bam, annotation)
 
 
+@workflow
 def cohort_pipeline(P: Pipeline, config: dict) -> None:
-    P.reference = prepare_reference(P, path=config["reference"])
-    P.annotation = prepare_annotation(P, path=config["annotation"])
+    P.reference = prepare_reference(path=config["reference"])
+    P.annotation = prepare_annotation(path=config["annotation"])
 
     for sample in config["samples"]:
         sample_pipeline(
@@ -54,9 +57,10 @@ def cohort_pipeline(P: Pipeline, config: dict) -> None:
         )
 
 
+@workflow
 def sorting_pipeline(P: Pipeline, config: dict) -> None:
-    P.source = source_text(P, path=config["input"])
-    P.sorted = sort_text(P, P.source, reverse=config.get("reverse", False))
+    P.source = source_text(path=config["input"])
+    P.sorted = sort_text(P.source, reverse=config.get("reverse", False))
 
 
 dag = DAG("nodes")
@@ -96,40 +100,54 @@ P = Pipeline(
     dag,
     shellpath=selected_shell,
 )
-factory(P, config)
+build_workflow(P, config)
 P.finish()
 ```
 
 The DAG owns canonical rule calls, output Nodes, required outputs, and
 execution. One root Pipeline owns the finished state and qualified labels for
-one factory evaluation. `P.subpipeline(prefix)` creates a lightweight view over
+one workflow evaluation. `P.subpipeline(prefix)` creates a lightweight view over
 that same state; the view shares the DAG, shell policy, nodes, and labels while
 qualifying its attribute/item assignments. Every root Pipeline participating
 in the same run references the same DAG.
 
-## 2. The rule receives its compiling Pipeline
+## 2. The workflow supplies the compiling Pipeline
 
-For:
+`@workflow` validates its first positional argument as an open `Pipeline`, sets a
+private `ContextVar`, and runs the original function. It restores the previous
+context in `finally`, including after exceptions. A decorated subworkflow receiving
+`P.subpipeline(prefix)` temporarily activates that view. Ordinary helpers inherit
+the caller's context. No source analysis or local-variable capture is involved.
+
+Inside `sample_pipeline`:
 
 ```python
-S.bam, S.align_log = align(S, S.fastq, reference)
+S.bam, S.align_log = align(S.fastq, reference)
 ```
 
-`Rule.__call__` receives:
+`Rule.__call__` resolves the active owner and logical arguments as:
 
 ```python
-pipeline = S
+pipeline = S  # retrieved from the active workflow context
 args = (S.fastq, reference)
 kwargs = {}
 ```
 
-The Pipeline is positional-only and must be first. `Rule.__call__` first checks
-that Pipeline construction remains open, so calls after `finish()` fail before
-fingerprinting or interning. A view uses the root's construction state, DAG, and
-shell policy. Every Node input must belong to `S.dag`. A
-canonical Node can be used from another Pipeline sharing that DAG, but a Node
-from a different DAG is rejected. This is why reusable subpipeline factories
-receive external Nodes such as `reference` explicitly.
+Explicit `align(S, S.fastq, reference)` remains valid inside or outside a workflow.
+A leading Pipeline takes precedence for that call without changing the context.
+With neither an explicit owner nor an active context, the rule raises a
+`RuntimeError` explaining that it requires `@workflow` or an explicit Pipeline.
+
+A missing or incorrectly typed first workflow argument raises `TypeError` naming
+the workflow and requiring an open Pipeline. A finished owner raises `RuntimeError`
+with the same requirement. Coroutine, generator, and async-generator functions are
+rejected at decoration with `TypeError` explaining their deferred execution.
+
+Every rule call checks that its selected Pipeline remains open before fingerprinting
+or interning. A view uses its root's construction state, DAG, and shell policy.
+Every Node input must belong to `S.dag`. Nodes from another Pipeline sharing that
+DAG are accepted; Nodes from a different DAG are rejected. Reusable subworkflows
+therefore receive external Nodes such as `reference` explicitly.
 
 ## 3. Parent Nodes already have canonical addresses
 
@@ -166,8 +184,8 @@ declare outputs.
 At call time, `Rule.__call__` binds `args`/`kwargs` against an `inspect.Signature`
 built once per Rule from its declared schema: Node, variadic, and mixed inputs
 are `POSITIONAL_OR_KEYWORD`, and plain config inputs stay `KEYWORD_ONLY`. Every
-input may therefore be supplied positionally or by name — `consume(P, value)`
-and `consume(P, source=value)` bind identically — while `bind()`/`apply_defaults()`
+input may therefore be supplied positionally or by name — `consume(value)`
+and `consume(source=value)` inside a workflow bind identically — while `bind()`/`apply_defaults()`
 supply presence, duplicate, and defaulting checks with ordinary Python calling
 semantics. The bound values are then read back out in the Rule's fixed
 declaration order (not the order the caller wrote them), so call syntax never
@@ -179,7 +197,8 @@ declared schema fail before fingerprinting or DAG interning. The caller's
 `Rule.__call__` coordinates the phases through focused methods:
 
 ```python
-self._validate_pipeline(pipeline)
+# After resolving the explicit or scoped Pipeline:
+pipeline._assert_open()
 bound = self._bind_call(args, kwargs)
 args = tuple(bound[name] for name, _contract in self._pos_inputs)
 config = {name: bound[name] for name in self._kw_inputs}
@@ -331,7 +350,7 @@ existing Node objects. Conflicting output declarations for one call path are a
 provenance-hash collision and raise an error.
 
 Consequently, equivalent calls through differently prefixed views—or through
-different root Pipelines sharing a DAG—return identical objects during factory
+different root Pipelines sharing a DAG—return identical objects during workflow
 evaluation:
 
 ```python
@@ -427,22 +446,22 @@ assert Q.nodes == P.nodes
 Nested subpipelines compose their canonical relative POSIX prefixes. Prefixes
 are request/result presentation only and never affect rule or provenance
 hashes, so equivalent calls through different views still intern to one Node.
-External input Nodes are passed explicitly to reusable subpipeline factories.
+External input Nodes are passed explicitly to reusable subworkflows.
 
 ## 10. Finishing freezes construction and enables request selection
 
-The factory mutates its Pipeline and returns `None`. The CLI then calls
+The workflow mutates its Pipeline and returns `None`. The CLI then calls
 `P.finish()`, which freezes the root and every subpipeline view. Later rule
 calls, label assignments, and subpipeline creation raise `RuntimeError`.
 `finish()` is idempotent on the root; calling it through a view is rejected so
-a nested factory cannot freeze its caller unexpectedly. The DAG remains open,
+a nested workflow cannot freeze its caller unexpectedly. The DAG remains open,
 allowing other root Pipelines to compile into the same canonical registry.
 
 After finishing, the caller resolves explicit labels or uses the Pipeline's
 sinks and marks those canonical outputs required:
 
 ```python
-factory(P, config)
+build_workflow(P, config)
 P.finish()
 dag.require(P.sinks())
 ```

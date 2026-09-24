@@ -5,11 +5,11 @@
 ## Command-line interface
 
 necroflow ships a `necroflow` command. Each positional argument is a **job
-TOML** — a self-contained file that specifies the pipeline factory, optional
+TOML** — a self-contained file that specifies the workflow, optional
 requested outputs, and user config params. For each expanded job, the CLI
 constructs one shared `DAG(nodes_dir)`, creates each
 `Pipeline(dag, shellpath=...)`, and calls
-`factory(P, config)`. Rule calls intern immediately; after the factory returns,
+`build_workflow(P, config)`. Rule calls intern immediately; after the workflow returns,
 the CLI calls `P.finish()`, then resolves requested labels or sinks with
 `dag.require(...)`. Qualified labels created by `P.subpipeline(prefix)` are
 requested with their full paths, for example `samples/A/counts`.
