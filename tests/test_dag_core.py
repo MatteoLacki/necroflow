@@ -450,18 +450,43 @@ def test_resolve_command_substitutes_union_typed_input(tmp_path):
     assert str(doc.path) in cmd
 
 
-def test_constraint_placeholder_forces_constraint_when_config_name_collides(tmp_path):
-    P = Pipeline(DAG(tmp_path))
-    r_colliding_threads = Rule(
-        "colliding_threads",
-        Inputs(threads=int),
-        Outputs(txt=Txt),
-        "tool --arg {threads} --scheduler {constraint:threads} > {txt}",
-        Constraints(threads=8),
-    )
-    txt = r_colliding_threads(P, threads=2)
+def test_input_name_colliding_with_constraint_is_rejected():
+    with pytest.raises(
+        ValueError, match=r"collides with a resource constraint name: \['threads'\]"
+    ):
+        Rule(
+            "colliding_threads",
+            Inputs(threads=int),
+            Outputs(txt=Txt),
+            "tool --arg {threads} --scheduler {constraint:threads} > {txt}",
+            Constraints(threads=8),
+        )
 
-    assert txt.rule_call.resolve() == f"tool --arg 2 --scheduler 8 > {txt.path}"
+
+def test_output_name_colliding_with_declared_constraint_is_rejected():
+    with pytest.raises(
+        ValueError, match=r"collides with a resource constraint name: \['ram'\]"
+    ):
+        Rule(
+            "colliding_ram",
+            Inputs(word=str),
+            Outputs(ram=Txt),
+            "tool --ram {ram} --word {word} > {ram}",
+            Constraints(ram="4Gi"),
+        )
+
+
+def test_input_name_colliding_with_implicit_threads_default_is_rejected():
+    """threads=1 applies even without an explicit Constraints(), so it stays reserved."""
+    with pytest.raises(
+        ValueError, match=r"collides with a resource constraint name: \['threads'\]"
+    ):
+        Rule(
+            "implicit_threads_collision",
+            Inputs(threads=int),
+            Outputs(txt=Txt),
+            "tool --arg {threads} > {txt}",
+        )
 
 
 def test_unknown_constraint_placeholder_is_rejected():

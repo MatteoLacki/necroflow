@@ -36,11 +36,20 @@ Allowed: declared input names, declared output names, and built-ins:
 - `{workdir}` — the rule-call output directory (`nodes/{rule}/{hash16}`), created before
   execution and reserved as an input/output name.
 - `{threads}` (defaults to 1), `{ram}`, other declared constraints; `{constraint:name}`
-  forces constraint lookup when a config parameter shadows the name.
+  is an explicit, self-documenting alternative to the plain form.
 - Double literal shell braces: `{{left,right}}`. Bash syntax needs an explicit
   `shellpath="/bin/bash"` or `--shellpath`.
 
 An undeclared placeholder fails while the module is imported.
+
+## Reserved names — checked at declaration
+
+An input/output name may not collide with `workdir`, with a constraint the rule
+declares, or with `threads` (every rule carries an implicit `threads=1` even without
+`Constraints(...)`). Declaring `Inputs(threads=int)` on a rule constrained with
+`Constraints(threads=8)` — or with no constraints at all — raises `ValueError` when
+the `@command`/`Rule` runs, not at call time. There is no shadowing: rename the
+input/output, or the constraint.
 
 ## Rules of the game
 

@@ -301,6 +301,14 @@ class Rule(Generic[_ReturnT]):
                 f"Rule {name!r}: reserved command placeholder name used as input/output: "
                 f"{sorted(reserved)}"
             )
+        constraint_names = set(self.constraints) | {"threads"}
+        shadowed = constraint_names & (set(inputs.specs) | set(outputs.specs))
+        if shadowed:
+            raise ValueError(
+                f"Rule {name!r}: input/output name collides with a resource "
+                f"constraint name: {sorted(shadowed)}. Rename the input/output, "
+                "or the constraint if it is declared on this rule."
+            )
         output_names = list(outputs.specs.keys())
         self._multi = len(output_names) > 1
         self._return_type = (

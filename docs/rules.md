@@ -27,6 +27,15 @@ reject keyword inputs absent from the declared schema before fingerprinting or
 DAG interning. The function's return annotation is optional and ignored;
 outputs are declared only with `output(ConcreteNodeType)`.
 
+## Reserved names
+
+An input or output name may not collide with `workdir`, with a constraint the rule
+declares, or with the implicit `threads` default every rule carries even without
+`Constraints(...)`. `Rule`/`@command` raises `ValueError` at declaration time, not
+at call time, naming the colliding names. `{constraint:name}` is an explicit,
+self-documenting alternative to the plain placeholder form — not a way to
+disambiguate a shadowed name, since shadowing is rejected outright.
+
 ## All available threads
 
 Use `threads="all"` in a decorated command or `Constraints(threads="all")`
