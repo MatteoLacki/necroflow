@@ -107,6 +107,7 @@ class RuleCall:
     relative_path: Path = field(init=False)
     _realized_command: str | None = None
     _container_input: str | None = None
+    _thread_cap: int | None = None
 
     def __post_init__(self) -> None:
         # Cached once: read in hot graph-traversal loops via
@@ -197,12 +198,11 @@ class RuleCall:
         return hashlib.sha256(canonical_bytes(identity, path="provenance")).hexdigest()
 
     def _constraints(self) -> dict[str, Any]:
-        values = {
-            "threads": self.rule.constraints.get(
-                "threads", self.rule.resources["threads"]
-            )
-        }
-        values.update(self.rule.constraints)
+        values = dict(self.rule.constraints)
+        if values.get("threads") == "all":
+            values["threads"] = self.resources["threads"]
+        else:
+            values.setdefault("threads", self.resources["threads"])
         return values
 
     @property
@@ -264,7 +264,19 @@ class RuleCall:
 
     @property
     def resources(self) -> dict[str, int]:
-        return self.rule.resources
+        resources = self.rule.resources
+        if (
+            self.rule.constraints.get("threads") == "all"
+            and self._thread_cap is not None
+        ):
+            resources["threads"] = self._thread_cap
+        return resources
+
+    def bind_thread_cap(self, cap: int) -> None:
+        """Resolve an all-threads declaration for this execution."""
+        if self.rule.constraints.get("threads") == "all" and self._thread_cap != cap:
+            self._thread_cap = cap
+            self._realized_command = None
 
     def mark_running(self) -> None:
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -451,12 +463,7 @@ class RuleCall:
             for name, value in command_inputs.items()
         }
         substitutions.update(self.config)
-        command_constraints = {
-            "threads": self.rule.constraints.get(
-                "threads", self.rule.resources["threads"]
-            )
-        }
-        command_constraints.update(self.rule.constraints)
+        command_constraints = self._constraints()
         for name, value in command_constraints.items():
             substitutions.setdefault(name, value)
         substitutions["constraint"] = _ConstraintFormatter(command_constraints)

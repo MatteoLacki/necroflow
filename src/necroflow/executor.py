@@ -332,6 +332,8 @@ def run(
     caps = {"threads": os.cpu_count() or 1}
     if resource_caps:
         caps.update(resource_caps)
+    for call in dag.calls.values():
+        call.bind_thread_cap(caps["threads"])
 
     with _acquire_lock(dag.nodes_dir):
         # Nothing runs yet, so hashes taken while planning may use every thread.

@@ -23,11 +23,7 @@ def job_start(node) -> None:
     desc = node.rule.__name__ if node.rule else "?"
     if cfg:
         desc += f" ({cfg})"
-    threads = (
-        node.rule.constraints.get("threads", 1)
-        if node.rule and node.rule.constraints
-        else 1
-    )
+    threads = node.resources["threads"]
     thread_str = f" [{threads} threads]" if threads > 1 else ""
     _log.info("start  %s → %s%s", desc, node.workdir, thread_str)
 

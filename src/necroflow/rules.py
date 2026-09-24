@@ -4,6 +4,7 @@ from collections import namedtuple
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import inspect
+import os
 import re
 from types import UnionType
 from string import Formatter
@@ -470,7 +471,14 @@ class Rule(Generic[_ReturnT]):
     @property
     def resources(self) -> dict[str, int]:
         """Return integer scheduler resources with one thread by default."""
-        result = {k: parse_resource(v) for k, v in self.constraints.items()}
+        result = {
+            k: (
+                (os.cpu_count() or 1)
+                if k == "threads" and v == "all"
+                else parse_resource(v)
+            )
+            for k, v in self.constraints.items()
+        }
         result.setdefault("threads", 1)
         return result
 

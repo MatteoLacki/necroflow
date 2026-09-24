@@ -1200,3 +1200,61 @@ def test_run_report_marks_cached_nodes_and_measures_size(tmp_path):
     assert event.cached is True
     assert event.duration_seconds() is None
     assert event.output_size_bytes == len("cached\n")
+
+
+def test_all_threads_tracks_execution_cap_and_rebinds_command(tmp_path):
+    @command("printf '%s' {threads} > {result}", threads="all")
+    def use_all():
+        result = output(A)
+        return result
+
+    pipeline = Pipeline(DAG(tmp_path))
+    pipeline.result = use_all(pipeline)
+    call = pipeline.result.rule_call
+    assert use_all.constraints["threads"] == "all"
+    assert use_all.resources["threads"] >= 1
+    assert (
+        call.resolve()
+        == f"printf '%s' {call.resources['threads']} > {pipeline.result.path}"
+    )
+
+    seen = []
+
+    def scheduler(ready, remaining, available):
+        seen.append((ready[0].resources["threads"], available["threads"]))
+        return ready
+
+    run_pipeline(pipeline, resource_caps={"threads": 2}, scheduler=scheduler)
+    assert seen == [(2, 2)]
+    assert call.command_args().constraints.threads == 2
+    assert call.resolve() == f"printf '%s' 2 > {pipeline.result.path}"
+    assert pipeline.result.path.read_text() == "2"
+
+    run_pipeline(
+        pipeline,
+        resource_caps={"threads": 3},
+        forced_stale_call_keys={call.relative_path},
+    )
+    assert call.resources["threads"] == 3
+    assert call.resolve() == f"printf '%s' 3 > {pipeline.result.path}"
+    assert pipeline.result.path.read_text() == "3"
+
+
+def all_threads_command(args):
+    return f"printf '%s' {args.constraints.threads} > {args.outputs.result}"
+
+
+def test_factory_all_threads_reaches_command_callback(tmp_path):
+    use_all = Rule(
+        "factory_all_threads",
+        Inputs(),
+        Outputs(result=A),
+        all_threads_command,
+        Constraints(threads="all"),
+    )
+    pipeline = Pipeline(DAG(tmp_path))
+    pipeline.result = use_all(pipeline)
+
+    run_pipeline(pipeline, resource_caps={"threads": 4})
+    assert pipeline.result.rule_call.command_args().constraints.threads == 4
+    assert pipeline.result.path.read_text() == "4"

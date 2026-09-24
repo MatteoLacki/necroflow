@@ -27,6 +27,21 @@ reject keyword inputs absent from the declared schema before fingerprinting or
 DAG interning. The function's return annotation is optional and ignored;
 outputs are declared only with `output(ConcreteNodeType)`.
 
+## All available threads
+
+Use `threads="all"` in a decorated command or `Constraints(threads="all")`
+in a factory rule. The executor reserves its full thread cap for that call,
+and `{threads}`, `{constraint:threads}`, and Python command callbacks receive
+the effective number. For example, with `-c 8` the following rule runs with
+eight threads; with `-c all` it uses the machine's detected core count.
+
+```python
+@command("samtools sort -@ {threads} {bam} -o {sorted_bam}", threads="all")
+def sort_bam(bam: Bam):
+    sorted_bam = output(SortedBam)
+    return sorted_bam
+```
+
 ## Command input defaults
 
 Scalar/config inputs on decorated command rules may use ordinary Python

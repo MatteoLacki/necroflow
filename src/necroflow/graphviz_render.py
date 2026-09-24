@@ -59,7 +59,7 @@ def render_png(
             order.append(gid)
         g = groups[gid]
         g["requested"] = g["requested"] or node.relative_path in requested_keys
-        threads = dict(getattr(node.rule, "constraints", {}) or {}).get("threads", 1)
+        threads = node.rule.resources["threads"] if node.rule else 1
         g["threads"] = max(g["threads"], threads)
         g["outputs"].append(node.output_name or "")
 

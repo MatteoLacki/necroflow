@@ -435,11 +435,14 @@ def _explain_payload(args) -> dict:
     dag, combos, forced_stale_call_keys = _build_dag_from_jobs(
         args, nodes_dir=nodes_dir
     )
+    thread_cap = _parse_resource_caps(args)["threads"]
+    for call in dag.calls.values():
+        call.bind_thread_cap(thread_cap)
     plan = plan_execution(
         dag,
         forced_stale_call_keys=forced_stale_call_keys,
         hasher=_load_hasher(args.hasher),
-        hash_threads=_parse_resource_caps(args)["threads"],
+        hash_threads=thread_cap,
     )
     active = plan.active
     active_keys = plan.active_keys

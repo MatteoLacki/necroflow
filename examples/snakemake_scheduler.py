@@ -86,7 +86,7 @@ def make_snakemake_greedy_scheduler(greediness: float = 1.0):
         dimensions = sorted(available_resources)
         capacity = [available_resources[name] for name in dimensions]
         weights = [
-            [node.rule.resources.get(name, 0) for name in dimensions] for node in ready
+            [node.resources.get(name, 0) for name in dimensions] for node in ready
         ]
         rewards = [_job_reward(node) for node in ready]
 
