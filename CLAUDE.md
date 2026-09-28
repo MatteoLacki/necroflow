@@ -211,6 +211,8 @@ src/necroflow/
   cli.py             — CLI argument parsing and command adapters, split nodes-dir/results-dir
                        layout, manifests, copied result trees
   graphviz_render.py — optional PNG rendering (dev extra)
+  mcp_server.py      — optional MCP server (mcp extra): read-only graph/outputs/explain/
+                       doctor/provenance tools over stdio, console script `necroflow-mcp`
   templates/         — `necroflow init` project template (canonical pipeline + schema)
   tools/             — config_set.py: config-file transformation helper
 ```

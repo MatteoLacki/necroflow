@@ -21,10 +21,14 @@ dependencies = [
 necroflow = "necroflow.cli:main"
 necroflow-config-set = "necroflow.tools.config_set:main"
 necroflow-count-loc = "necroflow.tools.count_loc:main"
+necroflow-mcp = "necroflow.mcp_server:main"
 
 [project.optional-dependencies]
 validation = [
     "cerberus",
+]
+mcp = [
+    "mcp>=2",
 ]
 dev = [
     "black",

@@ -169,6 +169,11 @@ necroflow
 │   ├── graph.tgf ancestor DAG (Trivial Graph Format)
 │   └── provenance CLI display
 │
+├── MCP server (optional, mcp extra)
+│   ├── console script: necroflow-mcp (stdio transport)
+│   ├── read-only tools: graph, outputs, explain, doctor, provenance
+│   └── run/gc deliberately excluded — execution and deletion stay on the CLI
+│
 ├── Examples and docs
 │   ├── canonical workflow
 │   ├── packaged init template
