@@ -219,3 +219,27 @@ Explicit shellpaths are normalized, stored directly on each command
 provenance. Built-in materializers remain unaffected. The shell selection is
 immutable for the lifetime of a compiled pipeline; there is no late key
 rebuild.
+
+## MCP server
+
+`src/necroflow/mcp_server.py` (optional `mcp` extra, console script
+`necroflow-mcp`) exposes `graph`, `outputs`, `explain`, `doctor`, and `provenance`
+as MCP tools over stdio. Each tool calls the matching `cli.py` payload builder
+(`_graph_payload`, `_outputs_payload`, `_explain_payload`, `_doctor_payload`,
+`_provenance_payload`) in-process — same dicts the CLI's `--json` flag prints, no
+subprocess or JSON-text round trip. `_build_parser().parse_args(...)` still builds
+the `args` namespace those functions expect, so CLI-flag defaults (hasher, thread
+cap, shellpath, ...) stay the single source of truth instead of being duplicated
+here. `SystemExit` from the CLI layer is caught and re-raised as `RuntimeError` —
+letting it propagate would look like an unhandled `BaseException` to the MCP
+runtime and could take the whole server process down over one bad job path.
+
+`run` and `gc -y` are deliberately not exposed: they execute or delete, and an
+MCP tool-call approval shows structured args, not the shell command that's about
+to run — unlike Bash, which shows the real command before approval. Execution and
+deletion stay on the CLI.
+
+The official Python SDK renamed its high-level API between major versions:
+`mcp.server.fastmcp.FastMCP` (v1) became `mcp.server.mcpserver.MCPServer` (v2).
+The `mcp` extra pins `mcp>=2`; if a future contributor's local install still
+resolves the old `fastmcp` module path, they're on v1 and need to upgrade.

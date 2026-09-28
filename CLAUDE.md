@@ -29,6 +29,7 @@ disagrees with the code, the code wins (and this file should be fixed).
 | Writing a custom scheduler | `.claude/skills/write-a-scheduler/SKILL.md` |
 | Scheduler protocol and FIFO policy | `docs/schedulers.md` |
 | Doctor preflight checks, findings, side effects, and limits | `docs/doctor.md` |
+| MCP server: read-only tools, transport, why `run`/`gc` are excluded | `src/necroflow/mcp_server.py` |
 
 Skills under `.claude/skills/` are auto-loaded by Claude Code; other agents should read them
 as plain markdown via this table.
@@ -42,7 +43,11 @@ update `docs/rule-call-lifecycle.md` in the same change.
 
 ## Verify against the live code, not prose
 
-Before asserting how something behaves, prefer machine-readable introspection over docs:
+Before asserting how something behaves, prefer machine-readable introspection over docs.
+If the necroflow MCP server is connected (`necroflow-mcp`, `mcp` extra — see
+`src/necroflow/mcp_server.py`), call its `graph`/`outputs`/`explain`/`doctor`/`provenance`
+tools directly instead of shelling out; they return the same payloads in-process, with no
+subprocess or JSON-parsing step. Otherwise fall back to the CLI:
 
 ```bash
 necroflow graph --json job.toml        # DAG structure as JSON
@@ -52,6 +57,9 @@ necroflow doctor job.toml              # preflight checks with stable NF_* issue
 necroflow provenance --json nodes/rule/provenance_hash/file
 python -c "import inspect, necroflow.executor as e; print(inspect.signature(e.run))"
 ```
+
+The MCP server is read-only by design: it has no `run` or `gc` tool. Executing or deleting
+stays on the CLI, run directly so the operator sees the real command before approving it.
 
 ## Setup
 
