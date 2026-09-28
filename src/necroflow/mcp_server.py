@@ -1,16 +1,20 @@
-"""necroflow MCP server — read-only pipeline introspection over stdio.
+"""necroflow MCP server — read-only pipeline introspection over stdio or HTTP.
 
 Exposes the same JSON payloads as `necroflow graph|outputs|explain|doctor|provenance
 --json`, without a subprocess/parse round-trip. Deliberately excludes `run` and `gc`:
 those execute or delete, and belong behind a visible shell command an operator
 approves, not an opaque MCP tool call.
 
-Optional install: `pip install necroflow[mcp]`. Run with `necroflow-mcp` (stdio
-transport) and register it with an MCP client such as Claude Code.
+Optional install: `pip install necroflow[mcp]`. Run with `necroflow-mcp` and register
+it with an MCP client such as Claude Code. Defaults to stdio (spawned as a child
+process, reachable only by whatever spawned it); `--transport http` instead binds
+`--host`/`--port` (default `127.0.0.1:8000`) with no built-in auth, so don't bind
+beyond localhost without adding one.
 """
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
@@ -157,8 +161,38 @@ def provenance(path: str) -> dict:
         raise _tool_error(exc) from exc
 
 
-def main() -> None:
-    mcp.run()
+def _build_cli_parser() -> argparse.ArgumentParser:
+    """Build the necroflow-mcp entry-point parser."""
+    parser = argparse.ArgumentParser(
+        prog="necroflow-mcp", description="necroflow MCP server (read-only tools)"
+    )
+    parser.add_argument(
+        "--transport",
+        choices=("stdio", "http"),
+        default="stdio",
+        help="stdio (default): spawned as a child process by an MCP client. "
+        "http: streamable-http server bound to --host/--port.",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="HTTP transport bind host (default: 127.0.0.1).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="HTTP transport bind port (default: 8000).",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _build_cli_parser().parse_args(argv)
+    if args.transport == "http":
+        mcp.run(transport="streamable-http", host=args.host, port=args.port)
+    else:
+        mcp.run()
 
 
 if __name__ == "__main__":

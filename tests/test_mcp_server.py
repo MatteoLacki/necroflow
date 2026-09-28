@@ -136,3 +136,35 @@ def test_provenance_missing_output_raises_runtime_error(tmp_path):
     missing = tmp_path / "nowhere.txt"
     with pytest.raises(RuntimeError, match="provenance metadata not found"):
         mcp_server.provenance(str(missing))
+
+
+def test_main_defaults_to_stdio(monkeypatch):
+    """No --transport flag must run the default stdio transport, no host/port kwargs."""
+    calls = []
+    monkeypatch.setattr(mcp_server.mcp, "run", lambda **kwargs: calls.append(kwargs))
+    mcp_server.main([])
+    assert calls == [{}]
+
+
+def test_main_http_transport_forwards_host_and_port(monkeypatch):
+    """--transport http must forward --host/--port to MCPServer.run as streamable-http."""
+    calls = []
+    monkeypatch.setattr(
+        mcp_server.mcp, "run", lambda *args, **kwargs: calls.append((args, kwargs))
+    )
+    mcp_server.main(["--transport", "http", "--host", "0.0.0.0", "--port", "9999"])
+    assert calls == [
+        ((), {"transport": "streamable-http", "host": "0.0.0.0", "port": 9999})
+    ]
+
+
+def test_main_http_transport_defaults_host_and_port(monkeypatch):
+    """--transport http with no --host/--port must fall back to 127.0.0.1:8000."""
+    calls = []
+    monkeypatch.setattr(
+        mcp_server.mcp, "run", lambda *args, **kwargs: calls.append((args, kwargs))
+    )
+    mcp_server.main(["--transport", "http"])
+    assert calls == [
+        ((), {"transport": "streamable-http", "host": "127.0.0.1", "port": 8000})
+    ]

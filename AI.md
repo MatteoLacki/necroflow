@@ -224,7 +224,11 @@ rebuild.
 
 `src/necroflow/mcp_server.py` (optional `mcp` extra, console script
 `necroflow-mcp`) exposes `graph`, `outputs`, `explain`, `doctor`, and `provenance`
-as MCP tools over stdio. Each tool calls the matching `cli.py` payload builder
+as MCP tools. Transport defaults to stdio (spawned as a child process, reachable
+only by whatever spawned it); `--transport http [--host H] [--port P]` instead
+binds a `streamable-http` server (default `127.0.0.1:8000`) with no built-in
+auth — fine for local dev, don't bind beyond localhost without adding one. Each
+tool calls the matching `cli.py` payload builder
 (`_graph_payload`, `_outputs_payload`, `_explain_payload`, `_doctor_payload`,
 `_provenance_payload`) in-process — same dicts the CLI's `--json` flag prints, no
 subprocess or JSON-text round trip. `_build_parser().parse_args(...)` still builds

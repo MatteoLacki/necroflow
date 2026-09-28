@@ -170,7 +170,8 @@ necroflow
 │   └── provenance CLI display
 │
 ├── MCP server (optional, mcp extra)
-│   ├── console script: necroflow-mcp (stdio transport)
+│   ├── console script: necroflow-mcp
+│   ├── --transport stdio (default) or http (--host/--port, streamable-http)
 │   ├── read-only tools: graph, outputs, explain, doctor, provenance
 │   └── run/gc deliberately excluded — execution and deletion stay on the CLI
 │

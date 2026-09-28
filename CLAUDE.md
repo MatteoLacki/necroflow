@@ -220,7 +220,8 @@ src/necroflow/
                        layout, manifests, copied result trees
   graphviz_render.py — optional PNG rendering (dev extra)
   mcp_server.py      — optional MCP server (mcp extra): read-only graph/outputs/explain/
-                       doctor/provenance tools over stdio, console script `necroflow-mcp`
+                       doctor/provenance tools, console script `necroflow-mcp
+                       [--transport stdio|http] [--host H] [--port P]` (default stdio)
   templates/         — `necroflow init` project template (canonical pipeline + schema)
   tools/             — config_set.py: config-file transformation helper
 ```
