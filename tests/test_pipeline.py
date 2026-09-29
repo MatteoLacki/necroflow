@@ -576,6 +576,23 @@ def test_workdir_is_reserved_input_output_name():
             return workdir
 
 
+def test_constraint_is_reserved_input_output_name():
+    """An input/output named `constraint` would be masked by the {constraint:...} formatter."""
+    with pytest.raises(ValueError, match="reserved command placeholder"):
+
+        @command("echo {constraint} > {a}")
+        def bad_input(constraint: str):
+            a = output(A)
+            return a
+
+    with pytest.raises(ValueError, match="reserved command placeholder"):
+
+        @command("touch {constraint}")
+        def bad_output(x: str):
+            constraint = output(A)
+            return constraint
+
+
 # ── DAG deduplication ─────────────────────────────────────────────────────────
 
 

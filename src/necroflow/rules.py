@@ -25,7 +25,7 @@ from necroflow.nodes import Node, NodeType, _is_nodetype
 from necroflow.fingerprints import validate_command_callback
 from necroflow.workflow import _active_pipeline
 
-BUILTIN_COMMAND_PLACEHOLDERS = {"workdir"}
+BUILTIN_COMMAND_PLACEHOLDERS = {"workdir", "constraint"}
 
 _ReturnT = TypeVar("_ReturnT")
 
