@@ -29,7 +29,7 @@ outputs are declared only with `output(ConcreteNodeType)`.
 
 ## Reserved names
 
-An input or output name may not collide with `workdir`, with a constraint the rule
+An input or output name may not collide with the built-in placeholders `workdir` and `constraint`, with a constraint the rule
 declares, or with the implicit `threads` default every rule carries even without
 `Constraints(...)`. `Rule`/`@command` raises `ValueError` at declaration time, not
 at call time, naming the colliding names. `{constraint:name}` is an explicit,
