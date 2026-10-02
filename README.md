@@ -55,6 +55,25 @@ def rna_pipeline(P: Pipeline, config: dict) -> None:
     P.counts = count(P.bam, gene_model=config["gene_model"])
 ```
 
+### Why bring an existing file into the pipeline?
+
+`raw_fastq` creates a symlink to the original file and exposes it as a typed
+`Fastq` Node, without copying the dataset. This makes the file a tracked
+dependency: necroflow hashes its contents and records which hash `align`
+consumed. If the reads change at the same path, the next run detects the changed
+contents and reruns alignment.
+
+A file path passed directly as a string parameter contributes only its text to
+the rule's identity. Editing the file leaves that parameter unchanged, so the
+cached result can be reused despite changed input data. The same applies to
+`ref` and `gene_model` above if they refer to files: expose those files as typed
+input Nodes when their contents need tracking.
+
+Change detection uses modification times to decide when to rehash; edits that
+preserve or backdate timestamps are unsupported. A symlink also preserves no
+snapshot of the original data. See [external dataset ingestion](docs/caching.md#external-dataset-ingestion)
+for details.
+
 ## Request pipeline results
 
 Assignments such as `P.counts = ...` give Nodes public Pipeline labels. Select
