@@ -109,8 +109,7 @@ necroflow
 │   ├── init subcommand
 │   │   └── canonical starter workflow scaffold
 │   ├── graph subcommand
-│   │   ├── --json machine-readable graph
-│   │   └── --png Graphviz rendering grouped by dependency depth
+│   │   └── --json machine-readable graph
 │   ├── outputs subcommand
 │   │   └── --json requested output paths
 │   ├── provenance subcommand

@@ -38,7 +38,6 @@ dev = [
     "pytest-cov",
     "pytest-xdist",
     "pyright",
-    "networkx",
 ]
 
 

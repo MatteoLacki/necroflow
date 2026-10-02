@@ -51,7 +51,6 @@ from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import parse_resource
 from necroflow.fs import _check_path_limits, _normalize_shellpath
 from necroflow.hashers import DEFAULT_HASHER, Hasher, load_hasher, tagged_hash
-from necroflow.graphviz_render import render_png
 from necroflow.planning import plan_execution
 from necroflow.gc import collect
 
@@ -652,17 +651,13 @@ def _gc(args) -> None:
 
 
 def _graph(args) -> None:
-    """Render the requested DAG as TGF, JSON, or PNG."""
+    """Render the requested DAG as TGF or JSON."""
     nodes_dir, _results_dir = _resolve_roots(args)
     dag, combos, _forced_stale_call_keys = _build_dag_from_jobs(
         args, nodes_dir=nodes_dir
     )
     if args.json:
         _emit_json(_graph_payload(dag, combos))
-        return
-    if args.png:
-        title = ", ".join(Path(j).stem for j in args.jobs)
-        render_png(dag, output_path=Path(args.png), title=title)
         return
     rendered = str(dag)
     if args.output:
@@ -1102,11 +1097,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     graph_parser.add_argument(
         "--json", action="store_true", help="Write JSON to stdout"
-    )
-    graph_parser.add_argument(
-        "--png",
-        help="Render the DAG as a PNG grouped by dependency depth instead of "
-        "TGF text. Requires the 'dev' extra and the system 'dot' binary.",
     )
     graph_parser.set_defaults(func=_graph)
 

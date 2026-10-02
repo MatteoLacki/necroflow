@@ -83,11 +83,9 @@ Render a DAG without running jobs:
 necroflow graph job.toml
 necroflow graph --output graph.tgf job.toml
 necroflow graph --json job.toml
-necroflow graph --png graph.png job.toml
 ```
 
-Text output uses Trivial Graph Format with parent-to-child edges. `--png` requires
-the `dev` extra and Graphviz `dot`; it groups rule calls by dependency depth.
+Text output uses Trivial Graph Format with parent-to-child edges.
 
 List requested output paths without running jobs:
 

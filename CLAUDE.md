@@ -218,7 +218,6 @@ src/necroflow/
   gc.py              — provenance-aware node-store scanning, reporting, and deletion
   cli.py             — CLI argument parsing and command adapters, split nodes-dir/results-dir
                        layout, manifests, copied result trees
-  graphviz_render.py — optional PNG rendering (dev extra)
   mcp_server.py      — optional MCP server (mcp extra): read-only graph/outputs/explain/
                        doctor/provenance tools, console script `necroflow-mcp
                        [--transport stdio|http] [--host H] [--port P]` (default stdio)

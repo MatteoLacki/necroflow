@@ -33,7 +33,7 @@ fingerprinting or DAG interning; later bindings and subpipeline creation also
 fail. Only the root may finish, root finishing is idempotent, and `P.sinks()`
 requires finished construction. The CLI calls `finish()` automatically after
 each successful workflow return; direct Python callers call it before selecting
-sinks. Pipeline sections were removed; PNG graphs use dependency-depth groups.
+sinks. Pipeline sections were removed.
 
 ## Rule command placeholders
 

@@ -49,7 +49,7 @@ def test_file_map_covers_all_modules():
     """Every top-level module and subpackage of necroflow must appear in CLAUDE.md.
 
     The file map is how agents route to the right module. Modules added after
-    the map was written (config.py, graphviz_render.py, ...) were invisible to
+    the map was written (config.py, ...) were invisible to
     agents, which then re-derived or duplicated their functionality.
     """
     pkg = REPO / "src" / "necroflow"
