@@ -84,6 +84,10 @@ necroflow
 │   ├── FIFO scheduler default using RuleCall insertion order
 │   ├── custom schedulers
 │   │   └── Python callables can implement resource-aware ordering policies
+│   ├── pluggable rule_call_runner execution backend
+│   │   ├── optional runner cancel() hook, called when run() is interrupted
+│   │   └── SLURM: slurm_runner submits via sbatch, polls sacct, SlurmOptions;
+│   │       Ctrl-C/SIGTERM scancel in-flight jobs
 │   ├── dry-run mode
 │   ├── keep-going failure mode
 │   ├── failed/interrupted state tracking
@@ -103,6 +107,10 @@ necroflow
 ├── CLI
 │   ├── --scheduler selector
 │   │   ├── fifo default
+│   │   └── local Python callable
+│   ├── --runner selector
+│   │   ├── local subprocess default
+│   │   ├── slurm built-in
 │   │   └── local Python callable
 │   ├── legacy/default run form: necroflow job.toml
 │   ├── explicit run subcommand

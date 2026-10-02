@@ -247,3 +247,29 @@ The official Python SDK renamed its high-level API between major versions:
 `mcp.server.fastmcp.FastMCP` (v1) became `mcp.server.mcpserver.MCPServer` (v2).
 The `mcp` extra pins `mcp>=2`; if a future contributor's local install still
 resolves the old `fastmcp` module path, they're on v1 and need to upgrade.
+
+## SLURM runner
+
+`necroflow.slurm.slurm_runner` is a `rule_call_runner`, not a scheduler — it
+replaces *how* one already-scheduled `RuleCall` executes, submitting via
+`sbatch --parsable` then polling `sacct` for terminal state from inside the
+executor's own thread for that call. It does not touch DAG planning, caching,
+or the scheduler protocol at all. `SlurmOptions` (partition/account/time_limit/
+memory/...) is a separate declaration from `Constraints`, deliberately: its
+values are opaque strings for `sbatch` flags, never scheduler resources, so
+they never flow through `parse_resource`, `RuleCall.resources`, or
+fingerprints. See `docs/slurm.md`.
+
+Assumes a shared filesystem across the cluster (same assumption Snakemake's
+and Nextflow's own SLURM/grid executors make); does no input/output staging.
+Materializer rules (`text_file`) run in the submitting process via
+`RuleCall.run`, since a Python closure has no shell command to submit.
+Docker-selecting rules are unsupported and raise `NotImplementedError` before
+submission; clusters typically use Apptainer, and Apptainer support is work in
+progress.
+
+Interrupts: `run()` calls an optional `runner.cancel()` on `KeyboardInterrupt`
+or `SystemExit` before waiting for running calls, because Ctrl-C reaches only
+the main thread while runners execute in pool workers. `slurm_runner.cancel`
+stops every poll loop, and each one `scancel`s its job. The CLI maps SIGTERM to
+`SystemExit` only for runners that define `cancel`.

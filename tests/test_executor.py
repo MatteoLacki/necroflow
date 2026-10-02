@@ -10,8 +10,10 @@ from necroflow import (
 )
 
 import shutil
+import signal
 import subprocess
 import fcntl
+import threading
 from pathlib import Path
 
 import pytest
@@ -193,6 +195,32 @@ def test_repeat_does_not_retry_non_process_errors(tmp_path):
         run_pipeline(P, rule_call_runner=broken_runner)
 
     assert attempts == 1
+
+
+def test_interrupted_run_calls_runner_cancel(tmp_path):
+    """Ctrl-C must reach work a runner placed outside this process.
+
+    KeyboardInterrupt lands only in the main thread, and run() cannot exit
+    until running calls return; a runner's optional `cancel()` is how it learns
+    to stop them. Without it, an interrupted SLURM run waited for every job.
+    """
+    assert threading.current_thread() is threading.main_thread()
+    rule = Rule("remote", Inputs(value=str), Outputs(out=A), "touch {out}")
+    P = Pipeline(DAG(tmp_path))
+    P.out = rule(P, value="x")
+    cancelled = threading.Event()
+
+    def remote_runner(call, log_path):
+        signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)
+        if not cancelled.wait(timeout=10):
+            raise AssertionError("run() never called runner.cancel()")
+
+    remote_runner.cancel = cancelled.set
+
+    with pytest.raises(KeyboardInterrupt):
+        run_pipeline(P, rule_call_runner=remote_runner)
+
+    assert cancelled.is_set()
 
 
 def test_repeat_raises_last_command_failure_after_limit(tmp_path):

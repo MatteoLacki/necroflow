@@ -272,6 +272,15 @@ class RuleCall:
             resources["threads"] = self._thread_cap
         return resources
 
+    @property
+    def slurm_options(self) -> dict[str, str]:
+        """Return this rule's declared SLURM submission options, if any.
+
+        Opaque values for `necroflow.slurm.slurm_runner`; never a scheduler
+        resource, never parsed, never a fingerprint or admission input.
+        """
+        return dict(self.rule.slurm)
+
     def bind_thread_cap(self, cap: int) -> None:
         """Resolve an all-threads declaration for this execution."""
         if self.rule.constraints.get("threads") == "all" and self._thread_cap != cap:

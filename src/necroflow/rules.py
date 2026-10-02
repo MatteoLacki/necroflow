@@ -76,6 +76,23 @@ class Constraints:
         self.specs = kwargs
 
 
+class SlurmOptions:
+    """Declare SLURM submission options, passed through to `sbatch` as-is.
+
+    ``SlurmOptions(partition="gpu", account="labX", time_limit="02:00:00",
+    memory="4G")``. Values are opaque strings, not scheduler resources: they
+    never enter `RuleCall.resources`, are never parsed by `parse_resource`,
+    and take no part in local resource-cap admission. `partition`,
+    `account`, `time_limit`, and `memory` map to `sbatch` flags known to
+    `necroflow.slurm`; any other keyword passes through as
+    `--{key.replace("_", "-")}=value`.
+    """
+
+    def __init__(self, **kwargs):
+        """Store named SLURM submission options in declaration order."""
+        self.specs = kwargs
+
+
 @dataclass(frozen=True)
 class Many:
     """Set inclusive size bounds for a variadic Node input."""
@@ -262,6 +279,7 @@ class Rule(Generic[_ReturnT]):
         recipe_identity: str | None = None,
         materializer: Callable | None = None,
         input_defaults: Mapping[str, Any] | None = None,
+        slurm: SlurmOptions | None = None,
     ):
         """Validate and store a rule declaration and derive its call schema."""
         self.__name__ = name
@@ -272,6 +290,7 @@ class Rule(Generic[_ReturnT]):
         self.recipe_identity = recipe_identity
         self.materializer = materializer
         self.constraints = constraints.specs if constraints else {}
+        self.slurm = slurm.specs if slurm else {}
         self.repeat = self._validate_repeat(repeat)
         self.info = info
         contracts = {
@@ -778,6 +797,7 @@ def command(
     name: str | None = None,
     doc: str | None = None,
     repeat: int = 1,
+    slurm: SlurmOptions | None = None,
     **constraints,
 ):
     """Create a factory rule or return the decorator-sugar adapter.
@@ -785,7 +805,8 @@ def command(
     ``repeat`` is the maximum number of command attempts, including the first.
     Decorated scalar/config and mixed-value defaults come from the Python
     signature. Factory rules may declare them with
-    ``input_defaults={name: value}``.
+    ``input_defaults={name: value}``. ``slurm`` declares SLURM submission
+    options for `necroflow.slurm.slurm_runner`; see `SlurmOptions`.
     """
     if isinstance(cmd, list):
         raise TypeError(
@@ -825,6 +846,7 @@ def command(
             info=doc,
             repeat=repeat,
             input_defaults=input_defaults,
+            slurm=slurm,
         )
     if name is not None or doc is not None:
         raise TypeError("name= and doc= are only valid for factory commands")
@@ -844,6 +866,7 @@ def command(
                 info=info,
                 repeat=repeat,
                 input_defaults=input_defaults,
+                slurm=slurm,
             ),
         )
 

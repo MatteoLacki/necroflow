@@ -1,6 +1,6 @@
 # Scheduler Protocol
 
-[Previous: Executor](executor.md) | [README](../README.md) | [Next: Release](release.md)
+[Previous: Executor](executor.md) | [README](../README.md) | [Next: SLURM](slurm.md)
 
 Schedulers order ready `RuleCall` objects. Executor owns dependency gates, resource admission, submission, retries, state transitions, and failure handling.
 
@@ -56,4 +56,4 @@ Returning an empty list while no jobs run ends scheduling. Custom schedulers mus
 
 Resource limits remain executor policy. Scheduler order does not authorize over-cap submission, except executor solo fallback for one oversized call.
 
-[Previous: Executor](executor.md) | [README](../README.md) | [Next: Release](release.md)
+[Previous: Executor](executor.md) | [README](../README.md) | [Next: SLURM](slurm.md)

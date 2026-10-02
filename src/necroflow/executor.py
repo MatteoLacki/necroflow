@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import inspect
@@ -267,6 +268,23 @@ def _run_with_retries(call: RuleCall, runner) -> None:
             _logger.job_retry(call, attempt, maximum, exc.returncode)
 
 
+@contextmanager
+def _cancel_runner_on_interrupt(runner):
+    """Call `runner.cancel()`, if defined, when run() is interrupted.
+
+    The pool waits for running calls before run() can exit. Local commands
+    share the terminal's process group and die with Ctrl-C themselves; work a
+    runner placed elsewhere, such as SLURM jobs, stops only if it is told.
+    """
+    try:
+        yield
+    except (KeyboardInterrupt, SystemExit):
+        cancel = getattr(runner, "cancel", None)
+        if cancel is not None:
+            cancel()
+        raise
+
+
 def _promote_ready(active: list[RuleCall]) -> None:
     for call in active:
         if call.state in {RuleCallState.MISSING, RuleCallState.STALE} and all(
@@ -374,9 +392,12 @@ def run(
         }
 
         try:
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=len(plan.active) or 1
-            ) as pool:
+            with (
+                concurrent.futures.ThreadPoolExecutor(
+                    max_workers=len(plan.active) or 1
+                ) as pool,
+                _cancel_runner_on_interrupt(runner),
+            ):
                 while any(
                     call.state is None or call.state in unfinished
                     for call in plan.active

@@ -28,6 +28,7 @@ disagrees with the code, the code wins (and this file should be fixed).
 | Node re-ran or cached unexpectedly | `.claude/skills/debug-stale-classification/SKILL.md` |
 | Writing a custom scheduler | `.claude/skills/write-a-scheduler/SKILL.md` |
 | Scheduler protocol and FIFO policy | `docs/schedulers.md` |
+| SLURM execution via `slurm_runner`, `SlurmOptions`, `--runner` | `docs/slurm.md` |
 | Doctor preflight checks, findings, side effects, and limits | `docs/doctor.md` |
 | MCP server: read-only tools, transport, why `run`/`gc` are excluded | `src/necroflow/mcp_server.py` |
 
@@ -115,7 +116,8 @@ These have been true since the June refactors and are load-bearing design decisi
   after every job.
 - **`.rip/` per-RuleCall metadata**: `dependencies.toml` (lineage, mixed-input plain values,
   and consumed immutable parent hashes), `{filename}.hash`, `job.log`, `state`, `run.toml` (call timings/size), `graph.tgf`
-  (ancestor DAG in Trivial Graph Format), `{filename}.invalidation` (NodeType invalidator token, when set).
+  (ancestor DAG in Trivial Graph Format), `{filename}.invalidation` (NodeType invalidator token, when set),
+  `slurm.sbatch` (batch script submitted by `slurm_runner`, when used).
 - **Canonicalization is eager; labels are explicit.** Every `Pipeline(dag, ...)` references a
   shared DAG. A rule call fingerprints and interns its `RuleCall` immediately; equivalent calls
   return identical Node objects. Attribute/item assignment records qualified Pipeline-local labels.
@@ -212,6 +214,8 @@ src/necroflow/
   workflow.py        — synchronous @workflow decorator and scoped rule ownership
   tgf.py             — TGF rendering, Node labels, per-call ancestor graph
   executor.py        — atomic RuleCall run(), reports, resources, lock, cleanup, failures
+  slurm.py           — slurm_runner: rule_call_runner submitting one RuleCall via
+                       sbatch/sacct/scancel, SlurmOptions submission metadata
   logger.py          — thread-safe job logging
   config.py          — job TOML loading and grid expansion (iter_job_configs, JobConfig)
   grid.py            — __grid TOML expansion and deterministic result labels

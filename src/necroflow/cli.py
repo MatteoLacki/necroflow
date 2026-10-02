@@ -31,8 +31,10 @@ import json
 import os
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -87,6 +89,44 @@ def _load_scheduler(spec: str) -> Callable:
             "error: --scheduler must be fifo or "
             f"path.py:function; got {spec!r}: {exc}"
         ) from exc
+
+
+def _load_runner(spec: str | None) -> Callable | None:
+    """Resolve the default local runner, the built-in SLURM runner, or a user one."""
+    if spec is None:
+        return None
+    if spec == "slurm":
+        from necroflow.slurm import slurm_runner
+
+        return slurm_runner
+    try:
+        return load_callable(spec, kind="runner")
+    except Exception as exc:
+        raise SystemExit(
+            f"error: --runner must be slurm or path.py:function; got {spec!r}: {exc}"
+        ) from exc
+
+
+@contextmanager
+def _sigterm_cancels(runner: Callable | None):
+    """Raise SystemExit on SIGTERM while a cancellable runner runs.
+
+    run() then unwinds like after Ctrl-C and calls `runner.cancel()`, so remote
+    work such as SLURM jobs is cancelled instead of orphaned. Without a cancel
+    hook, SIGTERM keeps its default meaning: exit at once.
+    """
+    if getattr(runner, "cancel", None) is None:
+        yield
+        return
+
+    def raise_system_exit(signum, frame):
+        raise SystemExit(128 + signum)
+
+    previous = signal.signal(signal.SIGTERM, raise_system_exit)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 def _load_hasher(spec: str) -> Hasher:
@@ -629,16 +669,19 @@ def _run(args) -> None:
         )
         _write_execution_summaries(results_dir, combos, report)
 
-    dag.run(
-        resource_caps=resource_caps,
-        hasher=hasher,
-        scheduler=_load_scheduler(args.scheduler),
-        keep_going=args.keep_going,
-        autoclean=args.autoclean,
-        dry_run=args.dry_run,
-        forced_stale_call_keys=forced_stale_call_keys,
-        on_complete=None if args.dry_run else materialize,
-    )
+    runner = _load_runner(args.runner)
+    with _sigterm_cancels(runner):
+        dag.run(
+            resource_caps=resource_caps,
+            hasher=hasher,
+            scheduler=_load_scheduler(args.scheduler),
+            rule_call_runner=runner,
+            keep_going=args.keep_going,
+            autoclean=args.autoclean,
+            dry_run=args.dry_run,
+            forced_stale_call_keys=forced_stale_call_keys,
+            on_complete=None if args.dry_run else materialize,
+        )
 
 
 def _gc(args) -> None:
@@ -1156,6 +1199,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default="fifo",
         metavar="NAME|PATH.py:FUNCTION",
         help="Scheduling policy: fifo (default) or a local Python callable.",
+    )
+    run_parser.add_argument(
+        "--runner",
+        default=None,
+        metavar="NAME|PATH.py:FUNCTION",
+        help=(
+            "RuleCall execution backend: local subprocess (default), "
+            "slurm (necroflow.slurm.slurm_runner), or a local Python "
+            "rule_call_runner(call, log_path) callable."
+        ),
     )
     run_parser.set_defaults(func=_run)
 

@@ -304,6 +304,7 @@ text = '{\n  "mode": "uppercase"\n}\n'
 - [Generated config files](docs/generated-config-files.md)
 - [Executor, classification, scheduling, and cleanup](docs/executor.md)
 - [Scheduler internals](docs/schedulers.md)
+- [SLURM execution](docs/slurm.md)
 - [Manuscript argument conspect](docs/paper-arguments.md)
 - [Release checklist](docs/release.md)
 - [Development](docs/development.md)

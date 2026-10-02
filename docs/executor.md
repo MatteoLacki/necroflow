@@ -146,6 +146,10 @@ Resources remain reserved across retries.
 
 When the realized command selects a `Docker` input (see [Docker execution](rules.md#docker-execution)), `RuleCall.run` launches `docker run` with argv from `necroflow.containers.docker_argv` instead of a host shell. Exit codes, retries, logs, and missing-output checks are unchanged. Cached calls launch nothing and pull nothing. A custom `rule_call_runner` owns whatever it replaces, including container launch.
 
+`necroflow.slurm.slurm_runner` is a built-in custom runner submitting each call to a SLURM cluster via `sbatch`/`sacct` instead of running it locally; select it with CLI `--runner slurm` or pass it directly as `rule_call_runner`. See [SLURM](slurm.md).
+
+A runner may define an optional `cancel` attribute, a callable taking no arguments. When `run()` is interrupted (`KeyboardInterrupt` or `SystemExit`), the executor calls it from the main thread before waiting for running calls; it must make in-flight runner calls return promptly. Local commands need no hook, since Ctrl-C reaches the terminal's whole process group. Work placed elsewhere does: `slurm_runner.cancel()` makes each in-flight call `scancel` its job. For runners that define `cancel`, the CLI also turns SIGTERM into `SystemExit`, so `kill` cancels as Ctrl-C does; otherwise SIGTERM keeps its default action.
+
 `repeat=N` permits at most N command attempts within one scheduler submission. Only `subprocess.CalledProcessError` retries. Materializer errors, missing outputs, runner bugs, and metadata errors do not.
 
 ## Successful completion
