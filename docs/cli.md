@@ -83,9 +83,12 @@ Render a DAG without running jobs:
 necroflow graph job.toml
 necroflow graph --output graph.tgf job.toml
 necroflow graph --json job.toml
+necroflow graph --dot job.toml | dot -Tsvg > graph.svg
 ```
 
-Text output uses Trivial Graph Format with parent-to-child edges.
+Text output uses Trivial Graph Format with parent-to-child edges. `--dot` writes Graphviz DOT
+text instead, with Node keys as ids and each RuleCall's co-outputs in a dashed cluster; Necroflow
+does not render images itself, so pipe it to Graphviz `dot` (`-Tsvg`, `-Tpng`, ...).
 
 List requested output paths without running jobs:
 

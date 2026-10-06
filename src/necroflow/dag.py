@@ -4,7 +4,7 @@ from pathlib import Path
 
 import tomlkit
 
-from necroflow.tgf import _node_label, render_tgf
+from necroflow.tgf import _node_label, render_dot, render_tgf
 from necroflow.nodes import Node
 from necroflow.rule_call import RuleCall
 from necroflow.rules import parse_resource
@@ -130,7 +130,7 @@ class DAG:
     def __repr__(self) -> str:
         return str(self)
 
-    def __str__(self) -> str:
+    def _graph_label(self):
         required_paths = {n.relative_path for n in self.required_nodes}
 
         def label(node: Node) -> str:
@@ -138,7 +138,14 @@ class DAG:
                 " [required]" if node.relative_path in required_paths else ""
             )
 
-        return render_tgf(self.nodes, label=label)
+        return label
+
+    def __str__(self) -> str:
+        return render_tgf(self.nodes, label=self._graph_label())
+
+    def to_dot(self) -> str:
+        """Render the DAG as Graphviz DOT text, labelled like `str(dag)`."""
+        return render_dot(self.nodes, label=self._graph_label())
 
     def save(self, path) -> None:
         """Write the DAG in Trivial Graph Format."""

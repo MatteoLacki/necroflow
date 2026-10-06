@@ -4,6 +4,7 @@ from necroflow.rules import Constraints, Inputs, Outputs, Rule
 
 import os
 import shutil
+import subprocess
 import fcntl
 import textwrap
 import time
@@ -12,6 +13,7 @@ import pytest
 
 import necroflow.cli as cli_core
 from necroflow.planning import plan_execution
+from necroflow.tgf import render_dot
 from pathlib import Path
 from necroflow import NodeType, Pipeline, DAG, output
 from necroflow.cli import (
@@ -1824,6 +1826,75 @@ def test_graph_output_writes_rendered_dag(tmp_path, factory_file):
     assert "make_b" in rendered
     assert "\n#\n" in rendered
     assert not list((tmp_path / "out").rglob("a.txt"))
+
+
+_COOUTPUT_FACTORY_SRC = textwrap.dedent("""\
+    from necroflow.rules import Inputs, Outputs, Rule
+    from necroflow import NodeType
+    class A(NodeType): filename = "a.txt"
+    class B(NodeType): filename = "b.txt"
+    class C(NodeType): filename = "c.txt"
+    make_pair = Rule("make_pair", Inputs(v=str), Outputs(a=A, b=B), "touch {a} {b}")
+    use_a = Rule("use_a", Inputs(a=A), Outputs(c=C), "cp {a} {c}")
+    def factory(P, cfg):
+        P.a, P.b = make_pair(P, v=cfg["v"])
+        P.c = use_a(P, P.a)
+""")
+
+
+def _graph_dot(tmp_path, capsys) -> tuple[str, dict]:
+    """Return DOT text and the JSON graph for a co-output pipeline."""
+    factory = tmp_path / "pipe.py"
+    factory.write_text(_COOUTPUT_FACTORY_SRC)
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory}:factory"\nv = "hello"\n')
+    roots = ["--outdir", str(tmp_path / "out"), str(job)]
+    main(["graph", "--json", *roots])
+    graph = _json_stdout(capsys)
+    main(["graph", "--dot", *roots])
+    return capsys.readouterr().out, graph
+
+
+def test_graph_dot_keys_nodes_and_clusters_cooutputs(tmp_path, capsys):
+    """DOT output names Nodes by stable keys and boxes each call's co-outputs.
+
+    Node ids match the JSON graph's keys, so the picture and machine-readable
+    output describe the same Nodes; a dashed cluster shows which Nodes one
+    command produces together.
+    """
+    dot, graph = _graph_dot(tmp_path, capsys)
+
+    keys = {node["key"] for node in graph["nodes"]}
+    for key in keys:
+        assert f'"{key}" [label=' in dot
+    for edge in graph["edges"]:
+        assert f'"{edge["from"]}" -> "{edge["to"]}";' in dot
+    assert dot.startswith("digraph necroflow {")
+    assert dot.count("subgraph ") == 1
+    assert "[required]" in dot
+    assert not list((tmp_path / "out").rglob("*.txt"))
+
+
+@pytest.mark.skipif(shutil.which("dot") is None, reason="Graphviz dot not installed")
+def test_graph_dot_renders_with_graphviz(tmp_path, capsys):
+    """Graphviz must accept the DOT text as is, so piping into it just works."""
+    dot, _graph = _graph_dot(tmp_path, capsys)
+
+    rendered = subprocess.run(
+        ["dot", "-Tsvg"], input=dot, capture_output=True, text=True, check=True
+    )
+
+    assert "<svg" in rendered.stdout
+
+
+def test_render_dot_escapes_quotes_and_backslashes_in_labels(tmp_path):
+    """Labels are user-influenced text and must not break DOT quoting."""
+    P = Pipeline(DAG(tmp_path))
+    P.out = R_step1(P, v="x")
+
+    dot = render_dot(P.dag.nodes, label=lambda node: 'say "hi" \\ ok')
+
+    assert '[label="say \\"hi\\" \\\\ ok"];' in dot
 
 
 def test_provenance_missing_metadata_errors_cleanly(tmp_path):

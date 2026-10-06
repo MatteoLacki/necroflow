@@ -109,7 +109,8 @@ necroflow
 │   ├── init subcommand
 │   │   └── canonical starter workflow scaffold
 │   ├── graph subcommand
-│   │   └── --json machine-readable graph
+│   │   ├── --json machine-readable graph
+│   │   └── --dot Graphviz DOT text (pipe to `dot -Tsvg`)
 │   ├── outputs subcommand
 │   │   └── --json requested output paths
 │   ├── provenance subcommand

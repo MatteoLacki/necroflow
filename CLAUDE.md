@@ -211,7 +211,7 @@ src/necroflow/
   planning.py        — lazy consumed-hash classification and reasons
   pipeline.py        — Pipeline (prefixed views, labels, finish)
   workflow.py        — synchronous @workflow decorator and scoped rule ownership
-  tgf.py             — TGF rendering, Node labels, per-call ancestor graph
+  tgf.py             — TGF and Graphviz DOT text rendering, Node labels, per-call ancestor graph
   executor.py        — atomic RuleCall run(), reports, resources, lock, cleanup, failures
   logger.py          — thread-safe job logging
   config.py          — job TOML loading and grid expansion (iter_job_configs, JobConfig)

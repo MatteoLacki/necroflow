@@ -1,8 +1,10 @@
-"""Trivial Graph Format rendering for DAGs and stored ancestor graphs."""
+"""Trivial Graph Format and Graphviz DOT rendering for DAGs and stored
+ancestor graphs."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from necroflow.nodes import Node
 
@@ -39,6 +41,51 @@ def render_tgf(
         for parent in node.parents
         if parent.relative_path in node_ids
     )
+    return "\n".join(lines)
+
+
+def _dot_string(text: str) -> str:
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def render_dot(
+    nodes: list[Node],
+    *,
+    label: Callable[[Node], str] = _node_label,
+) -> str:
+    """Render Nodes as Graphviz DOT text with parent-to-child edges.
+
+    Node ids are stable node-store keys. Co-outputs of one RuleCall share a
+    dashed cluster, showing which Nodes one command produces together.
+    Rendering is left to Graphviz, e.g. `necroflow graph --dot | dot -Tsvg`.
+    """
+    keys = {node.relative_path for node in nodes}
+    calls: dict[Path, list[Node]] = {}
+    for node in nodes:
+        calls.setdefault(node.rule_call.relative_path, []).append(node)
+    lines = ["digraph necroflow {", "  node [shape=box];"]
+    for call_key, call_nodes in calls.items():
+        declarations = [
+            f"{_dot_string(node.relative_path.as_posix())} "
+            f"[label={_dot_string(label(node))}];"
+            for node in call_nodes
+        ]
+        if len(call_nodes) == 1:
+            lines.append("  " + declarations[0])
+            continue
+        cluster = _dot_string("cluster_" + call_key.as_posix())
+        lines.append(f"  subgraph {cluster} {{")
+        lines.append("    style=dashed;")
+        lines.extend("    " + declaration for declaration in declarations)
+        lines.append("  }")
+    lines.extend(
+        f"  {_dot_string(parent.relative_path.as_posix())} -> "
+        f"{_dot_string(node.relative_path.as_posix())};"
+        for node in nodes
+        for parent in node.parents
+        if parent.relative_path in keys
+    )
+    lines.append("}")
     return "\n".join(lines)
 
 

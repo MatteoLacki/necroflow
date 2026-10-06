@@ -669,7 +669,7 @@ def _gc(args) -> None:
 
 
 def _graph(args) -> None:
-    """Render the requested DAG as TGF or JSON."""
+    """Render the requested DAG as TGF, DOT, or JSON."""
     nodes_dir, _results_dir = _resolve_roots(args)
     dag, combos, _forced_stale_call_keys = _build_dag_from_jobs(
         args, nodes_dir=nodes_dir
@@ -677,7 +677,7 @@ def _graph(args) -> None:
     if args.json:
         _emit_json(_graph_payload(dag, combos))
         return
-    rendered = str(dag)
+    rendered = dag.to_dot() if args.dot else str(dag)
     if args.output:
         Path(args.output).write_text(rendered + "\n", encoding="utf-8")
     else:
@@ -1143,8 +1143,14 @@ def _build_parser() -> argparse.ArgumentParser:
     graph_parser.add_argument(
         "--output", help="Write graph text to a file instead of stdout"
     )
-    graph_parser.add_argument(
+    graph_format = graph_parser.add_mutually_exclusive_group()
+    graph_format.add_argument(
         "--json", action="store_true", help="Write JSON to stdout"
+    )
+    graph_format.add_argument(
+        "--dot",
+        action="store_true",
+        help="Write Graphviz DOT text instead of TGF, e.g. pipe to `dot -Tsvg`",
     )
     graph_parser.set_defaults(func=_graph)
 
