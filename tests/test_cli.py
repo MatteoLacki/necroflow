@@ -1445,6 +1445,102 @@ def test_main_writes_execution_summary_for_requested_ancestors(tmp_path, factory
     )
 
 
+def test_main_reporter_receives_written_summary_for_each_job(tmp_path, factory_file):
+    """A reporter sees each completed job's plain summary after its file exists."""
+    import json
+
+    jobs = []
+    for label in ("first", "second"):
+        job = tmp_path / f"{label}.toml"
+        job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "{label}"\n')
+        jobs.append(job)
+    results_dir = tmp_path / "results"
+    recorded = tmp_path / "reported.jsonl"
+    reporter = tmp_path / "reporter.py"
+    reporter.write_text(
+        "import json\n"
+        "from pathlib import Path\n"
+        f"RESULTS = Path({str(results_dir)!r})\n"
+        f"RECORDED = Path({str(recorded)!r})\n"
+        "def report(label, summary):\n"
+        "    assert (RESULTS / label / 'execution.toml').exists()\n"
+        "    assert (RESULTS / label / 'manifest.toml').exists()\n"
+        "    assert isinstance(summary, dict)\n"
+        "    with RECORDED.open('a') as out:\n"
+        "        out.write(json.dumps({'label': label, 'summary': summary}) + '\\n')\n"
+    )
+
+    args = [
+        "--nodes-dir",
+        str(tmp_path / "nodes"),
+        "--results-dir",
+        str(results_dir),
+        "--reporter",
+        f"{reporter}:report",
+        *(str(job) for job in jobs),
+    ]
+    main(args)
+    entries = [json.loads(line) for line in recorded.read_text().splitlines()]
+    assert [entry["label"] for entry in entries] == ["first", "second"]
+    for entry in entries:
+        persisted = tomlkit.parse(
+            (results_dir / entry["label"] / "execution.toml").read_text()
+        ).unwrap()
+        assert entry["summary"] == persisted
+        assert {rule["name"] for rule in entry["summary"]["rules"]} == {
+            "make_a",
+            "make_b",
+        }
+
+    main(args)
+    cached = [json.loads(line) for line in recorded.read_text().splitlines()][2:]
+    assert len(cached) == 2
+    assert all(rule["cached"] for entry in cached for rule in entry["summary"]["rules"])
+
+
+def test_main_rejects_invalid_reporter_before_execution(tmp_path, factory_file):
+    """Invalid reporter specs fail before the pipeline changes the node store."""
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+
+    with pytest.raises(SystemExit, match="--reporter must be path.py:function"):
+        main(
+            [
+                "--nodes-dir",
+                str(tmp_path / "nodes"),
+                "--reporter",
+                "missing",
+                str(job),
+            ]
+        )
+    assert not (tmp_path / "nodes").exists()
+
+
+def test_terminal_reporter_example_prints_summary(tmp_path, factory_file, capsys):
+    """The shipped reporter example runs through the public CLI option."""
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    reporter = Path(__file__).resolve().parents[1] / "examples" / "terminal_reporter.py"
+
+    main(
+        [
+            "--nodes-dir",
+            str(tmp_path / "nodes"),
+            "--results-dir",
+            str(tmp_path / "results"),
+            "--reporter",
+            f"{reporter}:report",
+            str(job),
+        ]
+    )
+
+    printed = capsys.readouterr().out
+    assert "job\n" in printed
+    assert "make_a" in printed
+    assert "make_b" in printed
+    assert "Invocation:" in printed
+
+
 def test_main_execution_summary_counts_cooutput_rule_once(tmp_path):
     """Co-output Nodes share one execution and must not duplicate its runtime."""
 

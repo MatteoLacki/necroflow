@@ -19,7 +19,7 @@ necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \
           [--constraint KEY=VALUE ...] [--keep-going] [--autoclean] [--dry-run] \
           [--invalidate LABEL ...] [--reap NAME ...] [--reap-file PATH] \
           [--validation PATH.py:FUNCTION ...] [--scheduler NAME|PATH.py:FUNCTION] [--shellpath PATH] \
-          [--hasher NAME|PATH.py:CLASS] \
+          [--hasher NAME|PATH.py:CLASS] [--reporter PATH.py:FUNCTION] \
           [--long-names] \
           JOB.toml [JOB2.toml ...]
 ```
@@ -40,6 +40,7 @@ necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \
 | `--validation PATH.py:FUNCTION` | Validate each expanded job config with a Python callable. Repeatable. |
 | `--scheduler NAME|PATH.py:FUNCTION` | Run-only scheduler: `fifo` (default) or a local three-argument RuleCall callable. |
 | `--hasher NAME|PATH.py:CLASS` | Output content hasher: `blake3` (default), `sha256`, or a local class with `name` and `hash_path(path, threads)`. Switching makes every consumer rerun once. |
+| `--reporter PATH.py:FUNCTION` | Call a local Python function for each job's completed execution summary. Run only. |
 | `--shellpath PATH` | Executable shell for string commands, e.g. `/bin/bash`. Defaults to Python's system shell behavior. |
 | `--long-names` | Use full nested parameter paths in generated job/result labels (`job__ref+hg38`) instead of the default short, deduplicated form (`job__hg38`). See [Job TOML and Parameter Grids](job-toml.md). |
 
@@ -62,6 +63,24 @@ necroflow outputs --shellpath /bin/bash job.toml
 ```
 
 Explicit shell paths affect node hashes for string commands, so `outputs --shellpath PATH` reports the same paths that `run --shellpath PATH` will produce.
+
+## Custom execution reports
+
+```bash
+necroflow run --reporter examples/terminal_reporter.py:report job.toml
+```
+
+The [terminal example](../examples/terminal_reporter.py) prints a table of rule
+states, durations, and output sizes. A reporter receives `(job_label, summary)`:
+the expanded job label and a plain Python dict with the same fields as that
+job's `results/<job_label>/execution.toml`. It runs once per job after result
+copies, `manifest.toml`, and `execution.toml` are written. Cached calls appear
+in `summary["rules"]`; they have no command duration. No reporter runs for
+`--dry-run`. A callback error propagates and fails the CLI run.
+
+Users can define reporters that send these summaries to task queues or web UIs.
+The callback runs synchronously in the CLI process, so a queue integration
+should enqueue work there and return promptly.
 
 Fingerprinting is framework-owned. A job containing `.fingerprint` is rejected.
 

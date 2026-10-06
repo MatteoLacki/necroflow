@@ -217,6 +217,8 @@ No individual sibling output cleanup exists.
 CLI result paths remain Node-level selections. After successful execution, only requested Nodes are copied from canonical workdirs into `results/`. `manifest.toml` records visible path, canonical Node origin, and content hash.
 
 `execution.toml` uses RuleCall report entries, so duration is never attached to an individual Node and co-output runtime is never double-counted.
+The CLI `--reporter path.py:function` callback receives each job label and this
+summary as a plain dict after the file is written.
 Its top-level timings separate summed work from elapsed time:
 
 - `cumulative_duration_seconds` sums the job's command durations; parallel calls add up.

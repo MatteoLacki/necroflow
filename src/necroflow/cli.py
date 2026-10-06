@@ -96,6 +96,16 @@ def _load_scheduler(spec: str) -> Callable:
         ) from exc
 
 
+def _load_reporter(spec: str) -> Callable:
+    """Load a callback for each completed job's execution summary."""
+    try:
+        return load_callable(spec, kind="reporter")
+    except Exception as exc:
+        raise SystemExit(
+            f"error: --reporter must be path.py:function; got {spec!r}: {exc}"
+        ) from exc
+
+
 def _load_hasher(spec: str) -> Hasher:
     """Resolve a built-in hasher name or load a user hasher class."""
     try:
@@ -625,6 +635,7 @@ def _doctor_payload(args) -> dict:
 def _run(args) -> None:
     """Build, execute, and materialize all jobs requested by the run command."""
     nodes_dir, results_dir = _resolve_roots(args)
+    reporter = _load_reporter(args.reporter) if args.reporter else None
     dag, combos, forced_stale_call_keys = _build_dag_from_jobs(
         args, nodes_dir=nodes_dir
     )
@@ -644,7 +655,9 @@ def _run(args) -> None:
             "wall_seconds": time.perf_counter() - started,
             "hash_seconds": hasher.seconds,
         }
-        _write_execution_summaries(results_dir, combos, report, invocation)
+        _write_execution_summaries(
+            results_dir, combos, report, invocation, reporter=reporter
+        )
 
     dag.run(
         resource_caps=resource_caps,
@@ -813,7 +826,12 @@ def _covered_seconds(intervals: list[tuple[datetime, datetime]]) -> float:
 
 
 def _write_execution_summaries(
-    results_dir: Path, combos: list[_Combo], report, invocation: dict[str, float]
+    results_dir: Path,
+    combos: list[_Combo],
+    report,
+    invocation: dict[str, float],
+    *,
+    reporter: Callable | None = None,
 ) -> None:
     """Write per-job execution reports containing only requested call closures.
 
@@ -881,6 +899,8 @@ def _write_execution_summaries(
         combo_dir = results_dir / label
         combo_dir.mkdir(parents=True, exist_ok=True)
         (combo_dir / "execution.toml").write_text(tomlkit.dumps(data), encoding="utf-8")
+        if reporter is not None:
+            reporter(label, data.unwrap())
 
 
 def _prune_empty_dirs(path: Path, stop: Path) -> None:
@@ -1200,6 +1220,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default="fifo",
         metavar="NAME|PATH.py:FUNCTION",
         help="Scheduling policy: fifo (default) or a local Python callable.",
+    )
+    run_parser.add_argument(
+        "--reporter",
+        metavar="PATH.py:FUNCTION",
+        help="Call a local Python function with (job_label, execution_summary) after each job.",
     )
     run_parser.set_defaults(func=_run)
 

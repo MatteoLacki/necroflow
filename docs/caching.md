@@ -14,6 +14,7 @@ results/
   experiment__hg38__bwa/
     {node_name}/{file}             ← copies of requested node outputs only
     manifest.toml                  ← paths, origin node keys, and content hashes
+    execution.toml                 ← per-job rule-call summary and timings
   experiment__hg38__bowtie2/
     ...
 ```
