@@ -1,5 +1,13 @@
 # TODO
 
+## Execution reporting
+
+- [ ] Report elapsed workflow wall time separately from summed rule-call durations.
+  `execution.toml` currently labels the sum as `total_duration_seconds`, but calls
+  can run in parallel, so this is not elapsed workflow time. Measure wall time
+  explicitly and name the cumulative duration clearly. Verify with overlapping
+  calls so parallel runtime is not counted twice as wall time.
+
 ## GitHub Actions follow-up plan
 
 1. [ ] Add a packaging validation job on Ubuntu with Python 3.14.
