@@ -173,6 +173,8 @@ Shared metadata:
 ```
 
 `run.toml` stores call-level timestamps, `duration_seconds`, exit code, and total non-`.rip` workdir size.
+Timestamps are taken in the worker thread around the command attempts, so a call's duration never includes
+coordinator work such as hashing another call's outputs.
 `graph.tgf` stores numbered Nodes followed by parent-to-child edge pairs in
 [Trivial Graph Format](https://docs.gephi.org/desktop/User_Manual/Import/Trivial_Graph_Format/).
 
@@ -211,6 +213,15 @@ No individual sibling output cleanup exists.
 CLI result paths remain Node-level selections. After successful execution, only requested Nodes are copied from canonical workdirs into `results/`. `manifest.toml` records visible path, canonical Node origin, and content hash.
 
 `execution.toml` uses RuleCall report entries, so duration is never attached to an individual Node and co-output runtime is never double-counted.
+Its top-level timings separate summed work from elapsed time:
+
+- `cumulative_duration_seconds` sums the job's command durations; parallel calls add up.
+- `command_wall_seconds` is the time at least one of the job's commands was running; overlaps count once.
+- `[invocation]` holds whole-run figures, repeated in every job's file: `wall_seconds` from `dag.run()` start until
+  results are copied, and `hash_seconds` spent hashing during planning, call completion, and result manifests.
+
+These overlap and need not sum to `wall_seconds`; the rest is scheduling, metadata, and copying. Hashing runs one
+file at a time on the coordinator, so summed hash time equals hashing wall time.
 
 ## Worked execution example
 

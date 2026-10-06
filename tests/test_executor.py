@@ -9,9 +9,11 @@ from necroflow import (
     text_file_rule,
 )
 
+import hashlib
 import shutil
 import subprocess
 import fcntl
+import time
 from pathlib import Path
 
 import pytest
@@ -1210,6 +1212,34 @@ def test_run_returns_report_and_writes_run_stats_with_output_size(tmp_path):
     assert run_doc["run"]["output_size_bytes"] == len("abc\n")
     assert run_doc["run"]["output_size_human"] == "4 B"
     assert run_doc["run"]["duration_seconds"] >= 0
+
+
+class _SlowHasher:
+    name = "slow"
+
+    def hash_path(self, path, threads):
+        time.sleep(0.6)
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def test_call_duration_excludes_coordinator_hashing_of_other_calls(tmp_path):
+    """A call's duration covers its own command only.
+
+    The coordinator hashes each finished call's outputs on its own thread. A
+    parallel call that finishes meanwhile must not have that hashing added to
+    its runtime, or reports claim software time that never happened.
+    """
+    sleep_make_b = Rule(
+        "sleep_make_b", Inputs(x=str), Outputs(b=B), "sleep 0.2; touch {b}"
+    )
+    P = Pipeline(DAG(tmp_path))
+    P.a = R_make_a(P, x="fast")
+    P.b = sleep_make_b(P, x="slow")
+
+    report = run_pipeline(P, resource_caps={"threads": 2}, hasher=_SlowHasher())
+
+    slow = report[P.b.rule_call.relative_path.as_posix()]
+    assert 0.2 <= slow.duration_seconds() < 0.5
 
 
 def test_run_report_marks_cached_nodes_and_measures_size(tmp_path):

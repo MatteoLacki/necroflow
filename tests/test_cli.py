@@ -1437,7 +1437,7 @@ def test_main_writes_execution_summary_for_requested_ancestors(tmp_path, factory
     assert rules["make_a"]["output_size_bytes"] == 0
     assert rules["make_a"]["output_size_human"] == "0 B"
     assert rules["make_a"]["outputs"][0]["labels"] == ["a"]
-    assert doc["total_duration_seconds"] == pytest.approx(
+    assert doc["cumulative_duration_seconds"] == pytest.approx(
         sum(rule["duration_seconds"] for rule in rules.values())
     )
 
@@ -1476,7 +1476,100 @@ def test_main_execution_summary_counts_cooutput_rule_once(tmp_path):
     rule = doc["rules"][0]
     assert rule["name"] == "make_pair"
     assert {output["name"] for output in rule["outputs"]} == {"a", "b"}
-    assert doc["total_duration_seconds"] == pytest.approx(rule["duration_seconds"])
+    assert doc["cumulative_duration_seconds"] == pytest.approx(rule["duration_seconds"])
+
+
+def test_main_execution_summary_counts_parallel_command_time_once(tmp_path):
+    """Command wall time counts overlapping calls once; the cumulative sum does not.
+
+    Two independent one-second calls running side by side take about one
+    second of wall time but two seconds of summed command time. Reporting
+    only the sum would make parallel runs look twice as slow as they were.
+    """
+    factory = tmp_path / "pipe.py"
+    factory.write_text(textwrap.dedent("""\
+        from necroflow import NodeType, command, output
+        class A(NodeType): filename = "a.txt"
+        class B(NodeType): filename = "b.txt"
+        @command("sleep 1; touch {a}")
+        def make_a(v: str):
+            a = output(A)
+            return a
+        @command("sleep 1; touch {b}")
+        def make_b(v: str):
+            b = output(B)
+            return b
+        def factory(P, cfg):
+            P.a = make_a(P, v=cfg["v"])
+            P.b = make_b(P, v=cfg["v"])
+    """))
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory}:factory"\nv = "hello"\n')
+    results_dir = tmp_path / "results"
+
+    main(
+        [
+            "--nodes-dir",
+            str(tmp_path / "nodes"),
+            "--results-dir",
+            str(results_dir),
+            "-c2",
+            str(job),
+        ]
+    )
+
+    doc = tomlkit.parse((results_dir / "job" / "execution.toml").read_text())
+    durations = [rule["duration_seconds"] for rule in doc["rules"]]
+    assert doc["cumulative_duration_seconds"] == pytest.approx(sum(durations))
+    assert doc["cumulative_duration_seconds"] >= 2
+    assert max(durations) <= doc["command_wall_seconds"] < 1.5
+    assert doc["invocation"]["wall_seconds"] >= doc["command_wall_seconds"]
+
+
+def test_main_execution_summary_reports_hash_time_apart_from_commands(
+    tmp_path, factory_file
+):
+    """Invocation hash time counts every hash; command durations exclude it.
+
+    Hashing outputs and results costs real time on large data, so it is
+    reported on its own rather than hidden inside rule durations.
+    """
+    hash_log = tmp_path / "hashes.log"
+    plugin = tmp_path / "slow_hasher.py"
+    plugin.write_text(textwrap.dedent(f"""\
+        import hashlib, time
+        from pathlib import Path
+        class SlowHasher:
+            name = "slow"
+            def hash_path(self, path, threads):
+                with open({str(hash_log)!r}, "a") as log:
+                    log.write("hash\\n")
+                time.sleep(0.3)
+                return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    """))
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+    results_dir = tmp_path / "results"
+
+    main(
+        [
+            "--nodes-dir",
+            str(tmp_path / "nodes"),
+            "--results-dir",
+            str(results_dir),
+            "--hasher",
+            f"{plugin}:SlowHasher",
+            str(job),
+        ]
+    )
+
+    doc = tomlkit.parse((results_dir / "job" / "execution.toml").read_text())
+    hashes = len(hash_log.read_text().splitlines())
+    hash_seconds = doc["invocation"]["hash_seconds"]
+    assert hashes >= 3  # make_a and make_b outputs, plus the result manifest
+    assert 0.3 * hashes <= hash_seconds < 0.3 * hashes + 0.5
+    assert doc["invocation"]["wall_seconds"] >= hash_seconds
+    assert all(rule["duration_seconds"] < 0.3 for rule in doc["rules"])
 
 
 def test_main_execution_summary_survives_autocleaned_intermediate(

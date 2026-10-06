@@ -2,7 +2,7 @@
 
 ## Execution reporting
 
-- [ ] Report elapsed workflow wall time separately from summed rule-call durations.
+- [x] Report elapsed workflow wall time separately from summed rule-call durations.
   `execution.toml` currently labels the sum as `total_duration_seconds`, but calls
   can run in parallel, so this is not elapsed workflow time. Measure wall time
   explicitly and name the cumulative duration clearly. Verify with overlapping

@@ -267,6 +267,22 @@ def _run_with_retries(call: RuleCall, runner) -> None:
             _logger.job_retry(call, attempt, maximum, exc.returncode)
 
 
+@dataclass
+class _CommandTiming:
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+def _timed_run_with_retries(call: RuleCall, runner, timing: _CommandTiming) -> None:
+    # Stamped in the worker: the coordinator may be hashing another call's
+    # outputs when this one finishes, and that must not count as its runtime.
+    timing.started_at = _utc_now()
+    try:
+        _run_with_retries(call, runner)
+    finally:
+        timing.finished_at = _utc_now()
+
+
 def _promote_ready(active: list[RuleCall]) -> None:
     for call in active:
         if call.state in {RuleCallState.MISSING, RuleCallState.STALE} and all(
@@ -280,8 +296,8 @@ def _complete_call(
     plan: ExecutionPlan,
     report: dict[str, RuleCallExecution],
     *,
-    started_at: str,
-    finished_at: str,
+    started_at: str | None,
+    finished_at: str | None,
 ) -> RuleCallExecution:
     missing = [output.path for output in call.outputs if not output.path.exists()]
     if missing:
@@ -416,9 +432,11 @@ def run(
                         call.mark_running()
                         call.state = RuleCallState.RUNNING
                         _logger.job_start(call)
-                        start_wall = _utc_now()
-                        future = pool.submit(_run_with_retries, call, runner)
-                        running[future] = (call, start_wall)
+                        timing = _CommandTiming()
+                        future = pool.submit(
+                            _timed_run_with_retries, call, runner, timing
+                        )
+                        running[future] = (call, timing)
                         for name, amount in call.resources.items():
                             running_resources[name] = (
                                 running_resources.get(name, 0) + amount
@@ -431,16 +449,15 @@ def run(
                         running, return_when=concurrent.futures.FIRST_COMPLETED
                     )
                     for future in done:
-                        call, start_wall = running.pop(future)
-                        finished_wall = _utc_now()
+                        call, timing = running.pop(future)
                         try:
                             future.result()
                             event = _complete_call(
                                 call,
                                 plan,
                                 report,
-                                started_at=start_wall,
-                                finished_at=finished_wall,
+                                started_at=timing.started_at,
+                                finished_at=timing.finished_at,
                             )
                             executed_call_keys.add(call.relative_path)
                             n_cleaned += _cleanup_parents(call, autoclean_plan)
@@ -464,8 +481,8 @@ def run(
                                 call,
                                 state=state,
                                 cached=False,
-                                started_at=start_wall,
-                                finished_at=finished_wall,
+                                started_at=timing.started_at,
+                                finished_at=timing.finished_at,
                                 exit_code=exit_code,
                                 error=str(exc),
                             )

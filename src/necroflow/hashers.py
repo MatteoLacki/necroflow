@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -115,6 +116,27 @@ def load_hasher(spec: str | Hasher | None) -> Hasher:
             f"hasher name must match {_NAME_PATTERN.pattern!r}, got {hasher.name!r}"
         )
     return hasher
+
+
+class TimedHasher:
+    """Delegate to `hasher`, accumulating wall seconds spent in `hash_path`.
+
+    The total equals hashing wall time only while hashes run one at a time,
+    as they do on the executor's coordinator thread and in CLI result
+    materialization.
+    """
+
+    def __init__(self, hasher: Hasher) -> None:
+        self.hasher = hasher
+        self.name = hasher.name
+        self.seconds = 0.0
+
+    def hash_path(self, path: Path, threads: int) -> str:
+        started = time.perf_counter()
+        try:
+            return self.hasher.hash_path(path, threads)
+        finally:
+            self.seconds += time.perf_counter() - started
 
 
 def tagged_hash(hasher: Hasher, path: Path, threads: int) -> str:

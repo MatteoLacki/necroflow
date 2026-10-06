@@ -33,7 +33,9 @@ import secrets
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
+from datetime import datetime
 from importlib import resources
 from pathlib import Path
 from typing import Callable, TypeAlias
@@ -50,7 +52,13 @@ from necroflow import (
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import parse_resource
 from necroflow.fs import _check_path_limits, _normalize_shellpath
-from necroflow.hashers import DEFAULT_HASHER, Hasher, load_hasher, tagged_hash
+from necroflow.hashers import (
+    DEFAULT_HASHER,
+    Hasher,
+    TimedHasher,
+    load_hasher,
+    tagged_hash,
+)
 from necroflow.planning import plan_execution
 from necroflow.gc import collect
 
@@ -618,15 +626,22 @@ def _run(args) -> None:
         args, nodes_dir=nodes_dir
     )
     _preflight_result_paths(results_dir, combos)
-    hasher = _load_hasher(args.hasher)
+    # One wrapper for planning, output, and manifest hashes, so its total is
+    # the invocation's hashing time.
+    hasher = TimedHasher(_load_hasher(args.hasher))
     resource_caps = _parse_resource_caps(args)
+    started = time.perf_counter()
 
     def materialize(report):
         # Runs after every call has finished, so it may use the whole cap.
         _materialize_results(
             results_dir, combos, hasher=hasher, threads=resource_caps["threads"]
         )
-        _write_execution_summaries(results_dir, combos, report)
+        invocation = {
+            "wall_seconds": time.perf_counter() - started,
+            "hash_seconds": hasher.seconds,
+        }
+        _write_execution_summaries(results_dir, combos, report, invocation)
 
     dag.run(
         resource_caps=resource_caps,
@@ -781,8 +796,26 @@ def _requested_with_ancestors(request: list[_RequestedOutput]) -> list:
     return list(seen.values())
 
 
-def _write_execution_summaries(results_dir: Path, combos: list[_Combo], report) -> None:
-    """Write per-job execution reports containing only requested call closures."""
+def _covered_seconds(intervals: list[tuple[datetime, datetime]]) -> float:
+    """Seconds covered by at least one interval; overlaps count once."""
+    covered = 0.0
+    reached = None
+    for start, finish in sorted(intervals):
+        if reached is not None:
+            start = max(start, reached)
+        if finish > start:
+            covered += (finish - start).total_seconds()
+        reached = finish if reached is None else max(reached, finish)
+    return covered
+
+
+def _write_execution_summaries(
+    results_dir: Path, combos: list[_Combo], report, invocation: dict[str, float]
+) -> None:
+    """Write per-job execution reports containing only requested call closures.
+
+    `invocation` holds whole-run figures shared by every job in this run.
+    """
     if report is None:
         return
     for label, pipeline, request in combos:
@@ -792,7 +825,8 @@ def _write_execution_summaries(results_dir: Path, combos: list[_Combo], report) 
             node.rule_call.relative_path for node in _requested_with_ancestors(request)
         }
         calls = [call for key, call in pipeline.dag.calls.items() if key in wanted]
-        total_duration = 0.0
+        cumulative_duration = 0.0
+        command_intervals = []
         for call in calls:
             event = report.get(call.relative_path.as_posix())
             if event is None:
@@ -812,7 +846,13 @@ def _write_execution_summaries(results_dir: Path, combos: list[_Combo], report) 
             }
             duration = values.get("duration_seconds")
             if duration is not None:
-                total_duration += duration
+                cumulative_duration += duration
+                command_intervals.append(
+                    (
+                        datetime.fromisoformat(event.started_at),
+                        datetime.fromisoformat(event.finished_at),
+                    )
+                )
             table = tomlkit.table()
             for key, value in values.items():
                 table[key] = value
@@ -828,7 +868,12 @@ def _write_execution_summaries(results_dir: Path, combos: list[_Combo], report) 
                 outputs.append(output)
             table["outputs"] = outputs
             rules_array.append(table)
-        data["total_duration_seconds"] = total_duration
+        data["cumulative_duration_seconds"] = cumulative_duration
+        data["command_wall_seconds"] = _covered_seconds(command_intervals)
+        invocation_table = tomlkit.table()
+        for key, value in invocation.items():
+            invocation_table[key] = value
+        data["invocation"] = invocation_table
         data["rules"] = rules_array
         combo_dir = results_dir / label
         combo_dir.mkdir(parents=True, exist_ok=True)
