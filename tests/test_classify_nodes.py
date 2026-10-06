@@ -15,6 +15,7 @@ from necroflow import (
     RuleCallState,
     run,
 )
+from necroflow.hashers import load_hasher
 from necroflow.planning import plan_execution
 from necroflow.rules import Rule
 
@@ -227,3 +228,107 @@ def test_switching_hasher_makes_consumers_rerun_once(tmp_path):
     third = _pipeline(tmp_path)
     plan_execution(third.dag, hasher="blake3")
     assert third.result.rule_call.state == RuleCallState.UP_TO_DATE
+
+
+class _CountingHasher:
+    """BLAKE3 under its own name, recording which files it reads in full."""
+
+    name = "blake3"
+
+    def __init__(self):
+        self.files: list[str] = []
+        self._blake3 = load_hasher("blake3")
+
+    def hash_path(self, path, threads):
+        self.files.append(Path(path).name)
+        return self._blake3.hash_path(path, threads)
+
+
+class _EditingHasher(_CountingHasher):
+    """Simulates an external edit landing while the file is being hashed."""
+
+    def hash_path(self, path, threads):
+        digest = super().hash_path(path, threads)
+        later = Path(path).stat().st_mtime_ns + 1_000_000
+        os.utime(path, ns=(later, later))
+        return digest
+
+
+def _edit_source(pipeline, text: str) -> Path:
+    """Rewrite the source output externally, newer than its stored hash."""
+    hash_file = pipeline.source.rule_call.workdir / ".rip" / "source.txt.hash"
+    pipeline.source.path.write_text(text)
+    newer = hash_file.stat().st_mtime_ns + 1_000_000
+    os.utime(pipeline.source.path, ns=(newer, newer))
+    return hash_file
+
+
+def test_edited_parent_is_hashed_once_then_trusted_again(tmp_path):
+    """An externally edited parent is read in full once, not on every run.
+
+    The source call never reruns, so its own completion never refreshes its
+    stored hash. The run that notices the edit stores the fresh digest, so
+    later runs trust it again instead of re-reading unchanged bytes forever.
+    """
+    run(_pipeline(tmp_path).dag)
+    _edit_source(_pipeline(tmp_path), "external")
+
+    noticing = _CountingHasher()
+    run(_pipeline(tmp_path).dag, hasher=noticing)
+    later = _CountingHasher()
+    run(_pipeline(tmp_path).dag, hasher=later)
+
+    assert noticing.files.count("source.txt") == 1
+    assert later.files == []
+
+
+def test_hasher_switch_retags_root_parent_hash_once(tmp_path):
+    """After a hasher switch, a parent that never reruns is rehashed once.
+
+    The consumer's rerun reads the source with the new hasher; storing that
+    digest stops every later run from reading the source again.
+    """
+    run(_pipeline(tmp_path).dag, hasher="sha256")
+    run(_pipeline(tmp_path).dag, hasher="blake3")
+
+    pipeline = _pipeline(tmp_path)
+    hash_file = pipeline.source.rule_call.workdir / ".rip" / "source.txt.hash"
+    later = _CountingHasher()
+    run(pipeline.dag, hasher=later)
+
+    assert hash_file.read_text().startswith("blake3:")
+    assert later.files == []
+
+
+def test_parent_edited_while_hashing_keeps_its_old_stored_hash(tmp_path):
+    """A fresh digest is stored only if the output did not change meanwhile.
+
+    Otherwise the stored hash would be newer than the edit and vouch for
+    bytes that are no longer there.
+    """
+    run(_pipeline(tmp_path).dag)
+    hash_file = _edit_source(_pipeline(tmp_path), "external")
+    stored = hash_file.read_text()
+
+    run(_pipeline(tmp_path).dag, hasher=_EditingHasher())
+
+    assert hash_file.read_text() == stored
+
+
+def test_dry_run_stores_refreshed_hash_for_explain(tmp_path):
+    """A dry run holds the node-store lock, so it may store refreshed hashes.
+
+    Explain never reads whole outputs; after a dry run has stored the edited
+    parent's digest, explain-style planning decides the consumer again.
+    """
+    run(_pipeline(tmp_path).dag)
+    _edit_source(_pipeline(tmp_path), "external")
+
+    run(_pipeline(tmp_path).dag, dry_run=True)
+    explained = _pipeline(tmp_path)
+    plan = plan_execution(explained.dag, hash_untrusted_parents=False)
+
+    assert explained.result.rule_call.state == RuleCallState.STALE
+    assert plan.reasons[explained.result.rule_call.relative_path][0]["kind"] == (
+        "parent_content_changed"
+    )

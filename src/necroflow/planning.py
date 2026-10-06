@@ -15,21 +15,37 @@ Reason = dict[str, object]
 
 
 def current_output_hash(
-    node: Node, memo: dict[Path, str], hasher: Hasher, threads: int
-) -> str:
+    node: Node,
+    memo: dict[Path, str],
+    hasher: Hasher,
+    threads: int,
+    *,
+    may_hash: bool = True,
+    store: bool = False,
+) -> str | None:
     """Return current tagged bytes hash, trusting the stored one while mtime
-    proves safety and it was made by `hasher`."""
+    proves safety and it was made by `hasher`.
+
+    Without `may_hash`, an untrusted stored hash gives None instead of a full
+    read. With `store`, a fresh digest replaces the stored one, so later runs
+    trust it again, unless the output changed while it was being hashed. Only
+    node-store lock holders may store.
+    """
     cached = memo.get(node.relative_path)
     if cached is not None:
         return cached
     hash_file = node.rule_call.workdir / ".rip" / (node.path.name + ".hash")
-    digest = None
-    if hash_file.exists() and _output_mtime(node.path) <= hash_file.stat().st_mtime_ns:
+    mtime = _output_mtime(node.path)
+    if hash_file.exists() and mtime <= hash_file.stat().st_mtime_ns:
         stored = hash_file.read_text().strip()
         if is_tagged_by(stored, hasher):
-            digest = stored
-    if digest is None:
-        digest = tagged_hash(hasher, node.path, threads)
+            memo[node.relative_path] = stored
+            return stored
+    if not may_hash:
+        return None
+    digest = tagged_hash(hasher, node.path, threads)
+    if store and _output_mtime(node.path) == mtime:
+        hash_file.write_text(digest)
     memo[node.relative_path] = digest
     return digest
 
@@ -40,6 +56,10 @@ class ExecutionPlan:
 
     `hash_threads` is how many threads a hash computed outside any task may
     use; the executor lowers it to the free threads while calls are running.
+    Without `hash_untrusted_parents`, a parent whose stored hash is not
+    trusted leaves its consumer UNDECIDED instead of being read in full.
+    `store_refreshed_hashes` writes such fresh digests back; only node-store
+    lock holders may set it.
     """
 
     active: list[RuleCall]
@@ -49,6 +69,8 @@ class ExecutionPlan:
     forced_call_keys: set[Path] = field(default_factory=set)
     hasher: Hasher = field(default_factory=load_hasher)
     hash_threads: int = 1
+    hash_untrusted_parents: bool = True
+    store_refreshed_hashes: bool = False
 
     @property
     def active_keys(self) -> set[Path]:
@@ -64,6 +86,7 @@ def classify_call(
     """Classify one call after every parent has settled."""
     executed = executed_call_keys or set()
     reasons: list[Reason] = []
+    unchecked: list[Reason] = []
     missing = [str(output.path) for output in call.outputs if not output.path.exists()]
     if missing:
         call.state = RuleCallState.MISSING
@@ -129,9 +152,18 @@ def classify_call(
                     )
                     continue
                 current = current_output_hash(
-                    parent, plan.hash_cache, plan.hasher, plan.hash_threads
+                    parent,
+                    plan.hash_cache,
+                    plan.hasher,
+                    plan.hash_threads,
+                    may_hash=plan.hash_untrusted_parents,
+                    store=plan.store_refreshed_hashes,
                 )
-                if current != consumed:
+                if current is None:
+                    unchecked.append(
+                        {"kind": "parent_hash_unchecked", "parent_key": parent_key}
+                    )
+                elif current != consumed:
                     reasons.append(
                         {
                             "kind": "parent_content_changed",
@@ -145,6 +177,9 @@ def classify_call(
     if stale_reasons:
         call.state = RuleCallState.STALE
         plan.reasons[call.relative_path] = tuple(reasons)
+    elif unchecked:
+        call.state = RuleCallState.UNDECIDED
+        plan.reasons[call.relative_path] = tuple(unchecked)
     else:
         call.state = RuleCallState.UP_TO_DATE
         plan.reasons[call.relative_path] = (
@@ -186,6 +221,8 @@ def plan_execution(
     forced_stale_call_keys: set[Path] | None = None,
     hasher: Hasher | str | None = None,
     hash_threads: int = 1,
+    hash_untrusted_parents: bool = True,
+    store_refreshed_hashes: bool = False,
 ) -> ExecutionPlan:
     """Build call closure and classify only calls with settled parents."""
     required = dag.required_call_keys
@@ -203,9 +240,20 @@ def plan_execution(
         forced_call_keys=set(forced_stale_call_keys or ()),
         hasher=load_hasher(hasher),
         hash_threads=max(1, hash_threads),
+        hash_untrusted_parents=hash_untrusted_parents,
+        store_refreshed_hashes=store_refreshed_hashes,
     )
     classify_available(plan)
+    # Registration order puts parents first, so their reasons are already set.
+    will_run = {RuleCallState.MISSING, RuleCallState.STALE}
     for call in active:
-        if call.state is None:
-            plan.reasons[call.relative_path] = ({"kind": "parent_will_run"},)
+        if call.state is not None:
+            continue
+        parent_will_run = any(
+            parent.state in will_run
+            or plan.reasons[parent.relative_path] == ({"kind": "parent_will_run"},)
+            for parent in call.parent_calls
+        )
+        kind = "parent_will_run" if parent_will_run else "parent_undecided"
+        plan.reasons[call.relative_path] = ({"kind": kind},)
     return plan

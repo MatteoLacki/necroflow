@@ -445,11 +445,14 @@ def _explain_payload(args) -> dict:
     thread_cap = _parse_resource_caps(args)["threads"]
     for call in dag.calls.values():
         call.bind_thread_cap(thread_cap)
+    # Explain holds no lock and may run beside a real run: it never reads
+    # whole outputs, so untrusted stored hashes leave consumers undecided.
     plan = plan_execution(
         dag,
         forced_stale_call_keys=forced_stale_call_keys,
         hasher=_load_hasher(args.hasher),
         hash_threads=thread_cap,
+        hash_untrusted_parents=False,
     )
     active = plan.active
     active_keys = plan.active_keys

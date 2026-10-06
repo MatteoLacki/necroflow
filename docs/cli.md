@@ -156,6 +156,8 @@ necroflow explain --node counts job.toml
 necroflow explain --json job.toml
 ```
 
-`explain` reports requested RuleCalls and ancestors in FIFO registration order, nesting all declared output Nodes under each call. It shows predicted workdir, state, command, resources, tri-state `will_run`, and reasons such as `output_missing`, `up_to_date`, `parent_will_run`, `consumed_hash_missing`, `parent_content_changed`, `forced_invalidation`, `invalidator_changed`, and `compromised_prior_state`. Descendants of calls that would run remain unknown until real parent bytes exist.
+`explain` reports requested RuleCalls and ancestors in FIFO registration order, nesting all declared output Nodes under each call. It shows predicted workdir, state, command, resources, tri-state `will_run`, and reasons such as `output_missing`, `up_to_date`, `parent_will_run`, `consumed_hash_missing`, `parent_content_changed`, `parent_hash_unchecked`, `parent_undecided`, `forced_invalidation`, `invalidator_changed`, and `compromised_prior_state`. Descendants of calls that would run remain unknown until real parent bytes exist.
+
+`explain` never reads whole outputs and never writes the node store. When a parent was edited after its hash was stored, its consumer is reported as `state = "undecided"` with reason `parent_hash_unchecked`, and descendants get reason `parent_undecided`. Run `necroflow run --dry-run` to settle them: it hashes the parent and stores the digest.
 
 [Previous: Where Outputs Live and Caching](caching.md) | [README](../README.md) | [Next: Job TOML and Parameter Grids](job-toml.md)

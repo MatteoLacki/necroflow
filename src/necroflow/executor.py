@@ -354,11 +354,13 @@ def run(
 
     with _acquire_lock(dag.nodes_dir):
         # Nothing runs yet, so hashes taken while planning may use every thread.
+        # Holding the lock, even for a dry run, makes refreshed hashes safe to store.
         plan = plan_execution(
             dag,
             forced_stale_call_keys=forced_stale_call_keys,
             hasher=hasher,
             hash_threads=caps["threads"],
+            store_refreshed_hashes=True,
         )
         n_cleaned = _clean_orphans(plan, autoclean=autoclean, dry_run=dry_run)
         report: dict[str, RuleCallExecution] = {}

@@ -89,8 +89,9 @@ These have been true since the June refactors and are load-bearing design decisi
   `.rip/necroflow.lock` — one instance per node store.
 - **Content-addressed, not time-addressed.** Each consumer records `consumed_hash` for
   every immutable parent output in `dependencies.toml`. Current hashes use an mtime-gated fast path
-  through `.rip/{filename}.hash`; externally edited outputs are rehashed. A rebuilt parent with
-  identical bytes must NOT invalidate consumers.
+  through `.rip/{filename}.hash`; externally edited outputs are rehashed once, as node-store lock
+  holders (real and dry runs) store the refreshed digest. `explain` never hashes them; it reports
+  their consumers as undecided. A rebuilt parent with identical bytes must NOT invalidate consumers.
 - **Content hashers are pluggable.** Default BLAKE3; `sha256` built in; `--hasher file.py:Class`
   (a `name` plus `hash_path(path, threads)`). Every stored digest is tagged `<name>:<hex>`, and a
   consumed hash from another hasher counts as missing, so switching hashers reruns each consumer

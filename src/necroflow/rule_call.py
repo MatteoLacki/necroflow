@@ -44,6 +44,7 @@ class RuleCallState(Enum):
     RUNNING = "running"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
+    UNDECIDED = "undecided"
 
 
 def _safe_path_component(value: str, *, kind: str) -> str:
@@ -340,7 +341,8 @@ class RuleCall:
         """Persist lineage, consumed hashes, output hashes, and invalidators.
 
         Hashing uses this call's own `threads` resource: the executor still
-        holds those threads for the call while it is being completed.
+        holds those threads for the call while it is being completed. A parent
+        rehashed here, e.g. after a hasher switch, gets its stored hash refreshed.
         """
         from necroflow.planning import current_output_hash
 
@@ -354,7 +356,7 @@ class RuleCall:
                 {
                     "node_key": parent.relative_path.as_posix(),
                     "consumed_hash": current_output_hash(
-                        parent, hash_cache, hasher, threads
+                        parent, hash_cache, hasher, threads, store=True
                     ),
                 }
             )

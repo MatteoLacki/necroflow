@@ -2,6 +2,7 @@
 
 from necroflow.rules import Constraints, Inputs, Outputs, Rule
 
+import os
 import shutil
 import fcntl
 import textwrap
@@ -2082,11 +2083,94 @@ def test_explain_json_reports_stale_causes(tmp_path, factory_file, capsys):
 
     time.sleep(0.05)
     _real_output(outdir, "a.txt").write_text("changed")
+    # Explain never reads whole outputs; a dry run stores the edited hash.
+    main(["--dry-run", "--outdir", str(outdir), str(job)])
+    capsys.readouterr()
     main(["explain", "--json", "--outdir", str(outdir), str(job)])
     changed = _explain_by_label(_json_stdout(capsys))
     assert "parent_content_changed" in {
         reason["kind"] for reason in changed["b"]["reasons"]
     }
+
+
+def test_explain_leaves_consumers_of_unhashed_parents_undecided(tmp_path, capsys):
+    """Explain never reads whole outputs or writes the node store.
+
+    It holds no lock and may run beside a real run, so a parent whose stored
+    hash is no longer trusted leaves its consumer undecided, and that
+    consumer's descendants with it, rather than being hashed.
+    """
+    factory = tmp_path / "pipe.py"
+    factory.write_text(textwrap.dedent("""\
+        from necroflow import NodeType, command, output
+        class A(NodeType): filename = "a.txt"
+        class B(NodeType): filename = "b.txt"
+        class C(NodeType): filename = "c.txt"
+        @command("echo {v} > {a}")
+        def make_a(v: str):
+            a = output(A)
+            return a
+        @command("cat {a} > {b}")
+        def make_b(a: A):
+            b = output(B)
+            return b
+        @command("cat {b} > {c}")
+        def make_c(b: B):
+            c = output(C)
+            return c
+        def factory(P, cfg):
+            P.a = make_a(P, v=cfg["v"])
+            P.b = make_b(P, P.a)
+            P.c = make_c(P, P.b)
+    """))
+    hash_log = tmp_path / "hashes.log"
+    plugin = tmp_path / "logging_hasher.py"
+    plugin.write_text(textwrap.dedent(f"""\
+        from necroflow.hashers import Blake3Hasher
+        class LoggingHasher(Blake3Hasher):
+            def hash_path(self, path, threads):
+                with open({str(hash_log)!r}, "a") as log:
+                    log.write("hash\\n")
+                return super().hash_path(path, threads)
+    """))
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory}:factory"\nv = "hello"\n')
+    outdir = tmp_path / "out"
+    main(["--outdir", str(outdir), str(job)])
+    capsys.readouterr()
+    a_output = _real_output(outdir, "a.txt")
+    hash_file = a_output.parent / ".rip" / "a.txt.hash"
+    a_output.write_text("edited")
+    newer = hash_file.stat().st_mtime_ns + 1_000_000
+    os.utime(a_output, ns=(newer, newer))
+    stored = hash_file.read_bytes()
+    stored_mtime = hash_file.stat().st_mtime_ns
+
+    main(
+        [
+            "explain",
+            "--json",
+            "--hasher",
+            f"{plugin}:LoggingHasher",
+            "--outdir",
+            str(outdir),
+            str(job),
+        ]
+    )
+
+    calls = _explain_by_label(_json_stdout(capsys))
+    assert calls["a"]["will_run"] is False
+    assert calls["b"]["state"] == "undecided"
+    assert calls["b"]["will_run"] is None
+    assert calls["b"]["reasons"] == [
+        {"kind": "parent_hash_unchecked", "parent_key": calls["a"]["outputs"][0]["key"]}
+    ]
+    assert calls["c"]["state"] is None
+    assert calls["c"]["will_run"] is None
+    assert calls["c"]["reasons"] == [{"kind": "parent_undecided"}]
+    assert not hash_log.exists()
+    assert hash_file.read_bytes() == stored
+    assert hash_file.stat().st_mtime_ns == stored_mtime
 
 
 def test_explain_json_reports_missing_and_up_to_date(tmp_path, factory_file, capsys):

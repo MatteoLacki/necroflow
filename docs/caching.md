@@ -131,7 +131,7 @@ Output bytes are hashed by a pluggable hasher: BLAKE3 by default, `sha256` built
 
 Hashing uses threads without oversubscribing: a call's outputs are hashed with that call's own `threads` resource, which it still holds while being completed; hashes taken while planning, before anything runs, and when copying results, after everything has finished, use the full `-c` cap; parents rehashed mid-run use only the threads no running call holds. BLAKE3 splits each file across those threads; `sha256` ignores them.
 
-Current hashes use `.rip/{filename}.hash` as an mtime-gated fast path. The stored digest is trusted when output mtime is no newer than hash-file mtime; otherwise current bytes are hashed. Hashes are memoized during one invocation. External edits preserving or backdating mtime are unsupported.
+Current hashes use `.rip/{filename}.hash` as an mtime-gated fast path. The stored digest is trusted when output mtime is no newer than hash-file mtime; otherwise current bytes are hashed. Hashes are memoized during one invocation. Real runs and dry runs, which hold the node-store lock, write such a fresh digest back unless the output changed while it was hashed, so an edited parent is read once rather than on every run. `explain` never hashes these parents and reports their consumers as undecided. External edits preserving or backdating mtime are unsupported.
 
 Persistent state that changes outside the DAG does not belong in a node workdir. A workdir is a function of its declared inputs, so any identity change gives a fresh empty one; state that must outlive that belongs outside the node store, passed in as a path.
 

@@ -71,13 +71,15 @@ When classifying a consumer, Necroflow compares `consumed_hash` with each parent
 
 This makes parent process history irrelevant. A parent rebuilt during this invocation but producing identical bytes leaves an immutable consumer cached. Different bytes replay it.
 
-Classification reads metadata but never writes it. Only successful call completion writes dependency records and hashes.
+Classification never writes dependency records; only successful call completion does. The one exception to read-only classification is the hash cache below: holders of the node-store lock (real runs and dry runs) may refresh a parent's stored hash.
 
 ### Hash fast path and mtime
 
 For each output, `.rip/{filename}.hash` stores the last successful tagged hash. Within one run, computed current hashes are memoized by Node key. A stored hash from another hasher is ignored and recomputed.
 
 Necroflow trusts the stored hash only when output mtime is not newer than the hash-file mtime. A newer output is hashed from current bytes. Thus mtime is hash invalidation for ordinary external edits, not cache identity.
+
+A parent that never reruns never refreshes its own stored hash, so without write-back an externally edited parent, a changed `@symlink` target, or a hasher switch would make every later run read the parent in full again. Lock holders therefore write a fresh digest back to `.rip/{filename}.hash`, unless the output's mtime changed while it was being hashed; the parent is then read once, not on every run. `explain` holds no lock, so it never hashes such a parent and never writes; it reports the consumer as undecided instead.
 
 Files hash their bytes. Directories hash sorted non-`.rip` relative paths plus file bytes.
 
@@ -194,9 +196,11 @@ With `keep_going=True`, independent branches continue. Final `ExceptionGroup` ca
 
 ## Dry run and explain
 
-`dry_run=True` classifies currently available calls under the lock. It executes nothing, deletes nothing, writes nothing, and skips `on_complete`.
+`dry_run=True` classifies currently available calls under the lock. It executes nothing, deletes nothing, and skips `on_complete`. Its only write is refreshing stored parent hashes it had to recompute, as a real run would.
 
 Descendants of calls that would run remain unknown until real parent bytes exist. CLI `explain` reports these calls with `state = null`, `will_run = null`, and reason `parent_will_run`. Explain nests output Nodes under each RuleCall.
+
+`explain` (CLI and MCP) takes no lock and may run beside a real run, so it never reads whole outputs and never writes. A consumer whose parent's stored hash is not trusted gets `state = "undecided"`, `will_run = null`, and reason `parent_hash_unchecked`; its descendants get `state = null` and reason `parent_undecided`. A real run or dry run settles them.
 
 ## Autoclean
 
