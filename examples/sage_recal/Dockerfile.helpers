@@ -1,0 +1,13 @@
+# Runtime helpers and fixed input fixtures; orchestration runs outside this image.
+FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
+
+WORKDIR /opt/sage-recal
+COPY examples/sage_recal/requirements-helpers.txt ./requirements-helpers.txt
+RUN pip install --no-cache-dir -r requirements-helpers.txt
+
+COPY examples/sage_recal/scripts/ ./scripts/
+COPY examples/sage_recal/jobs/q99536_example/job.toml examples/sage_recal/jobs/q99536_example/fasta.fasta examples/sage_recal/jobs/q99536_example/spectra.mzml ./jobs/q99536_example/
+COPY examples/sage_recal/jobs/q99536_synthetic_100/job.toml examples/sage_recal/jobs/q99536_synthetic_100/spectra.mgf ./jobs/q99536_synthetic_100/
+RUN sha256sum scripts/*.py jobs/*/* > SHA256SUMS
+
+CMD ["python", "scripts/select_top_precursors.py", "--help"]

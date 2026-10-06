@@ -1,4 +1,4 @@
-# Two-pass Sage recalibration (generic Sage, no Docker/Rust/local Sage install needed)
+# Two-pass Sage recalibration
 
 Runnable counterpart to necroflowpaper's Example S4 ("reusing one rule within a
 pipeline"), ported from a timsTOF-specific Sage fork to generic
@@ -12,11 +12,44 @@ tolerances -- so each call gets its own independently cached output directory
 
 Docker only. No local Sage, Rust, or Python environment needed -- everything runs inside
 the image built from `Dockerfile` (a pinned, checksum-verified Sage release binary +
-pyteomics/psims/pandas/numpy + `necroflow==0.0.3`).
+pyteomics/psims/pandas/numpy + Necroflow from this checkout).
 
 ```
 docker run hello-world   # sanity check your Docker install works
 ```
+
+## Separate helper image
+
+From the repository root, build the Python runtime helpers and bundled fixtures:
+
+```bash
+make sage-helpers-image
+# Optional image name/tag, suitable for a Docker Hub repository:
+make sage-helpers-image SAGE_HELPERS_IMAGE=YOUR_NAMESPACE/sage-recal-helpers:0.1.0
+```
+
+This builds locally. The image contains `select_top_precursors.py`,
+`fit_recalibration.py`, `recalibrate_spectra.py`, their shared reader, both jobs'
+input fixtures and TOML files under `/opt/sage-recal`. Python's base image is
+pinned by digest; runtime dependencies are pinned in `requirements-helpers.txt`.
+`/opt/sage-recal/SHA256SUMS` records script and fixture checksums.
+
+Necroflow and Sage run separately; neither is installed in this helper image.
+The existing pipeline still uses the complete demo image described below.
+The synthetic spectra are bundled, so running helpers requires no Koina access.
+
+For example, select 40 spectra from the bundled synthetic fixture:
+
+```bash
+mkdir -p /tmp/sage-recal-output
+docker run --rm --network none --user "$(id -u):$(id -g)" \
+  -v /tmp/sage-recal-output:/output necroflow-sage-helpers:local \
+  python /opt/sage-recal/scripts/select_top_precursors.py \
+  /opt/sage-recal/jobs/q99536_synthetic_100/spectra.mgf \
+  --top-k 40 -o /output/subset.mgf
+```
+
+Use absolute script paths when overriding the container's working directory.
 
 ## Quick start
 
