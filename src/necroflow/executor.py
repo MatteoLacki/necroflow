@@ -8,7 +8,6 @@ from collections.abc import Callable
 from dataclasses import replace
 from enum import Enum
 import inspect
-import os
 from pathlib import Path
 
 from necroflow import logger as _logger
@@ -18,6 +17,7 @@ from necroflow.hashers import Hasher
 from necroflow.planning import ExecutionPlan, Verdict, plan_execution
 from necroflow.report import RuleCallExecution, count_events
 from necroflow.rule_call import RuleCall
+from necroflow.rules import default_thread_cap
 from necroflow.runners import Outcome, Runner, attempt, run_call
 from necroflow.schedulers import Scheduler, fifo_scheduler
 from necroflow.tgf import write_ancestor_tgf
@@ -253,8 +253,7 @@ class Execution:
                 "command succeeded but output missing: " + ", ".join(map(str, missing))
             )
         call.write_dependencies(self.plan.hashes)
-        if call.outputs:
-            write_ancestor_tgf(call.outputs[0])
+        write_ancestor_tgf(call)
         event = RuleCallExecution.from_call(
             call,
             state="up_to_date",
@@ -417,8 +416,7 @@ def run(
     scheduler = fifo_scheduler if scheduler is None else scheduler
     _validate_scheduler(scheduler)
     runner = run_call if rule_call_runner is None else rule_call_runner
-    _logger.setup()
-    caps = {"threads": os.cpu_count() or 1, **(resource_caps or {})}
+    caps = {"threads": default_thread_cap(), **(resource_caps or {})}
     dag.bind_thread_cap(caps["threads"])
 
     with _acquire_lock(dag.nodes_dir):

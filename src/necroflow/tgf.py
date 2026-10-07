@@ -5,8 +5,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from necroflow.nodes import Node
+
+if TYPE_CHECKING:
+    from necroflow.rule_call import RuleCall
 
 
 def _node_label(node: Node) -> str:
@@ -89,21 +93,20 @@ def render_dot(
     return "\n".join(lines)
 
 
-def write_ancestor_tgf(node: Node) -> None:
-    """Write node and all ancestors to ``.rip/graph.tgf``."""
-    ancestor_keys = set()
-    frontier = [node]
+def write_ancestor_tgf(call: RuleCall) -> None:
+    """Write a call's outputs and all their ancestor Nodes to ``.rip/graph.tgf``.
+
+    Ancestors are the parent Nodes actually consumed, transitively; sibling
+    outputs of ancestor calls that nothing here consumes are left out.
+    """
+    seen: dict[Path, Node] = {}
+    frontier = list(call.outputs)
     while frontier:
-        current = frontier.pop()
-        if current.relative_path in ancestor_keys:
-            continue
-        ancestor_keys.add(current.relative_path)
-        frontier.extend(current.parents)
-    ancestors = [
-        candidate
-        for candidate in node.rule_call.dag.nodes
-        if candidate.relative_path in ancestor_keys
-    ]
-    rip = node.path.parent / ".rip"
-    rip.mkdir(parents=True, exist_ok=True)
-    (rip / "graph.tgf").write_text(render_tgf(ancestors) + "\n", encoding="utf-8")
+        node = frontier.pop()
+        if node.relative_path not in seen:
+            seen[node.relative_path] = node
+            frontier.extend(node.parents)
+    ancestors = call.dag.in_registration_order(seen.values())
+    call.metadata_dir.mkdir(parents=True, exist_ok=True)
+    graph = call.metadata_dir / "graph.tgf"
+    graph.write_text(render_tgf(ancestors) + "\n", encoding="utf-8")

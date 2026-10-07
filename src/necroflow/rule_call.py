@@ -4,7 +4,7 @@ import hashlib
 import os
 import shlex
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -31,6 +31,18 @@ if TYPE_CHECKING:
 # Values `.rip/state` may hold. Only "up_to_date" is trusted; any other value,
 # including a "running" left by a crash, compromises the call.
 STORED_STATES = ("running", "up_to_date", "failed", "interrupted")
+
+
+def ancestor_call_keys(calls: Iterable[RuleCall]) -> set[Path]:
+    """Return the keys of `calls` and of every call they transitively consume."""
+    keys: set[Path] = set()
+    frontier = list(calls)
+    while frontier:
+        call = frontier.pop()
+        if call.relative_path not in keys:
+            keys.add(call.relative_path)
+            frontier.extend(call.parent_calls)
+    return keys
 
 
 def _safe_path_component(value: str, *, kind: str) -> str:
@@ -184,11 +196,10 @@ class RuleCall:
         return hashlib.sha256(canonical_bytes(identity, path="provenance")).hexdigest()
 
     def _constraints(self) -> dict[str, Any]:
+        """Command-facing constraints: raw declared values, threads resolved."""
         values = dict(self.rule.constraints)
-        if values.get("threads") == "all":
+        if values.get("threads", "all") == "all":
             values["threads"] = self.resources["threads"]
-        else:
-            values.setdefault("threads", self.resources["threads"])
         return values
 
     @property
@@ -229,13 +240,8 @@ class RuleCall:
 
     @property
     def resources(self) -> dict[str, int]:
-        resources = self.rule.resources
-        if (
-            self.rule.constraints.get("threads") == "all"
-            and self._thread_cap is not None
-        ):
-            resources["threads"] = self._thread_cap
-        return resources
+        """Integer scheduler resources; `threads="all"` is the bound thread cap."""
+        return self.rule.resources_for(self._thread_cap)
 
     def bind_thread_cap(self, cap: int) -> None:
         """Resolve an all-threads declaration for this execution."""

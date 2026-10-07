@@ -48,6 +48,7 @@ from necroflow import (
     Pipeline,
     fifo_scheduler,
 )
+from necroflow import logger as _logger
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import parse_resource
 from necroflow.fs import _check_path_limits, _normalize_shellpath
@@ -59,6 +60,8 @@ from necroflow.hashers import (
     tagged_hash,
 )
 from necroflow.planning import plan_execution
+from necroflow.rule_call import ancestor_call_keys
+from necroflow.rules import default_thread_cap
 from necroflow.gc import collect
 
 
@@ -296,7 +299,7 @@ def _parse_resource_caps(args) -> dict[str, int]:
     """Parse core and named constraint options into scheduler capacities."""
     cores = args.cores.strip()
     resource_caps = {
-        "threads": os.cpu_count() or 1 if cores.lower() == "all" else int(cores)
+        "threads": default_thread_cap() if cores.lower() == "all" else int(cores)
     }
     for kv in args.constraints:
         if "=" not in kv:
@@ -359,7 +362,7 @@ def _node_json(node, state: str | None = None) -> dict:
         "node_type": node.node_type.__name__ if node.node_type else None,
         "state": state,
         "path": str(node.path) if node.path is not None else None,
-        "resources": dict(getattr(node.rule, "resources", {})) if node.rule else {},
+        "resources": dict(node.rule_call.resources),
         "constraints": dict(getattr(node.rule, "constraints", {})) if node.rule else {},
         "config": dict(node.config),
     }
@@ -626,6 +629,7 @@ def _doctor_payload(args) -> dict:
 
 def _run(args) -> None:
     """Build, execute, and materialize all jobs requested by the run command."""
+    _logger.setup()
     nodes_dir, results_dir = _resolve_roots(args)
     reporter = _load_reporter(args.reporter) if args.reporter else None
     dag, combos, forced_stale_call_keys = _build_dag_from_jobs(
@@ -791,19 +795,6 @@ def _init(args) -> None:
     print(f"created {dest}")
 
 
-def _requested_with_ancestors(request: list[_RequestedOutput]) -> list:
-    """Return requested nodes plus their transitive ancestors without duplicates."""
-    seen: dict[Path, object] = {}
-    stack = [binding.node for binding in request]
-    while stack:
-        node = stack.pop()
-        if node.relative_path in seen:
-            continue
-        seen[node.relative_path] = node
-        stack.extend(node.parents)
-    return list(seen.values())
-
-
 def _covered_seconds(intervals: list[tuple[datetime, datetime]]) -> float:
     """Seconds covered by at least one interval; overlaps count once."""
     covered = 0.0
@@ -834,9 +825,7 @@ def _write_execution_summaries(
     for label, pipeline, request in combos:
         data = tomlkit.document()
         rules_array = tomlkit.aot()
-        wanted = {
-            node.rule_call.relative_path for node in _requested_with_ancestors(request)
-        }
+        wanted = ancestor_call_keys(binding.node.rule_call for binding in request)
         calls = [call for key, call in pipeline.dag.calls.items() if key in wanted]
         cumulative_duration = 0.0
         command_intervals = []
@@ -844,18 +833,10 @@ def _write_execution_summaries(
             event = report.get(call.relative_path.as_posix())
             if event is None:
                 continue
-            values = event.to_toml_dict()
-            for field_name in (
-                "key",
-                "rule",
-                "output_node_keys",
-                "output_paths",
-            ):
-                values.pop(field_name, None)
             values = {
-                "key": call.relative_path.as_posix(),
+                "key": event.call_key,
                 "name": event.rule,
-                **values,
+                **event.status_fields(),
             }
             interval = event.interval()
             if interval is not None:

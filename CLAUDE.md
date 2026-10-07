@@ -206,7 +206,7 @@ src/necroflow/
   containers.py      — Docker config value, `{env}:` command prefix, docker run argv
   fingerprints.py    — canonical v4 rule/provenance hashes and callable AST identity
   rules.py           — Rule internals plus command, text-file, and symlink-file declarations,
-                       parse_resource with SI/binary suffixes
+                       parse_resource with SI/binary suffixes, threads="all" resolution
   schedulers.py      — RuleCall Scheduler protocol and fifo_scheduler
   fs.py              — node-store locking, path/shell validation, and output mtimes
   hashers.py         — pluggable output content hashers (BLAKE3 default, SHA-256), digest tags,
@@ -220,7 +220,7 @@ src/necroflow/
                        failure handling
   runners.py         — default runner run_call, attempt() with retries and timing, Outcome
   report.py          — RuleCallExecution report events, run.toml records, event counts
-  logger.py          — thread-safe job logging
+  logger.py          — job logging; the CLI configures output, the library never does
   config.py          — job TOML loading and grid expansion (iter_job_configs, JobConfig)
   grid.py            — __grid TOML expansion and deterministic result labels
   gc.py              — provenance-aware node-store scanning, reporting, and deletion

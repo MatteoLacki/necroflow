@@ -2,6 +2,7 @@
 
 from necroflow.rules import Constraints, Inputs, Outputs, Rule
 
+import logging
 import os
 import shutil
 import subprocess
@@ -15,7 +16,7 @@ import necroflow.cli as cli_core
 from necroflow.planning import plan_execution
 from necroflow.tgf import render_dot
 from pathlib import Path
-from necroflow import NodeType, Pipeline, DAG, output
+from necroflow import NodeType, Pipeline, DAG, command, output
 from necroflow.cli import (
     _materialize_results,
     _graph_payload,
@@ -2380,3 +2381,43 @@ def test_explain_json_node_filter(tmp_path, factory_file, capsys):
     assert [
         output["label"] for call in payload["calls"] for output in call["outputs"]
     ] == ["b"]
+
+
+def test_cli_run_prints_progress_through_the_necroflow_logger(tmp_path, factory_file):
+    """The CLI, not the library, gives the necroflow logger its terminal handler."""
+    log = logging.getLogger("necroflow")
+    saved_handlers, saved_level = log.handlers[:], log.level
+    log.handlers.clear()
+    try:
+        job = tmp_path / "job.toml"
+        job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
+        main(["--outdir", str(tmp_path / "out"), str(job)])
+        assert len(log.handlers) == 1
+        assert log.level == logging.INFO
+    finally:
+        log.handlers[:] = saved_handlers
+        log.setLevel(saved_level)
+
+
+def test_node_json_resources_follow_the_bound_thread_cap(tmp_path):
+    """Node entries must report the same thread count as their owning call.
+
+    `threads="all"` means the run's thread cap. Node entries used to read the
+    Rule's CPU-count default while call entries used the bound cap, so
+    `explain -c N` could show two thread counts for one call.
+    """
+
+    @command("touch {result}", threads="all")
+    def use_all():
+        result = output(Out)
+        return result
+
+    dag = DAG(tmp_path)
+    pipeline = Pipeline(dag)
+    pipeline.result = use_all(pipeline)
+    dag.bind_thread_cap(3)
+
+    payload = _graph_payload(dag, [])
+
+    assert pipeline.result.rule_call.resources["threads"] == 3
+    assert payload["nodes"][0]["resources"]["threads"] == 3

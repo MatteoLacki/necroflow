@@ -78,14 +78,21 @@ class RuleCallExecution:
         return (finished - started).total_seconds()
 
     def to_toml_dict(self) -> dict[str, Any]:
+        """Return the whole event: identity, outputs, then status fields."""
         return {
             "key": self.call_key,
             "rule": self.rule,
+            "output_node_keys": list(self.output_node_keys),
+            "output_paths": list(self.output_paths),
+            **self.status_fields(),
+        }
+
+    def status_fields(self) -> dict[str, Any]:
+        """Return state, cache status, workdir, and the measurements that are set."""
+        return {
             "state": self.state,
             "cached": self.cached,
             "workdir": self.workdir,
-            "output_node_keys": list(self.output_node_keys),
-            "output_paths": list(self.output_paths),
             **self._measurements(error=self.error),
         }
 

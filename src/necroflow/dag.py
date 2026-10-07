@@ -4,7 +4,7 @@ from pathlib import Path
 
 from necroflow.tgf import _node_label, render_dot, render_tgf
 from necroflow.nodes import Node
-from necroflow.rule_call import RuleCall
+from necroflow.rule_call import RuleCall, ancestor_call_keys
 from necroflow.rules import parse_resource
 
 
@@ -14,6 +14,7 @@ class DAG:
     def __init__(self, outdir):
         self._calls: dict[Path, RuleCall] = {}
         self._nodes: dict[Path, Node] = {}
+        self._node_positions: dict[Path, int] = {}
         self._required: set[Path] = set()
         self._labels_by_path: dict[Path, set[str]] = {}
         self.outdir = Path(outdir).expanduser().resolve()
@@ -49,6 +50,7 @@ class DAG:
         for node in call.output_nodes.values():
             if node.relative_path in self._nodes:
                 raise ValueError(f"duplicate output path: {node.relative_path}")
+            self._node_positions[node.relative_path] = len(self._nodes)
             self._nodes[node.relative_path] = node
         return call
 
@@ -88,6 +90,10 @@ class DAG:
         labels = self.labels_for(node)
         return labels[0] if len(labels) == 1 else None
 
+    def in_registration_order(self, nodes) -> list[Node]:
+        """Return these Nodes in the order this DAG registered them."""
+        return sorted(nodes, key=lambda node: self._node_positions[node.relative_path])
+
     @property
     def nodes(self) -> list:
         return list(self._nodes.values())
@@ -99,15 +105,7 @@ class DAG:
     @property
     def required_call_keys(self) -> set[Path]:
         """Return required RuleCall keys, including every ancestor call."""
-        required: set[Path] = set()
-        frontier = [node.rule_call for node in self.required_nodes]
-        while frontier:
-            call = frontier.pop()
-            if call.relative_path in required:
-                continue
-            required.add(call.relative_path)
-            frontier.extend(call.parent_calls)
-        return required
+        return ancestor_call_keys(node.rule_call for node in self.required_nodes)
 
     def bind_thread_cap(self, cap: int) -> None:
         """Resolve every `threads="all"` declaration against this thread cap."""
@@ -139,6 +137,11 @@ class DAG:
         Path(path).write_text(str(self) + "\n", encoding="utf-8")
 
     def run(self, **kwargs):
+        """Run `necroflow.executor.run(self, **kwargs)`; keep its report.
+
+        The executor builds on the DAG, so this convenience imports it lazily
+        rather than making the registry depend on execution.
+        """
         from necroflow.executor import run
 
         self.last_execution_report = run(self, **kwargs)

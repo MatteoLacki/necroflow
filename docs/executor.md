@@ -18,6 +18,8 @@ report = dag.run()
 
 Equivalent invocations intern eagerly into one canonical RuleCall. RuleCall insertion order is therefore stable and supplies FIFO order.
 
+Progress lines (`start`, `done`, `failed`, the summary) go to the `necroflow` logger. The CLI gives it a terminal handler; the library never configures logging. A script calling `dag.run()` sees them after `logging.basicConfig(level=logging.INFO)` or `necroflow.logger.setup()`.
+
 ## Atomic RuleCalls and co-outputs
 
 Requesting any output Node activates its complete RuleCall. Every declared output:
@@ -134,12 +136,13 @@ See [Scheduler Protocol](schedulers.md).
 
 ## Resources and parallelism
 
-Default cap is `threads = os.cpu_count()`. `resource_caps` overrides or adds caps. Uncapped resources do not limit admission. `hasher` selects the output content hasher (default BLAKE3); see `docs/caching.md`.
+Default cap is `threads = os.cpu_count()` (`rules.default_thread_cap()`). `resource_caps` overrides or adds caps. Uncapped resources do not limit admission. `hasher` selects the output content hasher (default BLAKE3); see `docs/caching.md`.
 
 A rule declaring `threads="all"` resolves against the run's thread cap: `run()` and
-`cli explain` call `RuleCall.bind_thread_cap(cap)` on every call before scheduling or
-resolving commands, so `resources["threads"]` and the realized command reflect the
-actual cap for that run, not a per-rule guess. See [Rules](rules.md#all-available-threads).
+`cli explain` call `DAG.bind_thread_cap(cap)` before scheduling or resolving commands,
+so `RuleCall.resources["threads"]` and the realized command reflect the actual cap for
+that run. `Rule.resources_for(cap)` is the one place that resolves `"all"`; an unbound
+call, and `Rule.resources`, use the default cap. See [Rules](rules.md#all-available-threads).
 
 Scheduler order is priority, not guaranteed start order under resource pressure. Executor admits selected calls whose capped resource totals fit (`ResourcePool`). When nothing runs, one oversized call may run alone to prevent deadlock.
 
@@ -185,7 +188,8 @@ Shared metadata:
 `run.toml` stores call-level timestamps, `duration_seconds`, exit code, and total non-`.rip` workdir size.
 Timestamps are taken in the worker thread around the command attempts, so a call's duration never includes
 coordinator work such as hashing another call's outputs.
-`graph.tgf` stores numbered Nodes followed by parent-to-child edge pairs in
+`graph.tgf` stores every output of the call plus the ancestor Nodes it consumed, in DAG registration order:
+numbered Nodes followed by parent-to-child edge pairs in
 [Trivial Graph Format](https://docs.gephi.org/desktop/User_Manual/Import/Trivial_Graph_Format/).
 
 ## Execution report

@@ -1442,3 +1442,25 @@ def test_resource_pool_admits_one_oversized_call_alone(tmp_path):
     assert pool.available() == {"threads": 1}
     assert not pool.admits(heavy)
     assert pool.admits(R_make_a(P, x="second").rule_call)
+
+
+def test_run_leaves_logging_configuration_to_the_application(tmp_path):
+    """A library run adds no log handler and keeps the necroflow logger's level.
+
+    Configuring logging belongs to the application. A handler added by the
+    library printed every line twice once the host had configured root
+    logging, and reset a level the host had chosen. Only the CLI sets it up.
+    """
+    log = logging.getLogger("necroflow")
+    saved_handlers, saved_level = log.handlers[:], log.level
+    log.handlers.clear()
+    log.setLevel(logging.WARNING)
+    try:
+        P = Pipeline(DAG(tmp_path))
+        P.a = R_make_a(P, x="x")
+        run_pipeline(P)
+        assert log.handlers == []
+        assert log.level == logging.WARNING
+    finally:
+        log.handlers[:] = saved_handlers
+        log.setLevel(saved_level)

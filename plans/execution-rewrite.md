@@ -9,9 +9,19 @@ Deviations from the outline below:
 - 1.14.6/1.15.6: `RuleCall.write_state(value)` validates against `STORED_STATES`.
 - 1.15.2: the plan class keeps its name `ExecutionPlan`; it also gained `requested_call_keys`.
 - 1.17.2: the scheduler is consulted only while some call is ready.
-- Not done, still open: 1.2.7 (library configures logging), 1.6.6 (three `threads="all"`
-  resolutions), 1.7.4 (`graph.tgf` written from `outputs[0]` only), 1.7.5, 1.10.2 (CLI
-  reshapes `to_toml_dict()`), 1.12.1 (four ancestor walks), 1.12.3 (`DAG.run` lazy import).
+- Follow-up commit fixed the items first left open:
+  - 1.2.7: only the CLI `run` command calls `logger.setup()`; library runs configure nothing.
+  - 1.6.6: `Rule.resources_for(cap)` is the single `threads="all"` resolver and
+    `rules.default_thread_cap()` the single CPU-count default; CLI node JSON now reports
+    call-level (bound) resources, fixing a node/call mismatch under `explain -c N`.
+  - 1.7.4, 1.7.5: `write_ancestor_tgf(call)` covers every co-output and orders Nodes with a
+    DAG registration index instead of scanning all Nodes per call.
+  - 1.10.2: `RuleCallExecution.status_fields()` feeds the CLI summary directly.
+  - 1.12.1: `rule_call.ancestor_call_keys()` serves `DAG.required_call_keys` and the CLI;
+    `graph.tgf` keeps its node-level walk and `_accumulated_config` its ordered merge,
+    since both need different shapes.
+  - 1.12.3: kept deliberately. The executor builds on the DAG; `DAG.run` is a convenience
+    pointing upward, so its lazy import is documented rather than removed.
 Line references are to `src/necroflow/` at commit `e1b9356`.
 
 1. Execution subsystem rewrite
