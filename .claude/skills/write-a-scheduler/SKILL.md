@@ -43,7 +43,7 @@ FIFO is sole built-in and default. It preserves canonical RuleCall registration 
 - Key calls by `call.relative_path`, never `id(call)`.
 - Schedulers must not mutate RuleCalls, graph structure, or filesystem state.
 - Returning an empty list while nothing runs ends scheduling.
-- `remaining` may contain calls with `state is None`: lazy classification waits for parent bytes.
+- `remaining` may contain calls not yet classified as cached or stale: lazy classification waits for parent bytes.
 - Scheduler sees RuleCalls, never individual co-output Nodes.
 
 ## Test pattern
