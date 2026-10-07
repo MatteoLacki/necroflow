@@ -74,6 +74,29 @@ class Node:
     def provenance_hash(self) -> str:
         return self.rule_call.provenance_hash
 
+    @property
+    def hash_file(self) -> Path:
+        """Stored tagged content digest of this output."""
+        return self.rule_call.metadata_dir / f"{self.path.name}.hash"
+
+    @property
+    def invalidation_file(self) -> Path:
+        """Invalidator token recorded when this output was produced."""
+        return self.rule_call.metadata_dir / f"{self.path.name}.invalidation"
+
+    def invalidation_token(self) -> str | None:
+        """Return the NodeType invalidator's current token, or None without one."""
+        invalidator = self.node_type.invalidator
+        if invalidator is None:
+            return None
+        token = invalidator(self)
+        if not isinstance(token, str):
+            raise TypeError(
+                f"invalidator for {self.node_type.__name__} must return str, "
+                f"got {type(token).__name__}"
+            )
+        return token
+
     @classmethod
     def make_outputs(
         cls,

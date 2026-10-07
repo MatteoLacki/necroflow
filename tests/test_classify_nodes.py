@@ -12,7 +12,7 @@ from necroflow import (
     NodeType,
     Outputs,
     Pipeline,
-    RuleCallState,
+    Verdict,
     run,
 )
 from necroflow.hashers import load_hasher
@@ -141,8 +141,8 @@ def test_external_parent_edit_invalidates_hash_fast_path(tmp_path):
     second = _pipeline(tmp_path)
     plan = plan_execution(second.dag)
 
-    assert second.source.rule_call.state == RuleCallState.UP_TO_DATE
-    assert second.result.rule_call.state == RuleCallState.STALE
+    assert plan.verdicts[second.source.rule_call.relative_path] is Verdict.UP_TO_DATE
+    assert plan.verdicts[second.result.rule_call.relative_path] is Verdict.STALE
     assert plan.reasons[second.result.rule_call.relative_path][0]["kind"] == (
         "parent_content_changed"
     )
@@ -168,10 +168,15 @@ def test_directory_entry_rename_invalidates_stored_hash_fast_path(tmp_path):
     second_pipeline.result = BUNDLE_CONSUME(second_pipeline, second_pipeline.bundle)
     second_pipeline.finish()
     second_dag.require([second_pipeline.result])
-    plan_execution(second_dag)
+    plan = plan_execution(second_dag)
 
-    assert second_pipeline.bundle.rule_call.state == RuleCallState.UP_TO_DATE
-    assert second_pipeline.result.rule_call.state == RuleCallState.STALE
+    assert (
+        plan.verdicts[second_pipeline.bundle.rule_call.relative_path]
+        is Verdict.UP_TO_DATE
+    )
+    assert (
+        plan.verdicts[second_pipeline.result.rule_call.relative_path] is Verdict.STALE
+    )
 
 
 def test_missing_consumed_hash_marks_consumer_stale(tmp_path):
@@ -185,7 +190,7 @@ def test_missing_consumed_hash_marks_consumer_stale(tmp_path):
 
     second = _pipeline(tmp_path)
     plan = plan_execution(second.dag)
-    assert second.result.rule_call.state == RuleCallState.STALE
+    assert plan.verdicts[second.result.rule_call.relative_path] is Verdict.STALE
     assert plan.reasons[second.result.rule_call.relative_path][0]["kind"] == (
         "consumed_hash_missing"
     )
@@ -206,9 +211,9 @@ def test_missing_one_cooutput_marks_whole_call_missing(tmp_path):
     second = PAIR(second_pipeline)
     second_pipeline.finish()
     second_dag.require([second.result])
-    plan_execution(second_dag)
+    plan = plan_execution(second_dag)
 
-    assert second.result.rule_call.state == RuleCallState.MISSING
+    assert plan.verdicts[second.result.rule_call.relative_path] is Verdict.MISSING
 
 
 def test_switching_hasher_makes_consumers_rerun_once(tmp_path):
@@ -218,7 +223,7 @@ def test_switching_hasher_makes_consumers_rerun_once(tmp_path):
 
     second = _pipeline(tmp_path)
     plan = plan_execution(second.dag, hasher="blake3")
-    assert second.result.rule_call.state == RuleCallState.STALE
+    assert plan.verdicts[second.result.rule_call.relative_path] is Verdict.STALE
     reason = plan.reasons[second.result.rule_call.relative_path][0]
     assert reason["kind"] == "consumed_hash_other_hasher"
     assert reason["hasher"] == "blake3"
@@ -226,8 +231,8 @@ def test_switching_hasher_makes_consumers_rerun_once(tmp_path):
 
     run(second.dag, hasher="blake3")
     third = _pipeline(tmp_path)
-    plan_execution(third.dag, hasher="blake3")
-    assert third.result.rule_call.state == RuleCallState.UP_TO_DATE
+    plan = plan_execution(third.dag, hasher="blake3")
+    assert plan.verdicts[third.result.rule_call.relative_path] is Verdict.UP_TO_DATE
 
 
 class _CountingHasher:
@@ -328,7 +333,7 @@ def test_dry_run_stores_refreshed_hash_for_explain(tmp_path):
     explained = _pipeline(tmp_path)
     plan = plan_execution(explained.dag, hash_untrusted_parents=False)
 
-    assert explained.result.rule_call.state == RuleCallState.STALE
+    assert plan.verdicts[explained.result.rule_call.relative_path] is Verdict.STALE
     assert plan.reasons[explained.result.rule_call.relative_path][0]["kind"] == (
         "parent_content_changed"
     )

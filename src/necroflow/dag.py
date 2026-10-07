@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import tomlkit
-
 from necroflow.tgf import _node_label, render_dot, render_tgf
 from necroflow.nodes import Node
 from necroflow.rule_call import RuleCall
@@ -111,21 +109,10 @@ class DAG:
             frontier.extend(call.parent_calls)
         return required
 
-    def dependencies(self, call: RuleCall) -> list[dict] | None:
-        """Read valid parent dependency records for one RuleCall."""
-        path = call.workdir / ".rip" / "dependencies.toml"
-        if not path.exists():
-            return None
-        try:
-            data = tomlkit.parse(path.read_text())
-            parents = data.get("parents")
-        except Exception:
-            return None
-        if not isinstance(parents, list) or not all(
-            isinstance(parent, dict) for parent in parents
-        ):
-            return None
-        return parents
+    def bind_thread_cap(self, cap: int) -> None:
+        """Resolve every `threads="all"` declaration against this thread cap."""
+        for call in self._calls.values():
+            call.bind_thread_cap(cap)
 
     def __repr__(self) -> str:
         return str(self)

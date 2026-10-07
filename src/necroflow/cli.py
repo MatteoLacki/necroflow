@@ -46,7 +46,6 @@ from necroflow import (
     DAG,
     Node,
     Pipeline,
-    RuleCallState,
     fifo_scheduler,
 )
 from necroflow.config import iter_job_configs, load_callable
@@ -345,8 +344,11 @@ def _result_relative_path(node, label: str | None = None) -> Path:
     return Path(_node_display_label(node, label)) / node.path.name
 
 
-def _node_json(node) -> dict:
-    """Serialize one node and its execution metadata for CLI JSON."""
+def _node_json(node, state: str | None = None) -> dict:
+    """Serialize one node and its execution metadata for CLI JSON.
+
+    `state` is the owning call's planned verdict value, when one is known.
+    """
     data = {
         "key": node.relative_path.as_posix(),
         "relative_path": node.relative_path.as_posix(),
@@ -355,11 +357,7 @@ def _node_json(node) -> dict:
         "output_name": node.output_name,
         "rule": node.rule.__name__ if node.rule else "unknown",
         "node_type": node.node_type.__name__ if node.node_type else None,
-        "state": (
-            node.rule_call.state.value
-            if isinstance(node.rule_call.state, RuleCallState)
-            else node.rule_call.state
-        ),
+        "state": state,
         "path": str(node.path) if node.path is not None else None,
         "resources": dict(getattr(node.rule, "resources", {})) if node.rule else {},
         "constraints": dict(getattr(node.rule, "constraints", {})) if node.rule else {},
@@ -453,8 +451,7 @@ def _explain_payload(args) -> dict:
         args, nodes_dir=nodes_dir
     )
     thread_cap = _parse_resource_caps(args)["threads"]
-    for call in dag.calls.values():
-        call.bind_thread_cap(thread_cap)
+    dag.bind_thread_cap(thread_cap)
     # Explain holds no lock and may run beside a real run: it never reads
     # whole outputs, so untrusted stored hashes leave consumers undecided.
     plan = plan_execution(
@@ -483,26 +480,21 @@ def _explain_payload(args) -> dict:
             command = call.resolve()
         except Exception as exc:
             command = f"<error: {exc}>"
-        state = call.state.value if call.state is not None else None
-        if call.state in {RuleCallState.MISSING, RuleCallState.STALE}:
-            will_run = True
-        elif call.state == RuleCallState.UP_TO_DATE:
-            will_run = False
-        else:
-            will_run = None
+        verdict = plan.verdicts.get(call.relative_path)
+        state = None if verdict is None else verdict.value
         calls.append(
             {
                 "key": call.relative_path.as_posix(),
                 "rule": call.rule.__name__,
                 "state": state,
-                "will_run": will_run,
+                "will_run": None if verdict is None else verdict.will_run,
                 "workdir": str(call.workdir),
                 "resources": dict(call.resources),
                 "constraints": dict(call.rule.constraints),
                 "config": dict(call.config),
                 "command": command,
                 "reasons": plan.reasons[call.relative_path],
-                "outputs": [_node_json(output) for output in call.outputs],
+                "outputs": [_node_json(output, state) for output in call.outputs],
             }
         )
     return {
@@ -865,15 +857,10 @@ def _write_execution_summaries(
                 "name": event.rule,
                 **values,
             }
-            duration = values.get("duration_seconds")
-            if duration is not None:
-                cumulative_duration += duration
-                command_intervals.append(
-                    (
-                        datetime.fromisoformat(event.started_at),
-                        datetime.fromisoformat(event.finished_at),
-                    )
-                )
+            interval = event.interval()
+            if interval is not None:
+                cumulative_duration += event.duration_seconds()
+                command_intervals.append(interval)
             table = tomlkit.table()
             for key, value in values.items():
                 table[key] = value

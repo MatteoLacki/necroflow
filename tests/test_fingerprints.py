@@ -464,10 +464,10 @@ def test_v3_split_hash_cache_is_not_reused(tmp_path):
     node = _source_rule()(pipeline, text="x")
     dag.require([node])
 
-    plan_execution(dag)
+    plan = plan_execution(dag)
 
     assert len(node.path.relative_to(tmp_path).parts) == 3
-    assert node.rule_call.state.value == "missing"
+    assert plan.verdicts[node.rule_call.relative_path].value == "missing"
 
 
 def test_constraints_and_repeat_remain_outside_framework_hashes(tmp_path):

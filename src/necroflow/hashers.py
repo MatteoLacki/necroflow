@@ -16,9 +16,13 @@ import hashlib
 import re
 import time
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from necroflow.config import load_callable
+from necroflow.fs import _output_mtime
+
+if TYPE_CHECKING:
+    from necroflow.nodes import Node
 
 DEFAULT_HASHER = "blake3"
 
@@ -155,3 +159,48 @@ def is_tagged_by(value: object, hasher: Hasher) -> bool:
         and len(digest) > 0
         and all(char in "0123456789abcdef" for char in digest)
     )
+
+
+class OutputHashes:
+    """Current tagged content hashes of Node outputs during one invocation.
+
+    A stored `.rip/{filename}.hash` is trusted while the output is no newer
+    than it and `hasher` made it; otherwise the output is read in full.
+    Without `may_hash`, an untrusted stored hash gives None instead of a full
+    read. With `store`, a fresh digest replaces the stored one so later runs
+    trust it again, unless the output changed while it was being hashed. Only
+    node-store lock holders may store.
+    """
+
+    def __init__(self, hasher: Hasher, *, may_hash: bool = True, store: bool = False):
+        self.hasher = hasher
+        self.may_hash = may_hash
+        self.store = store
+        self._digests: dict[Path, str] = {}
+
+    def current(self, node: Node, threads: int) -> str | None:
+        """Return the node's current digest, trusting its stored hash when safe."""
+        known = self._digests.get(node.relative_path)
+        if known is not None:
+            return known
+        mtime = _output_mtime(node.path)
+        hash_file = node.hash_file
+        if hash_file.exists() and mtime <= hash_file.stat().st_mtime_ns:
+            stored = hash_file.read_text().strip()
+            if is_tagged_by(stored, self.hasher):
+                self._digests[node.relative_path] = stored
+                return stored
+        if not self.may_hash:
+            return None
+        digest = tagged_hash(self.hasher, node.path, threads)
+        if self.store and _output_mtime(node.path) == mtime:
+            hash_file.write_text(digest)
+        self._digests[node.relative_path] = digest
+        return digest
+
+    def record(self, node: Node, threads: int) -> str:
+        """Hash a freshly produced output and store its digest."""
+        digest = tagged_hash(self.hasher, node.path, threads)
+        node.hash_file.write_text(digest)
+        self._digests[node.relative_path] = digest
+        return digest

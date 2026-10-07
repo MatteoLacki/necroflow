@@ -191,14 +191,17 @@ on_complete=None, hasher=None)
 -> dict[str, RuleCallExecution]`
 
 Dict keyed by `call.relative_path.as_posix()`. `DAG.run()` forwards all kwargs and stores same
-dict as `dag.last_execution_report`. Full semantics: `run()` docstring and `docs/executor.md`.
+dict as `dag.last_execution_report`. Without `keep_going`, the first failure stops new submissions,
+running calls finish and are recorded, and that failure is re-raised; with it, an
+`ExecutionFailed` group carries the report. Full semantics: `run()` docstring and `docs/executor.md`.
 
 ## File map
 
 ```
 src/necroflow/
   nodes.py           — Node, NodeType, topo sort
-  rule_call.py       — concrete invocation, RuleCallState, shared identity and metadata
+  rule_call.py       — concrete invocation: identity, command realization, `.rip/` state and
+                       dependency metadata
   contexts.py        — immutable NamedValues and CommandArgs public views
   containers.py      — Docker config value, `{env}:` command prefix, docker run argv
   fingerprints.py    — canonical v4 rule/provenance hashes and callable AST identity
@@ -206,13 +209,17 @@ src/necroflow/
                        parse_resource with SI/binary suffixes
   schedulers.py      — RuleCall Scheduler protocol and fifo_scheduler
   fs.py              — node-store locking, path/shell validation, and output mtimes
-  hashers.py         — pluggable output content hashers (BLAKE3 default, SHA-256), digest tags
-  dag.py             — canonical registry, required-call closure, dependency metadata, executor
-  planning.py        — lazy consumed-hash classification and reasons
+  hashers.py         — pluggable output content hashers (BLAKE3 default, SHA-256), digest tags,
+                       OutputHashes (stored-hash fast path per invocation)
+  dag.py             — canonical registry, required-call closure, thread-cap binding, run()
+  planning.py        — ExecutionPlan, Verdict, one-pass lazy consumed-hash classification
   pipeline.py        — Pipeline (prefixed views, labels, finish)
   workflow.py        — synchronous @workflow decorator and scoped rule ownership
   tgf.py             — TGF and Graphviz DOT text rendering, Node labels, per-call ancestor graph
-  executor.py        — atomic RuleCall run(), reports, resources, lock, cleanup, failures
+  executor.py        — run(), Execution (per-run Phase state machine), ResourcePool, autoclean,
+                       failure handling
+  runners.py         — default runner run_call, attempt() with retries and timing, Outcome
+  report.py          — RuleCallExecution report events, run.toml records, event counts
   logger.py          — thread-safe job logging
   config.py          — job TOML loading and grid expansion (iter_job_configs, JobConfig)
   grid.py            — __grid TOML expansion and deterministic result labels

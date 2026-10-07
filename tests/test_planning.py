@@ -1,6 +1,6 @@
 """Tests for invocation-local RuleCall planning."""
 
-from necroflow import DAG, NodeType, Pipeline, RuleCallState
+from necroflow import DAG, NodeType, Pipeline, Verdict
 from necroflow.planning import plan_execution
 from necroflow.rules import Inputs, Outputs, Rule
 
@@ -54,8 +54,8 @@ def test_forced_parent_leaves_child_unclassified_until_parent_settles(tmp_path):
         forced_stale_call_keys={pipeline.a.rule_call.relative_path},
     )
 
-    assert pipeline.a.rule_call.state == RuleCallState.STALE
-    assert pipeline.b.rule_call.state is None
+    assert plan.verdicts[pipeline.a.rule_call.relative_path] is Verdict.STALE
+    assert pipeline.b.rule_call.relative_path not in plan.verdicts
     assert plan.reasons[pipeline.b.rule_call.relative_path] == (
         {"kind": "parent_will_run"},
     )
@@ -91,7 +91,37 @@ def test_plan_records_invalidator_reason_from_one_observation(tmp_path):
     plan = plan_execution(dag)
 
     assert calls == 1
-    assert pipeline.output.rule_call.state == RuleCallState.UP_TO_DATE
+    assert plan.verdicts[pipeline.output.rule_call.relative_path] is Verdict.UP_TO_DATE
     assert plan.reasons[pipeline.output.rule_call.relative_path] == (
         {"kind": "up_to_date"},
     )
+
+
+def test_plan_settles_a_cached_chain_in_one_pass(tmp_path):
+    """Registration order is topological, so one pass decides a whole cached chain.
+
+    Every call is interned after the calls producing its inputs; planning
+    relies on that instead of repeating passes until nothing changes.
+    """
+
+    class C(NodeType):
+        filename = "c.txt"
+
+    make_c = Rule("planning_make_c", Inputs(b=B), Outputs(c=C), "touch {c}")
+
+    def chain(nodes_dir):
+        pipeline = Pipeline(DAG(nodes_dir))
+        pipeline.a = MAKE_A(pipeline, value="x")
+        pipeline.b = MAKE_B(pipeline, pipeline.a)
+        pipeline.c = make_c(pipeline, pipeline.b)
+        pipeline.finish()
+        pipeline.dag.require([pipeline.c])
+        return pipeline
+
+    chain(tmp_path).dag.run()
+    second = chain(tmp_path)
+    plan = plan_execution(second.dag)
+
+    assert [plan.verdicts[call.relative_path] for call in plan.active] == [
+        Verdict.UP_TO_DATE
+    ] * 3

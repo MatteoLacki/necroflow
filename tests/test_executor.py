@@ -10,16 +10,20 @@ from necroflow import (
 )
 
 import hashlib
+import logging
 import shutil
 import subprocess
 import fcntl
+import threading
 import time
 from pathlib import Path
 
 import pytest
 import tomlkit
-from necroflow import RuleCallState, NodeType, Pipeline, DAG, run, output
+from necroflow import NodeType, Pipeline, DAG, Verdict, run, output
 from necroflow import fifo_scheduler, output
+from necroflow.executor import ResourcePool
+from necroflow.planning import plan_execution
 
 
 def run_pipeline(pipeline, **kwargs):
@@ -219,7 +223,7 @@ def test_repeat_raises_last_command_failure_after_limit(tmp_path):
 
     assert caught.value.returncode == 7
     assert attempts == 3
-    assert P.out.rule_call.state == RuleCallState.FAILED
+    assert P.out.rule_call.state_file.read_text() == "failed"
 
 
 def test_run_handles_outdir_with_spaces(tmp_path):
@@ -1313,3 +1317,128 @@ def test_factory_all_threads_reaches_command_callback(tmp_path):
     run_pipeline(pipeline, resource_caps={"threads": 4})
     assert pipeline.result.rule_call.command_args().constraints.threads == 4
     assert pipeline.result.path.read_text() == "4"
+
+
+# ── scheduling stops, fail-fast drain, resource pool ─────────────────────────
+
+
+R_make_b_root = Rule("make_b_root", Inputs(x=str), Outputs(b=B), "touch {b}")
+R_slow_a = Rule("slow_a", Inputs(x=str), Outputs(a=A), "sleep 0.3; touch {a}")
+
+
+def test_scheduler_remaining_excludes_running_calls(tmp_path):
+    """`remaining` lists not-done, not-running calls, as the protocol documents.
+
+    A running call is neither schedulable nor waiting, so a scheduler must not
+    see it as pending work. make_a is held running until make_c_from_b, the
+    child of the finished make_b_root, has been offered to the scheduler.
+    """
+    release = threading.Event()
+    seen = []
+
+    def runner(call, log_path):
+        if call.rule.__name__ == "make_a":
+            assert release.wait(10)
+        call.workdir.mkdir(parents=True, exist_ok=True)
+        for output_node in call.outputs:
+            output_node.path.touch()
+
+    def scheduler(ready, remaining, available_resources):
+        seen.append(
+            (
+                sorted(call.rule.__name__ for call in ready),
+                sorted(call.rule.__name__ for call in remaining),
+            )
+        )
+        if any(call.rule.__name__ == "make_c_from_b" for call in ready):
+            release.set()
+        return ready
+
+    P = Pipeline(DAG(tmp_path))
+    P.a = R_make_a(P, x="x")
+    P.b = R_make_b_root(P, x="x")
+    P.c = R_make_c_from_b(P, P.b)
+    run_pipeline(
+        P,
+        scheduler=scheduler,
+        rule_call_runner=runner,
+        resource_caps={"threads": 2},
+    )
+
+    assert seen[0] == (
+        ["make_a", "make_b_root"],
+        ["make_a", "make_b_root", "make_c_from_b"],
+    )
+    assert seen[1] == (["make_c_from_b"], ["make_c_from_b"])
+
+
+def test_fail_fast_records_calls_already_running(tmp_path):
+    """Without keep_going, a failure stops new submissions but not running calls.
+
+    Calls already running finish anyway. Recording them keeps their work: the
+    next run finds them cached instead of rerunning them as compromised.
+    """
+    P = Pipeline(DAG(tmp_path))
+    P.slow = R_slow_a(P, x="slow")
+    P.bad = R_fail_a(P, x="bad")
+
+    with pytest.raises(subprocess.CalledProcessError):
+        run_pipeline(P, resource_caps={"threads": 2})
+
+    assert P.slow.rule_call.state_file.read_text() == "up_to_date"
+    plan = plan_execution(P.dag)
+    assert plan.verdicts[P.slow.rule_call.relative_path] is Verdict.UP_TO_DATE
+
+
+def test_fail_fast_does_not_start_new_calls(tmp_path):
+    """After a failure without keep_going, ready calls are never submitted."""
+    P = Pipeline(DAG(tmp_path))
+    P.bad = R_fail_a(P, x="bad")
+    P.later = R_make_b_root(P, x="later")
+
+    with pytest.raises(subprocess.CalledProcessError):
+        run_pipeline(P, resource_caps={"threads": 1})
+
+    assert not P.later.rule_call.workdir.exists()
+
+
+def test_scheduler_selecting_nothing_warns_and_stops(tmp_path, caplog):
+    """A scheduler selecting nothing while nothing runs ends the run, visibly.
+
+    The run returns normally, as documented, but names the calls left ready,
+    so a too-strict custom scheduler is not mistaken for a finished pipeline.
+    """
+    P = Pipeline(DAG(tmp_path))
+    P.a = R_make_a(P, x="x")
+
+    with caplog.at_level(logging.INFO, logger="necroflow"):
+        report = run_pipeline(P, scheduler=lambda ready, remaining, available: [])
+
+    assert report == {}
+    assert not P.a.path.exists()
+    assert "selected none of 1 ready call(s)" in caplog.text
+    assert P.a.rule_call.relative_path.as_posix() in caplog.text
+
+
+def test_resource_pool_admits_one_oversized_call_alone(tmp_path):
+    """Capped resources limit admission, except for a lone oversized call.
+
+    An oversized call may start while nothing runs, otherwise it could never
+    run; while it runs, nothing else is admitted.
+    """
+    P = Pipeline(DAG(tmp_path))
+    light = R_make_a(P, x="light").rule_call
+    heavy = R_make_a_heavy(P, x="heavy").rule_call
+    pool = ResourcePool({"threads": 2})
+
+    assert pool.admits(heavy)
+    pool.acquire(heavy)
+    assert pool.available() == {"threads": -2}
+    assert pool.free_threads() == 1
+    assert not pool.admits(light)
+
+    pool.release(heavy)
+    pool.acquire(light)
+    assert pool.available() == {"threads": 1}
+    assert not pool.admits(heavy)
+    assert pool.admits(R_make_a(P, x="second").rule_call)

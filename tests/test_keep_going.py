@@ -1,7 +1,9 @@
+import logging
+
 from necroflow.rules import Constraints, Inputs, Outputs, Rule
 import pytest
 
-from necroflow import Pipeline, DAG, NodeType, RuleCallState
+from necroflow import Pipeline, DAG, NodeType
 
 
 class A(NodeType):
@@ -62,14 +64,23 @@ def test_keep_going_runs_independent_branch(tmp_path):
     assert b_node.path.exists()
 
 
-def test_keep_going_downstream_of_failure_is_failed(tmp_path):
-    dag, P = two_branch_dag(tmp_path)
-    with pytest.raises(ExceptionGroup):
-        dag.run(keep_going=True)
+def test_keep_going_downstream_of_failure_is_blocked(tmp_path, caplog):
+    """A call below a failure is blocked: never run, never reported, and counted.
 
-    d_node = next(n for n in dag.nodes if n.rule.__name__ == "make_d")
-    assert d_node.rule_call.state == RuleCallState.FAILED
-    assert not d_node.path.exists()
+    It did not fail itself, so it gets no report event and no `.rip/state`;
+    the run summary counts it separately from the failure that blocked it.
+    """
+    dag, P = two_branch_dag(tmp_path)
+    with caplog.at_level(logging.INFO, logger="necroflow"):
+        with pytest.raises(ExceptionGroup) as caught:
+            dag.run(keep_going=True)
+
+    report = caught.value.execution_report
+    assert report[P.c.rule_call.relative_path.as_posix()].state == "failed"
+    assert P.d.rule_call.relative_path.as_posix() not in report
+    assert not P.d.path.exists()
+    assert not P.d.rule_call.state_file.exists()
+    assert "1 failed, 1 blocked" in caplog.text
 
 
 def test_keep_going_no_error_when_all_succeed(tmp_path):

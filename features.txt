@@ -86,7 +86,8 @@ necroflow
 │   │   └── Python callables can implement resource-aware ordering policies
 │   ├── dry-run mode
 │   ├── keep-going failure mode
-│   ├── failed/interrupted state tracking
+│   ├── fail-fast drains running calls and records them
+│   ├── failed/interrupted state tracking, blocked descendants
 │   ├── compromised-output reruns
 │   ├── missing-output detection
 │   ├── job logs

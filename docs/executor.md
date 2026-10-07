@@ -35,20 +35,21 @@ If any declared output is missing, the whole call is `MISSING`. Exit zero with a
 
 Planning starts from `dag.required_nodes`, converts each Node to its RuleCall, then follows `parent_calls`. Active calls retain canonical DAG registration order.
 
-Compiled calls outside this closure are inactive. Existing inactive workdirs are `ORPHAN`; absent inactive calls remain unclassified. Orphans run never. With `autoclean=True`, their whole workdirs may be removed.
+Compiled calls outside this closure are inactive. Inactive calls with an existing workdir are listed in `plan.orphans`; absent inactive calls are ignored. Orphans never run. With `autoclean=True`, their whole workdirs may be removed.
 
 Identity uses `call.relative_path` and `node.relative_path`, never `id()`.
 
 ## Cache classification
 
-State belongs to RuleCall:
+Classification gives a call one `Verdict` (`necroflow.planning.Verdict`):
 
 ```text
-MISSING, STALE, UP_TO_DATE, ORPHAN,
-READY, RUNNING, FAILED, INTERRUPTED
+MISSING, STALE, UP_TO_DATE, UNDECIDED
 ```
 
-Classification is lazy. A call is classified only after all parent calls are `UP_TO_DATE`. At initial planning time, a descendant whose parent will run has `state = None` and reason `parent_will_run`. After each parent settles, the executor classifies newly available children against final parent bytes.
+Verdicts and their reasons belong to the invocation's `ExecutionPlan` (`plan.verdicts`, `plan.reasons`), not to the RuleCall, so `explain` and a run over the same DAG never share state. `UNDECIDED` arises only when untrusted parents may not be hashed, i.e. in `explain`.
+
+Classification is lazy. A call is classified only after all parent calls are up to date. Planning is one pass in registration order, which is topological because a call is interned after the calls producing its inputs. At initial planning time, a descendant whose parent will run has no verdict and reason `parent_will_run`. After each parent finishes, the executor classifies that parent's children against final parent bytes.
 
 An available call is:
 
@@ -97,16 +98,18 @@ CLI `--invalidate LABEL` and `--reap NAME` resolve selected Nodes to owning call
 
 ## Runtime state machine
 
+Each active call has one `Phase` (`necroflow.executor.Phase`), owned by the run's `Execution` object:
+
 ```text
-MISSING / STALE
-  | all parents UP_TO_DATE
-  v
-READY -> RUNNING -> UP_TO_DATE
-                 |-> FAILED
-                 |-> INTERRUPTED
+WAITING --all parents DONE--> classify
+  verdict UP_TO_DATE        --> DONE (cached)
+  verdict MISSING / STALE   --> READY -> RUNNING -> DONE
+                                                 |-> FAILED
+                                                 |-> INTERRUPTED
+WAITING --an ancestor FAILED or INTERRUPTED--> BLOCKED
 ```
 
-A call blocked by failed or interrupted parents becomes `FAILED` without submission or report event.
+Entering or leaving `RUNNING` writes `.rip/state` (`running`, then `up_to_date`, `failed`, or `interrupted`). Cached and blocked calls write no state. A blocked call is never submitted, gets no report event, and is counted as blocked in the run summary.
 
 ## Scheduling
 
@@ -121,9 +124,9 @@ def scheduler(
     ...
 ```
 
-`ready` contains runnable calls. `remaining` contains unclassified, missing, stale, ready, and running calls. `available_resources` contains remaining capacity for capped resources.
+`ready` contains runnable calls. `remaining` contains every waiting or ready call: not done and not running. `available_resources` contains remaining capacity for capped resources. The executor consults the scheduler whenever at least one call is ready and no failure has stopped the run.
 
-Returned value must be a list containing only ready calls, without duplicate call keys. Invalid selections fail before submission. Returning no calls while nothing runs ends scheduling.
+Returned value must be a list containing only ready calls, without duplicate call keys. Invalid selections fail before submission. Returning no calls while nothing runs ends scheduling; the executor logs a warning naming the calls left ready.
 
 `fifo_scheduler` is sole built-in and default. It preserves RuleCall registration order. CLI accepts `--scheduler fifo` or `--scheduler path.py:callable`.
 
@@ -138,15 +141,17 @@ A rule declaring `threads="all"` resolves against the run's thread cap: `run()` 
 resolving commands, so `resources["threads"]` and the realized command reflect the
 actual cap for that run, not a per-rule guess. See [Rules](rules.md#all-available-threads).
 
-Scheduler order is priority, not guaranteed start order under resource pressure. Executor admits selected calls whose capped resource totals fit. When nothing runs, one oversized call may run alone to prevent deadlock.
+Scheduler order is priority, not guaranteed start order under resource pressure. Executor admits selected calls whose capped resource totals fit (`ResourcePool`). When nothing runs, one oversized call may run alone to prevent deadlock.
 
 Resources remain reserved across retries.
 
 ## Runner and retries
 
-`rule_call_runner(call, log_path)` executes one complete call. The default is `RuleCall.run(log_path)`, which invokes a Python materializer or realizes and runs one shell command. Output and error go to `<workdir>/.rip/job.log`.
+`rule_call_runner(call, log_path)` executes one complete call. The default is `necroflow.runners.run_call`, which invokes a Python materializer or realizes and runs one shell command. Output and error go to `<workdir>/.rip/job.log`.
 
-When the realized command selects a `Docker` input (see [Docker execution](rules.md#docker-execution)), `RuleCall.run` launches `docker run` with argv from `necroflow.containers.docker_argv` instead of a host shell. Exit codes, retries, logs, and missing-output checks are unchanged. Cached calls launch nothing and pull nothing. A custom `rule_call_runner` owns whatever it replaces, including container launch.
+`runners.attempt` calls the runner in a worker thread and returns an `Outcome`: start and finish timestamps plus the error, if any. Exit code and interruption (a negative exit code) are read from that `Outcome`, so the coordinator never inspects exception types.
+
+When the realized command selects a `Docker` input (see [Docker execution](rules.md#docker-execution)), `run_call` launches `docker run` with argv from `necroflow.containers.docker_argv` instead of a host shell. Exit codes, retries, logs, and missing-output checks are unchanged. Cached calls launch nothing and pull nothing. A custom `rule_call_runner` owns whatever it replaces, including container launch.
 
 `repeat=N` permits at most N command attempts within one scheduler submission. Only `subprocess.CalledProcessError` retries. Materializer errors, missing outputs, runner bugs, and metadata errors do not.
 
@@ -157,9 +162,12 @@ After runner success, executor:
 1. validates every declared output;
 2. writes `dependencies.toml`, output hashes, and invalidator tokens;
 3. writes `graph.tgf`;
-4. writes state `up_to_date`;
-5. records one `RuleCallExecution` and `run.toml`;
-6. optionally cleans eligible parent calls.
+4. records one `RuleCallExecution` and `run.toml`;
+5. writes state `up_to_date`;
+6. optionally cleans eligible parent calls;
+7. classifies the call's children.
+
+A missing output or a metadata error in steps 1–5 fails the call like a failed command.
 
 Shared metadata:
 
@@ -192,7 +200,9 @@ Report includes:
 
 Cached events have `cached=True` and no execution duration. Dependency-blocked calls have no event. `DAG.run()` stores a normally returned report as `dag.last_execution_report`.
 
-With `keep_going=True`, independent branches continue. Final `ExceptionGroup` carries `execution_report`. `on_complete(report)` runs before that exception, allowing CLI result and summary materialization.
+With `keep_going=True`, independent branches continue. The final `ExecutionFailed` (an `ExceptionGroup` subclass in `necroflow.executor`) carries `execution_report`. `on_complete(report)` runs before that exception, allowing CLI result and summary materialization.
+
+Without `keep_going`, the first failure stops new submissions. Calls already running finish and are recorded normally, so their work stays cached. `on_complete` is skipped and the first failure is re-raised.
 
 ## Dry run and explain
 
@@ -293,7 +303,7 @@ and successful state, creates one `RuleCallExecution`, and writes `run.toml`.
 
 ### Newly available children
 
-Once `source` is `UP_TO_DATE`, its children become classifiable:
+Once `source` is `DONE`, its children become classifiable:
 
 ```text
 analyze   → MISSING → READY
@@ -324,7 +334,7 @@ There is one call-level duration and one `RuleCallExecution`, containing both
 output Node keys.
 
 After `analyze` settles, `report` becomes classifiable. Its output is missing,
-so it moves through `MISSING → READY → RUNNING → UP_TO_DATE`.
+so it moves through `READY → RUNNING → DONE`.
 
 For CLI runs, only `report` and `checksum` are copied into `results/`.
 `analyze.data` and `analyze.log` remain together in the node store by default.
@@ -363,9 +373,10 @@ Process history alone does not invalidate consumers. If source bytes
 change, `analyze` and `checksum` become stale. `report` waits for `analyze`, then
 reruns only when the resulting `data` bytes disagree with its consumed hash.
 
-If `analyze` fails, `report` becomes dependency-failed without submission and
-receives no execution event. With `keep_going=True`, independent `checksum` may
-still finish; otherwise the first failure aborts the run.
+If `analyze` fails, `report` becomes `BLOCKED` without submission and receives
+no execution event. With `keep_going=True`, independent `checksum` may still
+finish; otherwise the first failure stops new submissions, and calls already
+running finish and are recorded.
 
 ## Precise boundaries
 
