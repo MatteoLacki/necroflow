@@ -66,6 +66,11 @@ Explicit shell paths affect node hashes for string commands, so `outputs --shell
 
 ## Custom execution reports
 
+Result-copy failures identify the destination and propagate the copy error.
+Completed nodes remain cached; failed temporary copies are removed. Once the
+destination issue is resolved, rerun the same command to retry publication using
+the cached nodes.
+
 ```bash
 necroflow run --reporter examples/terminal_reporter.py:report job.toml
 ```

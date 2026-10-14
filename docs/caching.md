@@ -25,10 +25,18 @@ full nested parameter paths like `experiment__ref+hg38__aligner+bwa`); see
 
 Only the **requested** outputs (defaults to pipeline sinks) are copied —
 intermediate ancestors are excluded. On Linux, Necroflow uses GNU
-`cp -a --reflink=auto`; on macOS it uses `cp -a -c`. Both opportunistically
+`cp -R -P --preserve=links,timestamps --reflink=auto`; on macOS it uses
+`cp -a -c`. Both opportunistically
 create copy-on-write clones and fall back to physical copying when cloning is
-unavailable. Archive mode preserves an intentionally symlink-valued output as
-a symlink instead of dereferencing it.
+unavailable. Both preserve an intentionally symlink-valued output as a symlink
+instead of dereferencing it. Linux copies retain hard links and timestamps, but
+do not preserve source ACLs, ownership, or extended attributes. New permissions
+derive from the source mode and destination umask/default ACL, so result
+publication does not require support for the source filesystem's ACLs.
+
+If copying fails, temporary outputs are removed and previously published results
+and their manifest remain intact. The error identifies the destination; completed
+nodes stay cached so a subsequent invocation can retry publication.
 
 ```text
 results/experiment__hg38__bwa/counts/counts.txt
