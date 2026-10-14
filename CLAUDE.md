@@ -141,7 +141,9 @@ These have been true since the June refactors and are load-bearing design decisi
   visible result paths and remain outside fingerprints. CLI result paths receive an exact
   destination-filesystem preflight before execution and again before result materialization.
 - **CLI results are copies.** Only requested outputs are copied into `results/`; Linux uses
-  GNU `cp -a --reflink=auto`, macOS uses `cp -a -c`, and both fall back to physical copies.
+  GNU `cp -R -P --preserve=links,timestamps --reflink=auto`, macOS uses `cp -a -c`,
+  and both fall back to physical copies. Linux copies use destination permission policy
+  without preserving source ACLs, ownership, or extended attributes.
   `manifest.toml` records each visible path, canonical origin node key, and content hash.
 - **Filename-less NodeTypes are input-only.** A `NodeType` with `filename = None` may be
   used as a fixed, union, or variadic input contract, but every Rule output must resolve to an

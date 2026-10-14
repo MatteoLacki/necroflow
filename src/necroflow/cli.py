@@ -918,13 +918,18 @@ def _clear_generated_results(combo_dir: Path, paths: set[Path]) -> None:
 
 
 def _copy_result(source: Path, destination: Path) -> None:
-    """Archive-copy one result, requesting a clone or reflink when available."""
-    command = ["cp", "-a"]
+    """Copy one result, avoiding source permissions and ACLs on Linux."""
     if sys.platform == "darwin":
-        command.append("-c")
+        command = ["cp", "-a", "-c"]
     else:
-        command.append("--reflink=auto")
-        command.append("--")
+        command = [
+            "cp",
+            "-R",
+            "-P",
+            "--preserve=links,timestamps",
+            "--reflink=auto",
+            "--",
+        ]
     command.extend((str(source), str(destination)))
     subprocess.run(command, check=True)
 
@@ -964,8 +969,15 @@ def _materialize_results(
                 temporary = destination.with_name(
                     f".{destination.name}.necroflow-{secrets.token_hex(8)}"
                 )
-                _copy_result(node.path, temporary)
                 staged.append((temporary, destination))
+                try:
+                    _copy_result(node.path, temporary)
+                except (OSError, subprocess.CalledProcessError) as exc:
+                    exc.add_note(
+                        f"Result publication failed for {destination}. "
+                        "Completed nodes remain cached."
+                    )
+                    raise
 
                 entry = tomlkit.table()
                 entry["path"] = rel.as_posix()

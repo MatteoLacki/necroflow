@@ -167,7 +167,10 @@ per-job copied-output folders and defaults to `results`. `--outdir DIR` / `-o DI
 remains a compatibility alias that uses one directory for both and cannot be
 combined with either split-dir flag. Manifest keys are exact requested Pipeline
 labels. Each manifest entry records the visible path, canonical origin node key,
-and content hash. Linux uses `cp -a --reflink=auto`; macOS uses `cp -a -c`.
+and content hash. Linux uses `cp -R -P --preserve=links,timestamps --reflink=auto`;
+macOS uses `cp -a -c`. Linux copies use destination permission policy without
+preserving source ACLs, ownership, or extended attributes. Failed copies are
+cleaned up, and their errors identify the destination while completed nodes stay cached.
 
 ### CLI JSON node paths
 
