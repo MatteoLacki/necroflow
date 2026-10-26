@@ -83,18 +83,20 @@ def test_doctor_reports_ok_for_valid_job(job_toml, roots):
     assert payload["ok"] is True
 
 
-def test_explain_lists_calls_that_would_run(job_toml, roots):
-    """Before any run, explain() must mark the root as will_run=True (output missing)
-    and the descendant as will_run=None (unknown until the parent's real bytes exist).
-    """
+@pytest.mark.parametrize("reuse_unchanged", [False, True])
+def test_explain_lists_calls_that_would_run(job_toml, roots, reuse_unchanged):
+    """Explain propagates rebuilds by default and defers byte reuse when opted in."""
     nodes_dir, results_dir = roots
     payload = mcp_server.explain(
-        [str(job_toml)], nodes_dir=nodes_dir, results_dir=results_dir
+        [str(job_toml)],
+        nodes_dir=nodes_dir,
+        results_dir=results_dir,
+        reuse_unchanged=reuse_unchanged,
     )
     calls = {call["rule"]: call for call in payload["calls"]}
     assert set(calls) == {"make_a", "make_b"}
     assert calls["make_a"]["will_run"] is True
-    assert calls["make_b"]["will_run"] is None
+    assert calls["make_b"]["will_run"] is (None if reuse_unchanged else True)
 
 
 def test_explain_node_filters_to_one_label(job_toml, roots):

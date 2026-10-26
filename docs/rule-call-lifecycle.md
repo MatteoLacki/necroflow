@@ -104,6 +104,11 @@ build_workflow(P, config)
 P.finish()
 ```
 
+Before compiling each configuration, the CLI checks that its job name has not
+already appeared in this invocation. Duplicate names from different job files or
+grid combinations fail before execution, with both source paths and configuration
+numbers in the error.
+
 The DAG owns canonical rule calls, output Nodes, required outputs, and
 execution. One root Pipeline owns the finished state and qualified labels for
 one workflow evaluation. `P.subpipeline(prefix)` creates a lightweight view over
@@ -385,6 +390,12 @@ node.path
 
 are final.
 
+Nodes support `set(nodes)` and dictionary keys. Equality and Python hashing use
+`node.relative_path`: rule name, provenance hash, and output filename. Equivalent
+outputs compare equal across DAGs and node-store roots; co-outputs remain distinct
+despite sharing a provenance hash. Labels, descriptions, and runtime state do not
+affect equality or hashing. Address fields must not be reassigned after creation.
+
 ## 9. Assignment creates Pipeline-local labels
 
 Attribute and item assignment share one namespace:
@@ -476,7 +487,7 @@ controls which canonical subgraphs execute.
 
 Planning begins inside `dag.run()` under the node-store lock. It converts requested Nodes to owning RuleCalls, follows `parent_calls`, and preserves insertion order from `DAG.calls`. Requesting one co-output activates the complete RuleCall; only later CLI result copying remains Node-selective.
 
-`planning.plan_execution()` partitions active and orphan RuleCalls, then walks the active calls once in registration order, which is topological. It gives a `Verdict` only to calls whose parents are already up to date; descendants of parents that will run stay open until those parents finish. Verdicts and reasons live in the returned `ExecutionPlan`, never on the RuleCall.
+`planning.plan_execution()` partitions active and orphan RuleCalls, then walks the active calls once in registration order, which is topological. By default, rebuilding a call also marks every active descendant for execution, with reason `parent_will_run`. With `reuse_unchanged=True`, those descendants instead stay open until parents finish and their bytes can be checked. Verdicts and reasons live in the returned `ExecutionPlan`, never on the RuleCall. The reuse policy is passed by the executor and by CLI/MCP explain; it does not enter fingerprints.
 
 ## 12. Commands remain lazy
 
@@ -488,7 +499,14 @@ One submission runs one complete RuleCall. Before each attempt, the executor cle
 
 After provisional success, executor validates all co-outputs and writes dependency metadata, output hashes, invalidator tokens, ancestor graph, report, run stats, and finally call-level state. Each parent metadata entry stores the tagged content hash consumed by this call.
 
-Child classification happens after parent settlement, and only the finished call's children are examined. A rebuilt parent with identical bytes leaves the child cached; changed bytes replay it. A failed call blocks its descendants, which are never submitted.
+Children become eligible only after all parents settle successfully. Rebuilt parents force every active descendant to rerun by default, even if the bytes match. With `reuse_unchanged=True` (`--reuse-unchanged` on the CLI), deferred child classification instead preserves valid caches for identical rebuilt bytes. Autoclean considers parents for deletion after either execution or a cache hit, once all their consumers are done. A failed call blocks its descendants, which are never submitted.
+
+CLI result copying selects requested outputs whose owning calls are marked
+`up_to_date` in this invocation's report, including cache hits. During a
+keep-going run, partial outputs from failed or interrupted calls and old outputs
+from blocked calls are excluded from results and their manifest. Previously
+managed copies of those excluded outputs are removed. Execution summaries still
+include the failure events.
 
 Identity, paths, interning, and RuleCall order are eager. Cache classification, command realization, materialization, and result copying happen after construction.
 

@@ -981,7 +981,7 @@ def _make_symlink_file_rule(
         name=name,
         inputs=Inputs(**{path_arg: str}),
         outputs=Outputs(**{oname: output}),
-        command=f"ln -s $(realpath {{{path_arg}}}) {{{oname}}}",
+        command=f'ln -s "$(realpath {{{path_arg}}})" {{{oname}}}',
         info=info or f"Symlink an external file into {output.__name__}.",
     )
 

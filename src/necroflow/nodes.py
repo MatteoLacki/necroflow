@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import inspect
-from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -31,8 +30,10 @@ class NodeType:
         )
 
 
-@dataclass
+@dataclass(eq=False)
 class Node:
+    """Typed output identified by its final, node-store-relative path."""
+
     output_name: str
     node_type: type[NodeType]
     relative_path: Path
@@ -45,6 +46,14 @@ class Node:
             doc = self.node_type.__doc__
             if doc:
                 self.info = doc.strip()
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Node):
+            return NotImplemented
+        return self.relative_path == other.relative_path
+
+    def __hash__(self) -> int:
+        return hash(self.relative_path)
 
     @property
     def parents(self) -> list[Node]:
@@ -157,31 +166,6 @@ class Node:
         call.output_nodes = all_outputs
         canonical = pipeline.dag.intern(call)
         return [canonical.output_nodes[name] for name in outputs_specs]
-
-
-def _topo_sort(nodes: list[Node]) -> list[Node]:
-    """Return nodes in topological order (parents before children) via Kahn's algorithm.
-
-    Only edges between nodes in the provided list are considered.
-    """
-    key_to_node = {n.relative_path: n for n in nodes}
-    children: dict[Path, list[Node]] = {n.relative_path: [] for n in nodes}
-    in_degree: dict[Path, int] = {n.relative_path: 0 for n in nodes}
-    for n in nodes:
-        for p in n.parents:
-            if p.relative_path in key_to_node:
-                children[p.relative_path].append(n)
-                in_degree[n.relative_path] += 1
-    queue: deque[Node] = deque(n for n in nodes if in_degree[n.relative_path] == 0)
-    result: list[Node] = []
-    while queue:
-        n = queue.popleft()
-        result.append(n)
-        for child in children[n.relative_path]:
-            in_degree[child.relative_path] -= 1
-            if in_degree[child.relative_path] == 0:
-                queue.append(child)
-    return result
 
 
 def _is_nodetype(ann) -> bool:

@@ -20,7 +20,7 @@ Prefer plain files over embedded databases for local state.
 mtime invalidates a stored-hash fast path; it is not freshness policy.
 - Consumers persist a tagged `consumed_hash` for each parent Node.
 - Compare consumed hash with current parent bytes after parent RuleCall settles.
-- Identical rebuilt bytes must NOT invalidate consumers.
+- Rebuilds rerun all active descendants by default; `reuse_unchanged=True` may preserve consumers of identical rebuilt bytes.
 - Constraints and `repeat` remain outside fingerprints.
 - Use framed canonical SHA-256 identity, not `repr(tuple(...))`.
 

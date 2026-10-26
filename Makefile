@@ -12,6 +12,11 @@ SAGE_SHA256 ?= e3dc6b41015cb167574f6c82525b75e946c094f30bd700271b05c051c30cbe8a
 SAGE_IMAGE = necroflow-sage-recal:$(SAGE_VERSION)
 SAGE_IMAGE_ARCHIVE = dist/necroflow-sage-recal-$(SAGE_VERSION).tar.gz
 SAGE_HELPERS_IMAGE ?= necroflow-sage-helpers:local
+PYDRA_EXAMPLE_DIR = examples/pydra_canonical
+PYDRA_VENV = $(PYDRA_EXAMPLE_DIR)/.venv
+PYDRA_PYTHON_VERSION ?= 3.12
+PYDRA_PYTHON = $(PYDRA_VENV)/bin/python
+PYDRA_BUILD_DIR ?= build/pydra-canonical
 VERSION_GOALS = release_pypi release_test_pypi bump-version tag-release
 POSITIONAL_VERSION = $(if $(filter $(VERSION_GOALS),$(MAKECMDGOALS)),$(firstword $(filter-out $(VERSION_GOALS),$(MAKECMDGOALS))))
 REQUESTED_VERSION = $(if $(VERSION),$(VERSION),$(POSITIONAL_VERSION))
@@ -20,6 +25,7 @@ RELEASE_VERSION = $(if $(REQUESTED_VERSION),$(REQUESTED_VERSION),$(CURRENT_VERSI
 TAG ?= v$(RELEASE_VERSION)
 
 .PHONY: all venv test typecheck example pdb-example clean-example clean-dist bump-version maybe-bump-version build check-dist upload_test_pypi upload_pypi release_test_pypi release_pypi tag-release sage-image sage-image-archive sage-helpers-image
+.PHONY: pydra-venv pydra-compile pydra-example pydra-splitter-example pydra-test
 
 all: venv
 
@@ -38,6 +44,32 @@ typecheck: $(PYRIGHT)
 
 example:
 	$(PYTHON) -m necroflow.cli --outdir $(EXAMPLE_OUTDIR) examples/necroalchemy_job.toml
+
+# Pydra stays isolated from the main Python 3.14 development environment.
+pydra-venv: $(PYDRA_VENV)/.requirements-installed
+
+$(PYDRA_VENV)/.requirements-installed: $(PYDRA_EXAMPLE_DIR)/requirements.txt
+	uv venv --allow-existing $(PYDRA_VENV) --python $(PYDRA_PYTHON_VERSION)
+	uv pip install --python $(PYDRA_PYTHON) -r $<
+	touch $@
+
+pydra-compile: pydra-venv
+	$(PYDRA_PYTHON) -m compileall -q $(PYDRA_EXAMPLE_DIR)/pipeline.py $(PYDRA_EXAMPLE_DIR)/splitter_example.py $(PYDRA_EXAMPLE_DIR)/tests
+
+pydra-example: pydra-compile
+	$(PYDRA_PYTHON) $(PYDRA_EXAMPLE_DIR)/pipeline.py \
+		--cache-dir $(PYDRA_BUILD_DIR)/cache --output-dir $(PYDRA_BUILD_DIR)/results \
+		--worker cf --n-procs 2
+
+pydra-splitter-example: pydra-compile
+	$(PYDRA_PYTHON) $(PYDRA_EXAMPLE_DIR)/splitter_example.py \
+		--cache-dir $(PYDRA_BUILD_DIR)/splitters-cache --worker cf --n-procs 2
+
+# Explicit config avoids the main suite's coverage/xdist plugin requirements.
+# Necroflow is installed here only for the cross-engine parity test.
+pydra-test: pydra-compile
+	uv pip install --python $(PYDRA_PYTHON) -e .
+	$(PYDRA_PYTHON) -m pytest -c $(PYDRA_EXAMPLE_DIR)/pytest.ini $(PYDRA_EXAMPLE_DIR)/tests -q
 
 # Run a normal example under scripted pdb breakpoints and retain a concise trace.
 pdb-example: venv

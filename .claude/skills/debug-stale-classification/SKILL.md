@@ -23,9 +23,9 @@ Explain reports RuleCalls in registration order with nested output Nodes. Reason
 1. Request closure starts from selected Nodes, then follows owning calls and `parent_calls`.
 2. Any missing declared co-output makes complete call `MISSING`.
 3. Non-`up_to_date` persisted state, forced call key, or changed output invalidator makes call `STALE`.
-4. Child waits until every parent call settles.
+4. A parent scheduled for execution also marks active descendants for replay by default. Every child still waits until all parents settle successfully.
 5. For every parent Node, compare recorded `dependencies.toml: consumed_hash` with current bytes.
-6. Missing or malformed consumed metadata is stale; matching hashes are up to date.
+6. Missing or malformed consumed metadata is stale. Matching hashes preserve a cache when parents did not rerun, or when `reuse_unchanged=True` explicitly allows reuse after rebuilding them.
 7. Existing inactive call workdirs are listed in `plan.orphans`; they never run.
 8. Verdicts and reasons are in `plan.verdicts` / `plan.reasons` from `plan_execution(dag)`, not on the RuleCall.
 
@@ -36,8 +36,8 @@ Current hashes trust `.rip/{filename}.hash` only while output mtime is no newer 
 - Different identity: command, config, contracts, shell path, or parent lineage changed. New path is missing; old path may be orphan.
 - Missing sibling: one absent co-output makes atomic call missing.
 - Missing consumed hash: legacy or malformed dependency metadata forces safe replay.
-- Parent rebuilt, child cached: output bytes were identical.
-- Parent rebuilt, child replayed: output bytes changed.
+- Parent rebuilt, child cached: `--reuse-unchanged` was enabled and output bytes were identical.
+- Parent rebuilt, child replayed: default cascading policy, changed output bytes, or another child cache check required replay.
 - Bare external path string: fingerprint includes path text, not external bytes. Ingest with `@symlink_file`, use an invalidator, or include content in config.
 - Leftover `.rip/state = running`: compromised call reruns (a crash or kill; a failure elsewhere no longer leaves running siblings unrecorded).
 - Constraints and `repeat`: execution policy, excluded from identity.

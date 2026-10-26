@@ -91,7 +91,9 @@ These have been true since the June refactors and are load-bearing design decisi
   every immutable parent output in `dependencies.toml`. Current hashes use an mtime-gated fast path
   through `.rip/{filename}.hash`; externally edited outputs are rehashed once, as node-store lock
   holders (real and dry runs) store the refreshed digest. `explain` never hashes them; it reports
-  their consumers as undecided. A rebuilt parent with identical bytes must NOT invalidate consumers.
+  their consumers as undecided. By default, rebuilding a RuleCall reruns every active
+  descendant, even with identical bytes. `--reuse-unchanged` / `reuse_unchanged=True`
+  opts into preserving consumers whose recorded parent hashes still match.
 - **Content hashers are pluggable.** Default BLAKE3; `sha256` built in; `--hasher file.py:Class`
   (a `name` plus `hash_path(path, threads)`). Every stored digest is tagged `<name>:<hex>`, and a
   consumed hash from another hasher counts as missing, so switching hashers reruns each consumer
@@ -189,7 +191,7 @@ def my_scheduler(ready: list[RuleCall], remaining: list[RuleCall],
 
 `necroflow.executor.run(dag, resource_caps=None, scheduler=None, keep_going=False,
 autoclean=False, dry_run=False, rule_call_runner=None, forced_stale_call_keys=None,
-on_complete=None, hasher=None)
+on_complete=None, hasher=None, reuse_unchanged=False)
 -> dict[str, RuleCallExecution]`
 
 Dict keyed by `call.relative_path.as_posix()`. `DAG.run()` forwards all kwargs and stores same
@@ -201,7 +203,7 @@ running calls finish and are recorded, and that failure is re-raised; with it, a
 
 ```
 src/necroflow/
-  nodes.py           — Node, NodeType, topo sort
+  nodes.py           — Node and NodeType typed output concepts
   rule_call.py       — concrete invocation: identity, command realization, `.rip/` state and
                        dependency metadata
   contexts.py        — immutable NamedValues and CommandArgs public views

@@ -1,0 +1,3 @@
+# Function-defined workflows use the 1.0 prerelease API, isolated from Necroflow.
+pydra==1.0a11
+pytest==8.4.2

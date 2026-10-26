@@ -27,6 +27,12 @@ rejected rather than forwarded.
 labels may be canonical relative POSIX paths such as `dataset/qc`. The visible
 result is then nested at `results/<job>/dataset/qc/<filename>`.
 
+Job names must be unique within one CLI invocation. Two files such as
+`sample_a/job.toml` and `sample_b/job.toml` both produce the name `job` and are
+rejected before execution. The error names both source files; rename one job
+TOML file to give it a distinct name. Existing results from an earlier invocation
+may still be replaced when rerunning a job.
+
 ## Parameter grids
 
 Any TOML key ending in `__grid` is expanded into a Cartesian product of all
@@ -47,6 +53,11 @@ otherwise the shortened key name is kept as a `key=value` prefix to disambiguate
 Two nested parameter paths that shorten to the same trailing key name (e.g.
 `model.width__grid` and `optim.width__grid`) are rejected rather than silently
 colliding.
+
+Expanded configuration names must also be unique. If grid values or `__label`
+markers produce the same result name after sanitization, the CLI reports the job
+file and both configuration numbers before execution. Change those values or
+markers to give each configuration a distinct name.
 
 Pass `--long-names` to use full nested parameter paths instead:
 `experiment__ref+hg38__aligner+bwa`, `experiment__ref+hg38__aligner+bowtie2`, etc.

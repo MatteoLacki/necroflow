@@ -1,5 +1,7 @@
 """Tests for invocation-local RuleCall planning."""
 
+import pytest
+
 from necroflow import DAG, NodeType, Pipeline, Verdict
 from necroflow.planning import plan_execution
 from necroflow.rules import Inputs, Outputs, Rule
@@ -43,8 +45,9 @@ def test_plan_partitions_calls_without_deleting_orphans(tmp_path):
     assert plan.reasons[second.a.rule_call.relative_path][0]["kind"] == "up_to_date"
 
 
-def test_forced_parent_leaves_child_unclassified_until_parent_settles(tmp_path):
-    """Planner does not assume rebuilt parent bytes before execution."""
+@pytest.mark.parametrize("reuse_unchanged", [False, True])
+def test_forced_parent_propagates_unless_reuse_is_enabled(tmp_path, reuse_unchanged):
+    """Only explicit content reuse defers descendants of a parent that will run."""
     pipeline = _pipeline(tmp_path)
     pipeline.dag.require([pipeline.b])
     pipeline.dag.run()
@@ -52,10 +55,14 @@ def test_forced_parent_leaves_child_unclassified_until_parent_settles(tmp_path):
     plan = plan_execution(
         pipeline.dag,
         forced_stale_call_keys={pipeline.a.rule_call.relative_path},
+        reuse_unchanged=reuse_unchanged,
     )
 
     assert plan.verdicts[pipeline.a.rule_call.relative_path] is Verdict.STALE
-    assert pipeline.b.rule_call.relative_path not in plan.verdicts
+    if reuse_unchanged:
+        assert pipeline.b.rule_call.relative_path not in plan.verdicts
+    else:
+        assert plan.verdicts[pipeline.b.rule_call.relative_path] is Verdict.STALE
     assert plan.reasons[pipeline.b.rule_call.relative_path] == (
         {"kind": "parent_will_run"},
     )

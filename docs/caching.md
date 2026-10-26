@@ -132,7 +132,9 @@ Invalidators are evaluated when the owning RuleCall becomes classifiable. After 
 
 A RuleCall is the cache unit. Requesting any co-output activates, validates, hashes, retains, reports, and cleans every declared output together. Only requested Nodes are copied into visible `results/`.
 
-After success, each consumer records `consumed_hash` for every parent Node in `dependencies.toml`. Classification waits until parent calls settle, then compares recorded hashes with current parent bytes. Missing, malformed, or other-hasher consumed hashes are stale. A rebuilt parent producing identical bytes preserves the consumer cache; changed bytes replay it.
+After success, each consumer records `consumed_hash` for every parent Node in `dependencies.toml`. Missing, malformed, or other-hasher consumed hashes are stale. By default, rebuilding a call also reruns all its active descendants, even if it produces identical bytes. This includes rebuilds caused by forced invalidation, missing outputs, or compromised state.
+
+Pass `--reuse-unchanged` to the CLI or `reuse_unchanged=True` to `dag.run()` to preserve consumers when rebuilt parent bytes still match their recorded consumed hashes and their other cache checks pass. Under this policy, descendant classification waits until parents settle. With either policy, external edits to cached parent outputs are checked against consumed hashes. The reuse option affects execution policy, not fingerprints or output paths.
 
 ### Content hashers
 

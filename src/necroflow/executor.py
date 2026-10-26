@@ -199,6 +199,7 @@ class Execution:
             if verdict is Verdict.UP_TO_DATE:
                 self._transition(call, Phase.DONE)
                 self._record(_cached_event(call))
+                self._clean_parents(call)
                 pending.extend(self.children[key])
             else:
                 self._transition(call, Phase.READY)
@@ -400,12 +401,16 @@ def run(
     forced_stale_call_keys: set[Path] | None = None,
     on_complete: Callable[[dict[str, RuleCallExecution]], None] | None = None,
     hasher: Hasher | str | None = None,
+    reuse_unchanged: bool = False,
 ) -> dict[str, RuleCallExecution]:
     """Execute required RuleCalls atomically; return report keyed by call path.
 
     • forced_stale_call_keys is a set of canonical RuleCall.relative_path values forced to rerun despite valid cache.
     • hasher names the output content hasher (default BLAKE3); see `necroflow.hashers`.
     • rule_call_runner(call, log_path) replaces the default runner, `runners.run_call`.
+    • Rebuilt calls force all active descendants to rerun by default.
+      reuse_unchanged=True keeps consumers cached when rebuilt parent bytes
+      match their recorded consumed hashes and their other cache checks pass.
     • Without keep_going, the first failure stops new submissions; running calls
       finish and are recorded, on_complete is skipped, and that failure is raised.
       With keep_going, independent branches continue, on_complete runs, and an
@@ -428,6 +433,7 @@ def run(
             hasher=hasher,
             hash_threads=caps["threads"],
             store_refreshed_hashes=True,
+            reuse_unchanged=reuse_unchanged,
         )
         if dry_run:
             return _dry_run_report(plan)

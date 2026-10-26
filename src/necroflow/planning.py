@@ -33,9 +33,9 @@ class Verdict(Enum):
 class ExecutionPlan:
     """Required calls, inactive calls with workdirs, and their cache verdicts.
 
-    `verdicts` holds only calls whose parents were all up to date when they
-    were classified; a call below one that will run waits for real parent
-    bytes, and `reasons` says why it is still open.
+    By default, rebuilding a parent also marks its descendants for execution.
+    With unchanged-output reuse enabled, descendants wait for real parent
+    bytes instead; `reasons` says why their verdict is still open.
     """
 
     active: list[RuleCall]
@@ -166,6 +166,7 @@ def plan_execution(
     hash_threads: int = 1,
     hash_untrusted_parents: bool = True,
     store_refreshed_hashes: bool = False,
+    reuse_unchanged: bool = False,
 ) -> ExecutionPlan:
     """Find required and orphan calls, then classify every call with cached parents.
 
@@ -174,7 +175,9 @@ def plan_execution(
     `hash_untrusted_parents`, a parent whose stored hash is not trusted leaves
     its consumer UNDECIDED instead of being read in full.
     `store_refreshed_hashes` writes such fresh digests back; only node-store
-    lock holders may set it.
+    lock holders may set it. By default, a call that will run forces its
+    descendants to run too. `reuse_unchanged` instead defers those descendants
+    until the rebuilt parent bytes can be compared with consumed hashes.
     """
     required = dag.required_call_keys
     plan = ExecutionPlan(
@@ -207,6 +210,12 @@ def plan_execution(
         elif any(parent.relative_path in will_run for parent in call.parent_calls):
             will_run.add(key)
             plan.reasons[key] = ({"kind": "parent_will_run"},)
+            if not reuse_unchanged:
+                plan.verdicts[key] = (
+                    Verdict.MISSING
+                    if any(not output.path.exists() for output in call.outputs)
+                    else Verdict.STALE
+                )
         else:
             plan.reasons[key] = ({"kind": "parent_undecided"},)
     return plan

@@ -118,10 +118,13 @@ def explain(
     nodes_dir: str | None = None,
     results_dir: str | None = None,
     outdir: str | None = None,
+    reuse_unchanged: bool = False,
 ) -> dict:
     """Explain which RuleCalls would run and why, without executing them."""
     try:
-        extra = ["--node", node] if node is not None else None
+        extra = ["--node", node] if node is not None else []
+        if reuse_unchanged:
+            extra.append("--reuse-unchanged")
         args = _root_args(
             "explain",
             jobs,

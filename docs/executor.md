@@ -51,12 +51,14 @@ MISSING, STALE, UP_TO_DATE, UNDECIDED
 
 Verdicts and their reasons belong to the invocation's `ExecutionPlan` (`plan.verdicts`, `plan.reasons`), not to the RuleCall, so `explain` and a run over the same DAG never share state. `UNDECIDED` arises only when untrusted parents may not be hashed, i.e. in `explain`.
 
-Classification is lazy. A call is classified only after all parent calls are up to date. Planning is one pass in registration order, which is topological because a call is interned after the calls producing its inputs. At initial planning time, a descendant whose parent will run has no verdict and reason `parent_will_run`. After each parent finishes, the executor classifies that parent's children against final parent bytes.
+Planning is one pass in registration order, which is topological because a call is interned after the calls producing its inputs. By default, a call that will run also marks every active descendant for execution: `MISSING` if an output is absent, otherwise `STALE`, with reason `parent_will_run`. Execution still waits for every parent to succeed.
+
+With `reuse_unchanged=True` (`--reuse-unchanged` on the CLI), descendants of a parent that will run instead remain unclassified. After each parent finishes, the executor classifies those children against final parent bytes, allowing cache reuse when the bytes match.
 
 An available call is:
 
 - `MISSING` when any declared output is absent;
-- `STALE` when forced, compromised, invalidator-changed, or parent-content evidence requires replay;
+- `STALE` when forced, compromised, invalidator-changed, a parent will rerun under the default policy, or parent-content evidence requires replay;
 - otherwise `UP_TO_DATE`.
 
 A `.rip/state` file containing anything except `up_to_date` is compromised. Missing state remains trusted for older complete cache entries.
@@ -72,7 +74,7 @@ consumed_hash = "blake3:<hash consumed by this call>"
 
 When classifying a consumer, Necroflow compares `consumed_hash` with each parent output's current hash from the same hasher. Missing, malformed, other-hasher, reordered, or mismatched parent metadata makes the consumer stale.
 
-This makes parent process history irrelevant. A parent rebuilt during this invocation but producing identical bytes leaves an immutable consumer cached. Different bytes replay it.
+Rebuilding a parent reruns its active descendants by default, regardless of byte equality. Only with `reuse_unchanged=True` may identical rebuilt bytes leave a consumer cached. Different bytes replay the consumer under either policy. This option remains outside fingerprints.
 
 Classification never writes dependency records; only successful call completion does. The one exception to read-only classification is the hash cache below: holders of the node-store lock (real runs and dry runs) may refresh a parent's stored hash.
 
@@ -212,7 +214,7 @@ Without `keep_going`, the first failure stops new submissions. Calls already run
 
 `dry_run=True` classifies currently available calls under the lock. It executes nothing, deletes nothing, and skips `on_complete`. Its only write is refreshing stored parent hashes it had to recompute, as a real run would.
 
-Descendants of calls that would run remain unknown until real parent bytes exist. CLI `explain` reports these calls with `state = null`, `will_run = null`, and reason `parent_will_run`. Explain nests output Nodes under each RuleCall.
+By default, descendants of calls that would run are also reported as `will_run = true`, with reason `parent_will_run`. With `--reuse-unchanged`, those descendants remain unknown until real parent bytes exist (`state = null`, `will_run = null`). Explain nests output Nodes under each RuleCall. The MCP explain tool accepts the equivalent `reuse_unchanged=True` argument.
 
 `explain` (CLI and MCP) takes no lock and may run beside a real run, so it never reads whole outputs and never writes. A consumer whose parent's stored hash is not trusted gets `state = "undecided"`, `will_run = null`, and reason `parent_hash_unchecked`; its descendants get `state = null` and reason `parent_undecided`. A real run or dry run settles them.
 
@@ -222,9 +224,14 @@ Cleanup is RuleCall-atomic:
 
 - requested calls and active final calls are protected;
 - orphan cleanup removes whole inactive workdirs;
-- after successful execution, an intermediate parent may be removed once all active consumers are up to date.
+- after a consumer executes successfully or is reused from cache, an intermediate parent may be removed once all active consumers are up to date.
 
 No individual sibling output cleanup exists.
+
+On a later run, rebuilding an intermediate removed by autoclean reruns its active
+descendants under the default policy. With `reuse_unchanged=True`, a cached
+consumer can survive that rebuild, and the intermediate is still cleaned after
+the consumer settles.
 
 ## CLI results
 
@@ -348,7 +355,7 @@ co-outputs are never cleaned separately.
 
 ### Fully cached second run
 
-On the next run, classification proceeds parent-first:
+When all required workdirs were retained, the next run classifies parent-first:
 
 ```text
 source   → UP_TO_DATE
@@ -364,18 +371,21 @@ invocation.
 
 ### Rebuilt parent
 
-If `source` is forced stale and rebuilds identical bytes, child classification
-happens after source completion:
+If `source` is forced stale, all active descendants rerun by default, even if
+every output is byte-identical:
 
 ```text
-analyze consumed SHA == rebuilt source SHA  → cached
-checksum consumed SHA == rebuilt source SHA → cached
-report                                      → cached
+source   → rerun (forced)
+analyze  → rerun (parent will run)
+checksum → rerun (parent will run)
+report   → rerun (parent will run)
 ```
 
-Process history alone does not invalidate consumers. If source bytes
-change, `analyze` and `checksum` become stale. `report` waits for `analyze`, then
-reruns only when the resulting `data` bytes disagree with its consumed hash.
+With `reuse_unchanged=True`, identical rebuilt source bytes instead preserve
+the `analyze` and `checksum` caches, and `report` remains cached too. If source
+bytes change, `analyze` and `checksum` become stale; `report` then reruns only
+when the resulting `data` bytes disagree with its consumed hash or its other
+cache checks require replay.
 
 If `analyze` fails, `report` becomes `BLOCKED` without submission and receives
 no execution event. With `keep_going=True`, independent `checksum` may still

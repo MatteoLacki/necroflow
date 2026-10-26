@@ -350,7 +350,11 @@ def test_iter_job_configs_rejects_missing_job_file(tmp_path):
         list(iter_job_configs(missing))
 
 
-def test_main_invalidate_parent_same_bytes_keeps_child_cached(tmp_path, factory_file):
+@pytest.mark.parametrize("reuse_unchanged", [False, True])
+def test_main_parent_rebuild_policy(
+    tmp_path, factory_file, reuse_unchanged, capsys, caplog
+):
+    """Run, dry-run, and explain agree on cascading rebuilds and opt-in byte reuse."""
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "hello"\n')
     outdir = tmp_path / "out"
@@ -360,11 +364,29 @@ def test_main_invalidate_parent_same_bytes_keeps_child_cached(tmp_path, factory_
     a_mtime = a_path.stat().st_mtime
     b_mtime = b_path.stat().st_mtime
 
+    options = ["--outdir", str(outdir), "--invalidate", "a"]
+    if reuse_unchanged:
+        options.append("--reuse-unchanged")
+    capsys.readouterr()
+    main(["explain", "--json", *options, str(job)])
+    calls = {call["rule"]: call for call in _json_stdout(capsys)["calls"]}
+    assert calls["make_a"]["will_run"] is True
+    assert calls["make_b"]["will_run"] is (None if reuse_unchanged else True)
+    assert calls["make_b"]["reasons"] == [{"kind": "parent_will_run"}]
+    with caplog.at_level(logging.INFO, logger="necroflow"):
+        main([*options, "--dry-run", str(job)])
+    assert f"{1 if reuse_unchanged else 2} would run" in caplog.text
+    assert a_path.stat().st_mtime == a_mtime
+    assert b_path.stat().st_mtime == b_mtime
+
     time.sleep(0.05)
-    main(["--outdir", str(outdir), "--invalidate", "a", str(job)])
+    main([*options, str(job)])
 
     assert a_path.stat().st_mtime > a_mtime
-    assert b_path.stat().st_mtime == b_mtime
+    if reuse_unchanged:
+        assert b_path.stat().st_mtime == b_mtime
+    else:
+        assert b_path.stat().st_mtime > b_mtime
 
 
 def test_main_invalidate_child_reruns_only_child(tmp_path, factory_file):
@@ -1121,6 +1143,52 @@ def test_main_grid_expansion_uses_short_names_by_default(tmp_path, factory_file)
     assert (long_dir / "job__v+world").is_dir()
 
 
+def test_main_rejects_duplicate_job_names_before_execution(tmp_path, factory_file):
+    """Jobs with the same filename stem must not overwrite each other's results."""
+    jobs = []
+    for name in ("first", "second"):
+        directory = tmp_path / name
+        directory.mkdir()
+        job = directory / "job.toml"
+        job.write_text(f'".pipeline" = "{factory_file}:factory"\nv = "{name}"\n')
+        jobs.append(job)
+    nodes_dir = tmp_path / "nodes"
+    results_dir = tmp_path / "results"
+
+    with pytest.raises(SystemExit, match="duplicate job name 'job'") as caught:
+        main(
+            [
+                "--nodes-dir",
+                str(nodes_dir),
+                "--results-dir",
+                str(results_dir),
+                *map(str, jobs),
+            ]
+        )
+
+    message = str(caught.value)
+    assert all(str(job) in message for job in jobs)
+    assert "Rename one job TOML file" in message
+    assert not nodes_dir.exists()
+    assert not results_dir.exists()
+
+
+def test_main_rejects_colliding_grid_names_before_execution(tmp_path, factory_file):
+    """Different grid values must not silently share a sanitized result name."""
+    job = tmp_path / "job.toml"
+    job.write_text(f'".pipeline" = "{factory_file}:factory"\nv__grid = ["a b", "ab"]\n')
+    outdir = tmp_path / "out"
+
+    with pytest.raises(SystemExit, match="duplicate job name 'job__ab'") as caught:
+        main(["--outdir", str(outdir), str(job)])
+
+    message = str(caught.value)
+    assert str(job) in message
+    assert "configuration 1" in message and "configuration 2" in message
+    assert "Change grid values or __label markers" in message
+    assert not outdir.exists()
+
+
 def test_main_missing_pipeline_key_errors(tmp_path):
     """A job TOML without a '.pipeline' key must raise SystemExit."""
     job = tmp_path / "job.toml"
@@ -1699,6 +1767,7 @@ def test_main_execution_summary_survives_autocleaned_intermediate(
 
 
 def test_main_keep_going_failure_writes_execution_summary(tmp_path):
+    """Failed calls stay in the execution report but never publish partial files."""
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
         from necroflow import Pipeline, NodeType, command, output
@@ -1738,6 +1807,75 @@ def test_main_keep_going_failure_writes_execution_summary(tmp_path):
     assert rules["fail_a"]["exit_code"] == 1
     assert rules["make_b"]["state"] == "up_to_date"
     assert rules["make_b"]["cached"] is False
+    assert not (results_dir / "job/a/a.txt").exists()
+    assert (results_dir / "job/b/b.txt").exists()
+    manifest = tomlkit.parse((results_dir / "job/manifest.toml").read_text())
+    assert set(manifest["outputs"]) == {"b"}
+
+
+def test_main_keep_going_removes_failed_and_blocked_prior_results(tmp_path):
+    """A failed rerun removes old visible results for failed and blocked calls.
+
+    Partial failed outputs and old blocked outputs can both exist in the node
+    store. Only successful calls and cache hits from this run may be published.
+    """
+    factory = tmp_path / "pipe.py"
+    factory.write_text(textwrap.dedent("""\
+        from necroflow import NodeType, command, Inputs, Outputs
+        class Text(NodeType): filename = "out.txt"
+        source = command(
+            "if test -e {marker}; then printf partial > {out}; exit 1; fi; printf source > {out}",
+            Inputs(marker=str), Outputs(out=Text), name="source",
+        )
+        consume = command("cat {src} > {out}", Inputs(src=Text), Outputs(out=Text), name="consume")
+        write = command("printf %s {value} > {out}", Inputs(value=str), Outputs(out=Text), name="write")
+        def factory(P, cfg):
+            P.failed = source(P, marker=cfg["marker"])
+            P.blocked = consume(P, P.failed)
+            P.cached = write(P, value="cached")
+            P.fresh = write(P, value="fresh")
+    """))
+    marker = tmp_path / "fail"
+    job = tmp_path / "job.toml"
+    job.write_text(
+        f'".pipeline" = "{factory}:factory"\n'
+        '".requests" = ["failed", "blocked", "cached", "fresh"]\n'
+        f'marker = "{marker}"\n'
+    )
+    nodes_dir = tmp_path / "nodes"
+    results_dir = tmp_path / "results"
+    options = ["--nodes-dir", str(nodes_dir), "--results-dir", str(results_dir), "-c1"]
+    main([*options, str(job)])
+    combo_dir = results_dir / "job"
+    assert (combo_dir / "failed/out.txt").exists()
+    assert (combo_dir / "blocked/out.txt").exists()
+
+    marker.touch()
+    with pytest.raises(ExceptionGroup):
+        main(
+            [
+                *options,
+                "--keep-going",
+                "--invalidate",
+                "failed",
+                "--invalidate",
+                "fresh",
+                str(job),
+            ]
+        )
+
+    assert _real_output(nodes_dir / "source", "out.txt").read_text() == "partial"
+    assert _real_output(nodes_dir / "consume", "out.txt").read_text() == "source"
+    assert not (combo_dir / "failed/out.txt").exists()
+    assert not (combo_dir / "blocked/out.txt").exists()
+    assert (combo_dir / "cached/out.txt").read_text() == "cached"
+    assert (combo_dir / "fresh/out.txt").read_text() == "fresh"
+    manifest = tomlkit.parse((combo_dir / "manifest.toml").read_text())
+    assert set(manifest["outputs"]) == {"cached", "fresh"}
+    summary = tomlkit.parse((combo_dir / "execution.toml").read_text())
+    assert [
+        event["cached"] for event in summary["rules"] if event["name"] == "write"
+    ] == [True, False]
 
 
 # -- Agent-oriented JSON, doctor, and explain -------------------------------

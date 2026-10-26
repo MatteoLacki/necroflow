@@ -342,21 +342,37 @@ def test_run_idempotent(tmp_path):
     assert P.b.path.stat().st_mtime == mtime_b
 
 
-def test_forced_parent_same_bytes_keeps_child_cached(tmp_path):
-    import time
+@pytest.mark.parametrize("reuse_unchanged", [False, True])
+@pytest.mark.parametrize("cause", ["forced", "missing", "compromised"])
+def test_parent_rebuild_propagates_unless_reuse_is_enabled(
+    tmp_path, reuse_unchanged, cause
+):
+    """Rebuilds cascade through descendants by default, preserving unrelated caches.
 
+    Identical bytes may preserve descendant caches only with explicit reuse,
+    regardless of why the parent had to run. The default is tested by omission.
+    """
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
+    P.c = R_make_c_from_b(P, P.b)
+    P.independent = R_make_a(P, x="independent")
     run_pipeline(P)
-    mtime_a = P.a.path.stat().st_mtime
-    mtime_b = P.b.path.stat().st_mtime
 
-    time.sleep(0.05)
-    run_pipeline(P, forced_stale_call_keys={P.a.rule_call.relative_path})
+    options = {"reuse_unchanged": True} if reuse_unchanged else {}
+    if cause == "forced":
+        options["forced_stale_call_keys"] = {P.a.rule_call.relative_path}
+    elif cause == "missing":
+        P.a.path.unlink()
+    else:
+        P.a.rule_call.state_file.write_text("running")
+    report = run_pipeline(P, **options)
 
-    assert P.a.path.stat().st_mtime > mtime_a
-    assert P.b.path.stat().st_mtime == mtime_b
+    assert report[P.a.rule_call.relative_path.as_posix()].cached is False
+    assert report[P.b.rule_call.relative_path.as_posix()].cached is reuse_unchanged
+    assert report[P.c.rule_call.relative_path.as_posix()].cached is reuse_unchanged
+    assert report[P.independent.rule_call.relative_path.as_posix()].cached is True
+    assert all(event.cached for event in run_pipeline(P).values())
 
 
 def test_replay_clears_declared_output_before_rerun(tmp_path):
@@ -379,24 +395,6 @@ def test_replay_clears_declared_output_before_rerun(tmp_path):
 
     assert report[P.a.rule_call.relative_path.as_posix()].state == "up_to_date"
     assert P.a.path.stat().st_mtime > mtime_a
-
-
-def test_compromised_parent_same_bytes_keeps_child_cached(tmp_path):
-    import time
-
-    P = Pipeline(DAG(tmp_path))
-    P.a = R_make_a(P, x="x")
-    P.b = R_make_b(P, P.a)
-    run_pipeline(P)
-    mtime_a = P.a.path.stat().st_mtime
-    mtime_b = P.b.path.stat().st_mtime
-    P.a.rule_call.state_file.write_text("running")
-
-    time.sleep(0.05)
-    run_pipeline(P)
-
-    assert P.a.path.stat().st_mtime > mtime_a
-    assert P.b.path.stat().st_mtime == mtime_b
 
 
 def test_conditional_pipeline(tmp_path):
@@ -845,6 +843,25 @@ def test_autoclean_deletes_intermediates(tmp_path):
     assert not P.a.path.exists()
 
 
+@pytest.mark.parametrize("reuse_unchanged", [False, True])
+def test_autoclean_removes_rebuilt_parent_after_consumer_settles(
+    tmp_path, reuse_unchanged
+):
+    """Autoclean removes a rebuilt intermediate whether its consumer runs or caches."""
+    P = Pipeline(DAG(tmp_path))
+    P.a = R_make_a(P, x="x")
+    P.b = R_make_b(P, P.a)
+    run_pipeline(P, autoclean=True, reuse_unchanged=reuse_unchanged)
+    assert not P.a.rule_call.workdir.exists()
+
+    report = run_pipeline(P, autoclean=True, reuse_unchanged=reuse_unchanged)
+
+    assert report[P.a.rule_call.relative_path.as_posix()].cached is False
+    assert report[P.b.rule_call.relative_path.as_posix()].cached is reuse_unchanged
+    assert not P.a.rule_call.workdir.exists()
+    assert P.b.path.exists()
+
+
 def test_autoclean_deletes_intermediate_workdir(tmp_path):
     """autoclean=True removes the whole rule-call directory, including {workdir} side files."""
     P = Pipeline(DAG(tmp_path))
@@ -1085,6 +1102,35 @@ def test_symlink_file_rule_links_to_source_content(tmp_path):
 
     assert P.raw.path.is_symlink()
     assert P.raw.path.read_text() == "hello\n"
+
+
+@pytest.mark.parametrize("relative_source", [False, True])
+def test_symlink_file_preserves_paths_with_spaces(
+    tmp_path, monkeypatch, relative_source
+):
+    """Symlink ingestion must preserve source paths through command substitution.
+
+    Quoting the realpath argument alone is insufficient: its output must also
+    remain a single argument to ln, for absolute and relative source paths.
+    """
+
+    class RawData(NodeType):
+        filename = "raw reads.txt"
+
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "input data" / "reads '1'.txt"
+    source.parent.mkdir()
+    source.write_text("reads\n")
+    path = source.relative_to(tmp_path) if relative_source else source
+    ingest = symlink_file_rule("ingest", RawData)
+    pipeline = Pipeline(DAG(tmp_path / "node store"))
+    pipeline.raw = ingest(pipeline, path=str(path))
+
+    run_pipeline(pipeline)
+
+    assert pipeline.raw.path.is_symlink()
+    assert pipeline.raw.path.resolve() == source
+    assert pipeline.raw.path.read_text() == "reads\n"
 
 
 def test_symlink_file_decorator_matches_factory_and_links(tmp_path):

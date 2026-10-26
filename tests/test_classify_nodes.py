@@ -93,7 +93,7 @@ def test_requesting_one_cooutput_activates_and_materializes_whole_call(tmp_path)
 
 
 def test_forced_parent_same_bytes_keeps_immutable_child_cached(tmp_path):
-    """Rebuilt parent with identical bytes does not invalidate consumer."""
+    """Opting into content reuse preserves consumers of identical rebuilt bytes."""
     first = _pipeline(tmp_path)
     run(first.dag)
     second = _pipeline(tmp_path)
@@ -101,6 +101,7 @@ def test_forced_parent_same_bytes_keeps_immutable_child_cached(tmp_path):
     report = run(
         second.dag,
         forced_stale_call_keys={second.source.rule_call.relative_path},
+        reuse_unchanged=True,
     )
 
     assert report[second.source.rule_call.relative_path.as_posix()].cached is False
@@ -108,7 +109,7 @@ def test_forced_parent_same_bytes_keeps_immutable_child_cached(tmp_path):
 
 
 def test_forced_parent_changed_bytes_replays_immutable_child(tmp_path):
-    """Consumed SHA disagreement invalidates consumer after parent settles."""
+    """Even with content reuse, changed rebuilt bytes invalidate the consumer."""
     first = _pipeline(tmp_path)
     run(first.dag)
     second = _pipeline(tmp_path)
@@ -123,6 +124,7 @@ def test_forced_parent_changed_bytes_replays_immutable_child(tmp_path):
         second.dag,
         forced_stale_call_keys={second.source.rule_call.relative_path},
         rule_call_runner=changed_runner,
+        reuse_unchanged=True,
     )
 
     assert report[second.result.rule_call.relative_path.as_posix()].cached is False

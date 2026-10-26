@@ -20,7 +20,7 @@ necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \
           [--invalidate LABEL ...] [--reap NAME ...] [--reap-file PATH] \
           [--validation PATH.py:FUNCTION ...] [--scheduler NAME|PATH.py:FUNCTION] [--shellpath PATH] \
           [--hasher NAME|PATH.py:CLASS] [--reporter PATH.py:FUNCTION] \
-          [--long-names] \
+          [--long-names] [--reuse-unchanged] \
           JOB.toml [JOB2.toml ...]
 ```
 
@@ -32,6 +32,7 @@ necroflow [--nodes-dir nodes] [--results-dir results] [-c N|all] \
 | `-c N` / `-call` | Thread cap — integer or `all` (default: all CPUs). |
 | `--constraint KEY=VALUE` | Additional resource cap. Repeatable. Accepts SI/binary suffixes. |
 | `--keep-going` / `-k` | Continue past failures; collect all errors at the end. |
+| `--reuse-unchanged` | Allow cached consumers to survive a parent rebuild when output bytes match. By default, rebuilding a call reruns all active descendants. Also supported by `explain` and dry runs. |
 | `--autoclean` | Delete orphan outputs and intermediate rule-call directories, including `{workdir}` side files. |
 | `--dry-run` / `-n` | Show what would run without executing. |
 | `--invalidate LABEL` | Force an already-requested pipeline label to rerun. Repeatable. |
@@ -183,7 +184,7 @@ necroflow explain --node counts job.toml
 necroflow explain --json job.toml
 ```
 
-`explain` reports requested RuleCalls and ancestors in FIFO registration order, nesting all declared output Nodes under each call. It shows predicted workdir, state, command, resources, tri-state `will_run`, and reasons such as `output_missing`, `up_to_date`, `parent_will_run`, `consumed_hash_missing`, `parent_content_changed`, `parent_hash_unchecked`, `parent_undecided`, `forced_invalidation`, `invalidator_changed`, and `compromised_prior_state`. Descendants of calls that would run remain unknown until real parent bytes exist.
+`explain` reports requested RuleCalls and ancestors in FIFO registration order, nesting all declared output Nodes under each call. It shows predicted workdir, state, command, resources, tri-state `will_run`, and reasons such as `output_missing`, `up_to_date`, `parent_will_run`, `consumed_hash_missing`, `parent_content_changed`, `parent_hash_unchecked`, `parent_undecided`, `forced_invalidation`, `invalidator_changed`, and `compromised_prior_state`. Descendants of calls that would run are also marked to run by default. With `--reuse-unchanged`, those descendants remain unknown until real parent bytes exist.
 
 `explain` never reads whole outputs and never writes the node store. When a parent was edited after its hash was stored, its consumer is reported as `state = "undecided"` with reason `parent_hash_unchecked`, and descendants get reason `parent_undecided`. Run `necroflow run --dry-run` to settle them: it hashes the parent and stores the digest.
 

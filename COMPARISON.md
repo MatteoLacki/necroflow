@@ -1,5 +1,7 @@
 # Necroflow vs other workflow systems
 
+For Pydra, see the separate [feature comparison and runnable port](COMPARISON_PYDRA.md).
+
 Comparison emphasises developer ergonomics. Necroflow is designed as a Python library for local, exploratory bioinformatics workflow development rather than as a cluster/cloud platform.
 
 | Axis | Necroflow | Snakemake | Nextflow | Luigi | CWL/WDL | Prefect/Airflow |

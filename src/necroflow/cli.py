@@ -246,6 +246,7 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
 
     dag = DAG(nodes_dir)
     combos: list[_Combo] = []
+    job_origins: dict[str, tuple[Path, int]] = {}
     forced_stale_call_keys: set[Path] = set()
     shellpath = _normalize_arg_shellpath(args)
 
@@ -257,7 +258,23 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
                 require_pipeline=True,
                 short_names=not getattr(args, "long_names", False),
             )
-            for job_config in job_configs:
+            for index, job_config in enumerate(job_configs, start=1):
+                previous = job_origins.get(job_config.label)
+                if previous is not None:
+                    previous_path, previous_index = previous
+                    suggestion = (
+                        "Change grid values or __label markers to give each "
+                        "configuration a unique job name."
+                        if previous_path == job_path
+                        else "Rename one job TOML file to give each job a unique name."
+                    )
+                    raise ValueError(
+                        f"duplicate job name {job_config.label!r}: "
+                        f"{previous_path} (configuration {previous_index}) and "
+                        f"{job_path} (configuration {index}) would share a results "
+                        f"directory. {suggestion}"
+                    )
+                job_origins[job_config.label] = (job_path, index)
                 if not job_config.pipeline_spec:
                     raise SystemExit(
                         f"error: job TOML {job_path} has no '.pipeline' key"
@@ -463,6 +480,7 @@ def _explain_payload(args) -> dict:
         hasher=_load_hasher(args.hasher),
         hash_threads=thread_cap,
         hash_untrusted_parents=False,
+        reuse_unchanged=args.reuse_unchanged,
     )
     active = plan.active
     active_keys = plan.active_keys
@@ -644,8 +662,27 @@ def _run(args) -> None:
 
     def materialize(report):
         # Runs after every call has finished, so it may use the whole cap.
+        successful_calls = {
+            key for key, event in report.items() if event.state == "up_to_date"
+        }
+        successful_combos = [
+            (
+                label,
+                pipeline,
+                [
+                    binding
+                    for binding in request
+                    if binding.node.rule_call.relative_path.as_posix()
+                    in successful_calls
+                ],
+            )
+            for label, pipeline, request in combos
+        ]
         _materialize_results(
-            results_dir, combos, hasher=hasher, threads=resource_caps["threads"]
+            results_dir,
+            successful_combos,
+            hasher=hasher,
+            threads=resource_caps["threads"],
         )
         invocation = {
             "wall_seconds": time.perf_counter() - started,
@@ -664,6 +701,7 @@ def _run(args) -> None:
         dry_run=args.dry_run,
         forced_stale_call_keys=forced_stale_call_keys,
         on_complete=None if args.dry_run else materialize,
+        reuse_unchanged=args.reuse_unchanged,
     )
 
 
@@ -1062,6 +1100,12 @@ def _add_run_options(parser) -> None:
         "-k",
         action="store_true",
         help="Continue past failures and collect all errors at the end.",
+    )
+    parser.add_argument(
+        "--reuse-unchanged",
+        action="store_true",
+        help="Reuse cached consumers when rebuilt parents produce identical bytes. "
+        "By default, rebuilding a call reruns all active descendants.",
     )
     parser.add_argument(
         "--autoclean",
