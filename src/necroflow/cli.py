@@ -46,9 +46,9 @@ from necroflow import (
     DAG,
     Node,
     Pipeline,
-    RuleCallState,
     fifo_scheduler,
 )
+from necroflow import logger as _logger
 from necroflow.config import iter_job_configs, load_callable
 from necroflow.dag import parse_resource
 from necroflow.fs import _check_path_limits, _normalize_shellpath
@@ -60,6 +60,8 @@ from necroflow.hashers import (
     tagged_hash,
 )
 from necroflow.planning import plan_execution
+from necroflow.rule_call import ancestor_call_keys
+from necroflow.rules import default_thread_cap
 from necroflow.gc import collect
 
 
@@ -244,6 +246,7 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
 
     dag = DAG(nodes_dir)
     combos: list[_Combo] = []
+    job_origins: dict[str, tuple[Path, int]] = {}
     forced_stale_call_keys: set[Path] = set()
     shellpath = _normalize_arg_shellpath(args)
 
@@ -255,7 +258,23 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
                 require_pipeline=True,
                 short_names=not getattr(args, "long_names", False),
             )
-            for job_config in job_configs:
+            for index, job_config in enumerate(job_configs, start=1):
+                previous = job_origins.get(job_config.label)
+                if previous is not None:
+                    previous_path, previous_index = previous
+                    suggestion = (
+                        "Change grid values or __label markers to give each "
+                        "configuration a unique job name."
+                        if previous_path == job_path
+                        else "Rename one job TOML file to give each job a unique name."
+                    )
+                    raise ValueError(
+                        f"duplicate job name {job_config.label!r}: "
+                        f"{previous_path} (configuration {previous_index}) and "
+                        f"{job_path} (configuration {index}) would share a results "
+                        f"directory. {suggestion}"
+                    )
+                job_origins[job_config.label] = (job_path, index)
                 if not job_config.pipeline_spec:
                     raise SystemExit(
                         f"error: job TOML {job_path} has no '.pipeline' key"
@@ -297,7 +316,7 @@ def _parse_resource_caps(args) -> dict[str, int]:
     """Parse core and named constraint options into scheduler capacities."""
     cores = args.cores.strip()
     resource_caps = {
-        "threads": os.cpu_count() or 1 if cores.lower() == "all" else int(cores)
+        "threads": default_thread_cap() if cores.lower() == "all" else int(cores)
     }
     for kv in args.constraints:
         if "=" not in kv:
@@ -345,8 +364,11 @@ def _result_relative_path(node, label: str | None = None) -> Path:
     return Path(_node_display_label(node, label)) / node.path.name
 
 
-def _node_json(node) -> dict:
-    """Serialize one node and its execution metadata for CLI JSON."""
+def _node_json(node, state: str | None = None) -> dict:
+    """Serialize one node and its execution metadata for CLI JSON.
+
+    `state` is the owning call's planned verdict value, when one is known.
+    """
     data = {
         "key": node.relative_path.as_posix(),
         "relative_path": node.relative_path.as_posix(),
@@ -355,13 +377,9 @@ def _node_json(node) -> dict:
         "output_name": node.output_name,
         "rule": node.rule.__name__ if node.rule else "unknown",
         "node_type": node.node_type.__name__ if node.node_type else None,
-        "state": (
-            node.rule_call.state.value
-            if isinstance(node.rule_call.state, RuleCallState)
-            else node.rule_call.state
-        ),
+        "state": state,
         "path": str(node.path) if node.path is not None else None,
-        "resources": dict(getattr(node.rule, "resources", {})) if node.rule else {},
+        "resources": dict(node.rule_call.resources),
         "constraints": dict(getattr(node.rule, "constraints", {})) if node.rule else {},
         "config": dict(node.config),
     }
@@ -453,8 +471,7 @@ def _explain_payload(args) -> dict:
         args, nodes_dir=nodes_dir
     )
     thread_cap = _parse_resource_caps(args)["threads"]
-    for call in dag.calls.values():
-        call.bind_thread_cap(thread_cap)
+    dag.bind_thread_cap(thread_cap)
     # Explain holds no lock and may run beside a real run: it never reads
     # whole outputs, so untrusted stored hashes leave consumers undecided.
     plan = plan_execution(
@@ -463,6 +480,7 @@ def _explain_payload(args) -> dict:
         hasher=_load_hasher(args.hasher),
         hash_threads=thread_cap,
         hash_untrusted_parents=False,
+        reuse_unchanged=args.reuse_unchanged,
     )
     active = plan.active
     active_keys = plan.active_keys
@@ -483,26 +501,21 @@ def _explain_payload(args) -> dict:
             command = call.resolve()
         except Exception as exc:
             command = f"<error: {exc}>"
-        state = call.state.value if call.state is not None else None
-        if call.state in {RuleCallState.MISSING, RuleCallState.STALE}:
-            will_run = True
-        elif call.state == RuleCallState.UP_TO_DATE:
-            will_run = False
-        else:
-            will_run = None
+        verdict = plan.verdicts.get(call.relative_path)
+        state = None if verdict is None else verdict.value
         calls.append(
             {
                 "key": call.relative_path.as_posix(),
                 "rule": call.rule.__name__,
                 "state": state,
-                "will_run": will_run,
+                "will_run": None if verdict is None else verdict.will_run,
                 "workdir": str(call.workdir),
                 "resources": dict(call.resources),
                 "constraints": dict(call.rule.constraints),
                 "config": dict(call.config),
                 "command": command,
                 "reasons": plan.reasons[call.relative_path],
-                "outputs": [_node_json(output) for output in call.outputs],
+                "outputs": [_node_json(output, state) for output in call.outputs],
             }
         )
     return {
@@ -634,6 +647,7 @@ def _doctor_payload(args) -> dict:
 
 def _run(args) -> None:
     """Build, execute, and materialize all jobs requested by the run command."""
+    _logger.setup()
     nodes_dir, results_dir = _resolve_roots(args)
     reporter = _load_reporter(args.reporter) if args.reporter else None
     dag, combos, forced_stale_call_keys = _build_dag_from_jobs(
@@ -648,8 +662,27 @@ def _run(args) -> None:
 
     def materialize(report):
         # Runs after every call has finished, so it may use the whole cap.
+        successful_calls = {
+            key for key, event in report.items() if event.state == "up_to_date"
+        }
+        successful_combos = [
+            (
+                label,
+                pipeline,
+                [
+                    binding
+                    for binding in request
+                    if binding.node.rule_call.relative_path.as_posix()
+                    in successful_calls
+                ],
+            )
+            for label, pipeline, request in combos
+        ]
         _materialize_results(
-            results_dir, combos, hasher=hasher, threads=resource_caps["threads"]
+            results_dir,
+            successful_combos,
+            hasher=hasher,
+            threads=resource_caps["threads"],
         )
         invocation = {
             "wall_seconds": time.perf_counter() - started,
@@ -668,6 +701,7 @@ def _run(args) -> None:
         dry_run=args.dry_run,
         forced_stale_call_keys=forced_stale_call_keys,
         on_complete=None if args.dry_run else materialize,
+        reuse_unchanged=args.reuse_unchanged,
     )
 
 
@@ -799,19 +833,6 @@ def _init(args) -> None:
     print(f"created {dest}")
 
 
-def _requested_with_ancestors(request: list[_RequestedOutput]) -> list:
-    """Return requested nodes plus their transitive ancestors without duplicates."""
-    seen: dict[Path, object] = {}
-    stack = [binding.node for binding in request]
-    while stack:
-        node = stack.pop()
-        if node.relative_path in seen:
-            continue
-        seen[node.relative_path] = node
-        stack.extend(node.parents)
-    return list(seen.values())
-
-
 def _covered_seconds(intervals: list[tuple[datetime, datetime]]) -> float:
     """Seconds covered by at least one interval; overlaps count once."""
     covered = 0.0
@@ -842,9 +863,7 @@ def _write_execution_summaries(
     for label, pipeline, request in combos:
         data = tomlkit.document()
         rules_array = tomlkit.aot()
-        wanted = {
-            node.rule_call.relative_path for node in _requested_with_ancestors(request)
-        }
+        wanted = ancestor_call_keys(binding.node.rule_call for binding in request)
         calls = [call for key, call in pipeline.dag.calls.items() if key in wanted]
         cumulative_duration = 0.0
         command_intervals = []
@@ -852,28 +871,15 @@ def _write_execution_summaries(
             event = report.get(call.relative_path.as_posix())
             if event is None:
                 continue
-            values = event.to_toml_dict()
-            for field_name in (
-                "key",
-                "rule",
-                "output_node_keys",
-                "output_paths",
-            ):
-                values.pop(field_name, None)
             values = {
-                "key": call.relative_path.as_posix(),
+                "key": event.call_key,
                 "name": event.rule,
-                **values,
+                **event.status_fields(),
             }
-            duration = values.get("duration_seconds")
-            if duration is not None:
-                cumulative_duration += duration
-                command_intervals.append(
-                    (
-                        datetime.fromisoformat(event.started_at),
-                        datetime.fromisoformat(event.finished_at),
-                    )
-                )
+            interval = event.interval()
+            if interval is not None:
+                cumulative_duration += event.duration_seconds()
+                command_intervals.append(interval)
             table = tomlkit.table()
             for key, value in values.items():
                 table[key] = value
@@ -1094,6 +1100,12 @@ def _add_run_options(parser) -> None:
         "-k",
         action="store_true",
         help="Continue past failures and collect all errors at the end.",
+    )
+    parser.add_argument(
+        "--reuse-unchanged",
+        action="store_true",
+        help="Reuse cached consumers when rebuilt parents produce identical bytes. "
+        "By default, rebuilding a call reruns all active descendants.",
     )
     parser.add_argument(
         "--autoclean",

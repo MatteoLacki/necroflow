@@ -180,6 +180,74 @@ def test_node_relative_path_contains_rule_and_filename():
     assert txt.relative_path.name == "out.txt"
 
 
+def test_nodes_work_in_sets_and_as_dict_keys(tmp_path):
+    """Equivalent invocations deduplicate as Nodes; distinct configs stay separate."""
+    pipeline = Pipeline(DAG(tmp_path))
+    first = R_make_txt(pipeline, word="hello")
+    repeated = R_make_txt(pipeline, word="hello")
+    other = R_make_txt(pipeline, word="world")
+
+    assert set([first, repeated, other]) == {first, other}
+    values = {first: "hello", other: "world"}
+    assert values[repeated] == "hello"
+    assert values[other] == "world"
+
+
+@pytest.mark.parametrize("same_root", [True, False])
+def test_node_equality_uses_relative_path_across_dags(tmp_path, same_root):
+    """Canonical output identity ignores owning DAG and node-store root."""
+    first = R_make_txt(Pipeline(DAG(tmp_path / "first")), word="same")
+    second_root = tmp_path / ("first" if same_root else "second")
+    second = R_make_txt(Pipeline(DAG(second_root)), word="same")
+
+    assert first is not second
+    assert first == second
+    assert hash(first) == hash(second)
+    assert len(set([first, second])) == 1
+    assert {first: "cached"}[second] == "cached"
+
+
+def test_node_sets_preserve_cooutputs_with_shared_provenance(tmp_path):
+    """Sibling outputs sharing a provenance hash remain distinct set members."""
+    pipeline = Pipeline(DAG(tmp_path))
+    txt = R_make_txt(pipeline, word="hello")
+    upper, log = R_to_upper(pipeline, txt, n=1)
+
+    assert upper.provenance_hash == log.provenance_hash
+    assert upper != log
+    assert len(set([upper, log, upper])) == 2
+    assert {upper: "upper", log: "log"}[log] == "log"
+
+
+def test_node_hash_and_equality_ignore_mutable_metadata(tmp_path):
+    """Labels, info, and command realization cannot invalidate a Node collection."""
+    pipeline = Pipeline(DAG(tmp_path / "first"))
+    node = R_make_txt(pipeline, word="hello")
+    equivalent = R_make_txt(Pipeline(DAG(tmp_path / "second")), word="hello")
+    nodes = {node}
+    values = {node: "kept"}
+    original_hash = hash(node)
+
+    pipeline.result = node
+    node.info = "Updated description"
+    node.rule_call.resolve()
+    pipeline.finish()
+
+    assert hash(node) == original_hash
+    assert node in nodes
+    assert equivalent in nodes
+    assert values[equivalent] == "kept"
+
+
+def test_node_equality_defers_for_unrelated_types(tmp_path):
+    """A Node's path identifies outputs without equating Nodes with raw paths."""
+    node = R_make_txt(Pipeline(DAG(tmp_path)), word="hello")
+
+    assert node.__eq__(node.relative_path) is NotImplemented
+    assert node.__eq__(None) is NotImplemented
+    assert node != node.relative_path
+
+
 def test_output_filename_must_be_one_safe_relative_component(tmp_path):
     class Escaping(NodeType):
         filename = "../escape.txt"

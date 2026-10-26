@@ -16,6 +16,10 @@ Compact overview of the current software surface, see [features.txt](features.tx
 
 See [COMPARISON.md](COMPARISON.md) for a detailed comparison with Snakemake, Nextflow, Luigi, CWL/WDL, and Prefect/Airflow across 20 axes.
 
+See [COMPARISON_PYDRA.md](COMPARISON_PYDRA.md) for a feature comparison with Pydra
+and a [runnable Pydra port](examples/pydra_canonical/) of the canonical test pipeline
+(`make pydra-example`, `make pydra-test`).
+
 ## Define a pipeline
 
 A command-line run points at a Python workflow. Rules describe typed outputs and shell commands; the workflow wires rule calls into a pipeline.

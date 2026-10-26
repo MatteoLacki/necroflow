@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from necroflow import Pipeline, DAG, NodeType, RuleCallState
+from necroflow import Pipeline, DAG, NodeType
 
 
 class A(NodeType):
@@ -50,31 +50,43 @@ def test_fresh_state_not_compromised(tmp_path):
     assert not _call(tmp_path).is_compromised
 
 
-def test_mark_running_is_compromised(tmp_path):
+def test_running_state_is_compromised(tmp_path):
     n = _call(tmp_path)
-    n.mark_running()
+    n.write_state("running")
     assert n.is_compromised
 
 
-def test_mark_done_up_to_date_not_compromised(tmp_path):
+def test_up_to_date_state_not_compromised(tmp_path):
     n = _call(tmp_path)
-    n.mark_running()
-    n.mark_done("up_to_date")
+    n.write_state("running")
+    n.write_state("up_to_date")
     assert not n.is_compromised
 
 
-def test_mark_done_failed_is_compromised(tmp_path):
+def test_failed_state_is_compromised(tmp_path):
     n = _call(tmp_path)
-    n.mark_running()
-    n.mark_done("failed")
+    n.write_state("running")
+    n.write_state("failed")
     assert n.is_compromised
 
 
-def test_mark_done_interrupted_is_compromised(tmp_path):
+def test_interrupted_state_is_compromised(tmp_path):
     n = _call(tmp_path)
-    n.mark_running()
-    n.mark_done("interrupted")
+    n.write_state("running")
+    n.write_state("interrupted")
     assert n.is_compromised
+
+
+def test_write_state_rejects_unknown_values(tmp_path):
+    """Only the four documented run states may be persisted.
+
+    Any other value would be read back as compromised anyway; rejecting it at
+    write time keeps a typo from silently forcing a rerun on every invocation.
+    """
+    n = _call(tmp_path)
+    with pytest.raises(ValueError, match="unknown RuleCall state"):
+        n.write_state("done")
+    assert not n.state_file.exists()
 
 
 # --- integration: successful run writes up_to_date ---
@@ -134,7 +146,7 @@ def test_failed_node_state(tmp_path):
         dag.run()
 
     c_node = next(n for n in dag.nodes if n.rule.__name__ == "fail_c")
-    assert c_node.rule_call.state == RuleCallState.FAILED
+    assert c_node.rule_call.state_file.read_text() == "failed"
     assert c_node.rule_call.is_compromised
 
 
@@ -151,7 +163,7 @@ def test_interrupted_node_state(tmp_path):
         dag.run()
 
     c_node = next(n for n in dag.nodes if n.rule.__name__ == "signal_c")
-    assert c_node.rule_call.state == RuleCallState.INTERRUPTED
+    assert c_node.rule_call.state_file.read_text() == "interrupted"
     assert c_node.rule_call.is_compromised
 
 

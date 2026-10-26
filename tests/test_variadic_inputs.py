@@ -12,7 +12,6 @@ from necroflow import (
     DAG,
     Inputs,
     Many,
-    RuleCallState,
     NodeType,
     output,
     Outputs,

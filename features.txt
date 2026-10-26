@@ -10,7 +10,8 @@ necroflow
 │   ├── Node typed output/edge/result selectors
 │   ├── RuleCall atomic identity, cache, state, execution, report, cleanup
 │   ├── Module-level rule declarations
-│   │   ├── shell command API: @command(...)
+│   │   ├── shell command factory: command(cmd, Inputs(...), Outputs(...), name=...)
+│   │   ├── decorator sugar: @command(...)
 │   │   ├── built-in decorators: @text_file / @symlink_file
 │   │   ├── explicit built-in factories: text_file_rule / symlink_file_rule
 │   │   ├── lint-clean name = output(NodeType) declarations
@@ -22,17 +23,21 @@ necroflow
 │   │   ├── multi-output rules
 │   │   ├── atomic co-output caching and execution per RuleCall
 │   │   ├── Constraints: threads, ram, custom resources
-│   │   ├── repeat=N subprocess retry attempts
-│   │   └── built-in text_file rules for generated config files
+│   │   ├── threads="all" reserves the full execution thread cap
+│   │   ├── repeat=N permits up to N subprocess attempts, including the first
+│   │   ├── built-in text_file rules for generated config files
+│   │   └── built-in symlink_file rules for content-tracked external inputs
 │   ├── Pipeline
 │   │   ├── references a shared DAG and owns fingerprint/shell compile policy
-│   │   ├── explicit first argument to every rule call
-│   │   ├── attribute/item node registration in one label namespace
+│   │   ├── @workflow supplies scoped Pipeline ownership for rule(...) calls
+│   │   ├── explicit rule(P, ...) supported anywhere; overrides the scoped owner
+│   │   ├── nested workflows restore context; ordinary helpers inherit it
+│   │   ├── explicit attribute/item node registration in one label namespace
 │   │   ├── canonical relative POSIX path labels for nested visible results
 │   │   ├── early label byte-limit and file/directory conflict rejection
 │   │   ├── local aliases for manifests and requests
 │   │   ├── prefixed shared-state views via P.subpipeline(...)
-│   │   ├── explicit P.finish() construction boundary
+│   │   ├── root P.finish() freezes construction; CLI calls it after workflow return
 │   │   └── conditional Python pipeline construction
 │   └── DAG
 │       ├── owns the node store and canonical RuleCall registry
@@ -60,7 +65,9 @@ necroflow
 │       └── container_policy in provenance of container-capable rules
 │
 ├── Caching and paths
-│   ├── content-addressed node paths
+│   ├── rebuilds cascade through active descendants by default
+│   ├── --reuse-unchanged / reuse_unchanged=True opts into content-based reuse after rebuilds
+│   ├── lineage-addressed node paths
 │   ├── v4 recipe and provenance hashes compiled during rule calls
 │   ├── full 64-character provenance path component
 │   ├── filesystem cache as source of truth
@@ -69,7 +76,7 @@ necroflow
 │   ├── path length validation
 │   ├── destination-filesystem result-path preflight before copying
 │   ├── output content hashes with mtime-gated stored-hash fast path
-│   ├── consumed immutable-parent content-hash metadata (pluggable hasher, BLAKE3 default)
+│   ├── consumed parent content-hash metadata (BLAKE3 default, SHA-256, or custom hasher)
 │   ├── invalidator tokens on NodeType
 │   └── .rip metadata directories
 │
@@ -84,18 +91,21 @@ necroflow
 │   ├── FIFO scheduler default using RuleCall insertion order
 │   ├── custom schedulers
 │   │   └── Python callables can implement resource-aware ordering policies
-│   ├── dry-run mode
+│   ├── per-run cache verdicts and runtime phases
+│   ├── dry-run classification with parent-hash refresh
 │   ├── keep-going failure mode
-│   ├── failed/interrupted state tracking
+│   ├── fail-fast drains running calls and records them
+│   ├── failed/interrupted state tracking, blocked descendants
 │   ├── compromised-output reruns
 │   ├── missing-output detection
 │   ├── job logs
 │   ├── execution reports
 │   │   ├── .rip/run.toml RuleCall-local runtime stats
 │   │   ├── results/<job>/execution.toml per-run summaries
+│   │   ├── custom per-job summary callbacks via --reporter path.py:function
 │   │   └── duration and output-size accounting
 │   ├── output/provenance graph writing
-│   ├── file locking per output root
+│   ├── exclusive node-store lock through execution and CLI result publication
 │   └── autoclean
 │       ├── orphan cleanup
 │       └── intermediate cleanup
@@ -115,6 +125,9 @@ necroflow
 │   │   └── --json requested output paths
 │   ├── provenance subcommand
 │   │   └── --json metadata payload
+│   ├── gc subcommand
+│   │   ├── --gc-rules-script declares the preserved Rule collection
+│   │   └── undeclared rule names preserved unless --prune-unknown-rules is set
 │   ├── doctor subcommand
 │   │   └── stable NF_* preflight issue codes
 │   ├── explain subcommand
@@ -124,11 +137,14 @@ necroflow
 │   │   ├── --results-dir
 │   │   └── --outdir compatibility alias
 │   ├── execution options
-│   │   ├── -c / --cores
+│   │   ├── -c N / -c all (default: all CPUs)
 │   │   ├── --constraint
 │   │   ├── --keep-going
+│   │   ├── --reuse-unchanged
 │   │   ├── --autoclean
 │   │   ├── --dry-run
+│   │   ├── --hasher blake3|sha256|path.py:class
+│   │   ├── --reporter path.py:function
 │   │   └── --shellpath
 │   ├── invalidation options
 │   │   ├── --invalidate
@@ -136,18 +152,20 @@ necroflow
 │   │   └── --reap-file
 │   ├── config validation option
 │   │   └── --validation path.py:function
-│   └── companion config tool
-│       └── necroflow-config-set for TOML/JSON open-update-save steps
+│   ├── --long-names for full parameter paths in generated result labels
+│   └── companion tools
+│       ├── necroflow-config-set for TOML/JSON open-update-save steps
+│       └── necroflow-count-loc for source line counts
 │
 ├── Job TOML
 │   ├── .pipeline workflow reference
 │   ├── CLI-supplied Pipeline via build_workflow(P, config) -> None
-│   ├── @workflow scoped rule calls; explicit rule(P, ...) also supported
-│   ├── .requests target selection
+│   ├── .requests target selection; defaults to all labelled sinks
 │   ├── metadata-stripped config passed to workflow
 │   ├── __grid expansion
 │   ├── multiple job files
-│   └── stable combo labels
+│   ├── short deterministic combo labels; --long-names includes full parameter paths
+│   └── duplicate job and expanded result-label rejection
 │
 ├── Validation
 │   ├── repeatable CLI validators
@@ -191,9 +209,11 @@ necroflow
 │   ├── pyproject setuptools package
 │   ├── console script: necroflow
 │   ├── console script: necroflow-config-set
+│   ├── console script: necroflow-count-loc
+│   ├── console script: necroflow-mcp (requires mcp extra)
 │   ├── dynamic version from necroflow.__version__
 │   ├── package data for canonical templates
-│   └── optional validation/dev extras
+│   └── optional validation/mcp/dev extras
 │
 └── Not implemented
     └── cluster / cloud backends

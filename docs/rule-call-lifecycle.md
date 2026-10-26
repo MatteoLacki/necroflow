@@ -104,6 +104,11 @@ build_workflow(P, config)
 P.finish()
 ```
 
+Before compiling each configuration, the CLI checks that its job name has not
+already appeared in this invocation. Duplicate names from different job files or
+grid combinations fail before execution, with both source paths and configuration
+numbers in the error.
+
 The DAG owns canonical rule calls, output Nodes, required outputs, and
 execution. One root Pipeline owns the finished state and qualified labels for
 one workflow evaluation. `P.subpipeline(prefix)` creates a lightweight view over
@@ -385,6 +390,12 @@ node.path
 
 are final.
 
+Nodes support `set(nodes)` and dictionary keys. Equality and Python hashing use
+`node.relative_path`: rule name, provenance hash, and output filename. Equivalent
+outputs compare equal across DAGs and node-store roots; co-outputs remain distinct
+despite sharing a provenance hash. Labels, descriptions, and runtime state do not
+affect equality or hashing. Address fields must not be reassigned after creation.
+
 ## 9. Assignment creates Pipeline-local labels
 
 Attribute and item assignment share one namespace:
@@ -476,19 +487,26 @@ controls which canonical subgraphs execute.
 
 Planning begins inside `dag.run()` under the node-store lock. It converts requested Nodes to owning RuleCalls, follows `parent_calls`, and preserves insertion order from `DAG.calls`. Requesting one co-output activates the complete RuleCall; only later CLI result copying remains Node-selective.
 
-`planning.plan_execution()` partitions active and orphan RuleCalls. It classifies only calls whose parents are already up to date. Descendants of parents that will run remain unclassified until those parents settle.
+`planning.plan_execution()` partitions active and orphan RuleCalls, then walks the active calls once in registration order, which is topological. By default, rebuilding a call also marks every active descendant for execution, with reason `parent_will_run`. With `reuse_unchanged=True`, those descendants instead stay open until parents finish and their bytes can be checked. Verdicts and reasons live in the returned `ExecutionPlan`, never on the RuleCall. The reuse policy is passed by the executor and by CLI/MCP explain; it does not enter fingerprints.
 
 ## 12. Commands remain lazy
 
-Missing and stale RuleCalls become ready after every parent call is up to date. Default FIFO ordering follows canonical RuleCall registration. Custom schedulers receive ready calls, remaining calls, and available resource capacity. Executor retains dependency gates, resource admission, submission, retries, and state transitions.
+The executor's `Execution` object owns each active call's run `Phase`. A call whose parents are all done is settled: an up-to-date verdict makes it done at once, a missing or stale one makes it ready. Default FIFO ordering follows canonical RuleCall registration. Custom schedulers receive ready calls, remaining (waiting or ready) calls, and available resource capacity. Executor retains dependency gates, resource admission, submission, retries, and state transitions.
 
-One submission runs one complete RuleCall. Before each attempt, the executor clears the call's declared outputs (`RuleCall.clear_outputs()`), so a replay into an existing identity-addressed directory never finds a prior output already there; other files under `{workdir}` are left alone. The default runner delegates to `RuleCall.run(log_path)`; callable command realization happens there and is cached on the canonical call. Realization also strips a leading `{name}:` Docker prefix; `RuleCall.container` then returns the selected `Docker` value and `RuleCall.run` launches it with `docker run`. The runner must produce every declared output.
+One submission runs one complete RuleCall. Before each attempt, the executor clears the call's declared outputs (`RuleCall.clear_outputs()`), so a replay into an existing identity-addressed directory never finds a prior output already there; other files under `{workdir}` are left alone. The default runner is `runners.run_call(call, log_path)`; callable command realization happens there and is cached on the canonical call. Realization also strips a leading `{name}:` Docker prefix; `RuleCall.container` then returns the selected `Docker` value and `run_call` launches it with `docker run`. `runners.attempt` wraps the runner with retries and timestamps and returns an `Outcome`. The runner must produce every declared output.
 
 ## 13. Materialization commits cache state
 
-After provisional success, executor validates all co-outputs and writes call-level state, report, dependency metadata, output hashes, invalidator tokens, run stats, and ancestor graph. Each immutable parent metadata entry stores the tagged content hash consumed by this call.
+After provisional success, executor validates all co-outputs and writes dependency metadata, output hashes, invalidator tokens, ancestor graph, report, run stats, and finally call-level state. Each parent metadata entry stores the tagged content hash consumed by this call.
 
-Child classification happens after parent settlement. A rebuilt immutable parent with identical bytes leaves the child cached; changed bytes replay it. A rebuilt mutable parent always replays consumers, while external content-only edits to an unexecuted mutable parent are ignored.
+Children become eligible only after all parents settle successfully. Rebuilt parents force every active descendant to rerun by default, even if the bytes match. With `reuse_unchanged=True` (`--reuse-unchanged` on the CLI), deferred child classification instead preserves valid caches for identical rebuilt bytes. Autoclean considers parents for deletion after either execution or a cache hit, once all their consumers are done. A failed call blocks its descendants, which are never submitted.
+
+CLI result copying selects requested outputs whose owning calls are marked
+`up_to_date` in this invocation's report, including cache hits. During a
+keep-going run, partial outputs from failed or interrupted calls and old outputs
+from blocked calls are excluded from results and their manifest. Previously
+managed copies of those excluded outputs are removed. Execution summaries still
+include the failure events.
 
 Identity, paths, interning, and RuleCall order are eager. Cache classification, command realization, materialization, and result copying happen after construction.
 

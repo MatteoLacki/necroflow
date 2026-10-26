@@ -10,16 +10,20 @@ from necroflow import (
 )
 
 import hashlib
+import logging
 import shutil
 import subprocess
 import fcntl
+import threading
 import time
 from pathlib import Path
 
 import pytest
 import tomlkit
-from necroflow import RuleCallState, NodeType, Pipeline, DAG, run, output
+from necroflow import NodeType, Pipeline, DAG, Verdict, run, output
 from necroflow import fifo_scheduler, output
+from necroflow.executor import ResourcePool
+from necroflow.planning import plan_execution
 
 
 def run_pipeline(pipeline, **kwargs):
@@ -219,7 +223,7 @@ def test_repeat_raises_last_command_failure_after_limit(tmp_path):
 
     assert caught.value.returncode == 7
     assert attempts == 3
-    assert P.out.rule_call.state == RuleCallState.FAILED
+    assert P.out.rule_call.state_file.read_text() == "failed"
 
 
 def test_run_handles_outdir_with_spaces(tmp_path):
@@ -338,21 +342,37 @@ def test_run_idempotent(tmp_path):
     assert P.b.path.stat().st_mtime == mtime_b
 
 
-def test_forced_parent_same_bytes_keeps_child_cached(tmp_path):
-    import time
+@pytest.mark.parametrize("reuse_unchanged", [False, True])
+@pytest.mark.parametrize("cause", ["forced", "missing", "compromised"])
+def test_parent_rebuild_propagates_unless_reuse_is_enabled(
+    tmp_path, reuse_unchanged, cause
+):
+    """Rebuilds cascade through descendants by default, preserving unrelated caches.
 
+    Identical bytes may preserve descendant caches only with explicit reuse,
+    regardless of why the parent had to run. The default is tested by omission.
+    """
     P = Pipeline(DAG(tmp_path))
     P.a = R_make_a(P, x="x")
     P.b = R_make_b(P, P.a)
+    P.c = R_make_c_from_b(P, P.b)
+    P.independent = R_make_a(P, x="independent")
     run_pipeline(P)
-    mtime_a = P.a.path.stat().st_mtime
-    mtime_b = P.b.path.stat().st_mtime
 
-    time.sleep(0.05)
-    run_pipeline(P, forced_stale_call_keys={P.a.rule_call.relative_path})
+    options = {"reuse_unchanged": True} if reuse_unchanged else {}
+    if cause == "forced":
+        options["forced_stale_call_keys"] = {P.a.rule_call.relative_path}
+    elif cause == "missing":
+        P.a.path.unlink()
+    else:
+        P.a.rule_call.state_file.write_text("running")
+    report = run_pipeline(P, **options)
 
-    assert P.a.path.stat().st_mtime > mtime_a
-    assert P.b.path.stat().st_mtime == mtime_b
+    assert report[P.a.rule_call.relative_path.as_posix()].cached is False
+    assert report[P.b.rule_call.relative_path.as_posix()].cached is reuse_unchanged
+    assert report[P.c.rule_call.relative_path.as_posix()].cached is reuse_unchanged
+    assert report[P.independent.rule_call.relative_path.as_posix()].cached is True
+    assert all(event.cached for event in run_pipeline(P).values())
 
 
 def test_replay_clears_declared_output_before_rerun(tmp_path):
@@ -375,24 +395,6 @@ def test_replay_clears_declared_output_before_rerun(tmp_path):
 
     assert report[P.a.rule_call.relative_path.as_posix()].state == "up_to_date"
     assert P.a.path.stat().st_mtime > mtime_a
-
-
-def test_compromised_parent_same_bytes_keeps_child_cached(tmp_path):
-    import time
-
-    P = Pipeline(DAG(tmp_path))
-    P.a = R_make_a(P, x="x")
-    P.b = R_make_b(P, P.a)
-    run_pipeline(P)
-    mtime_a = P.a.path.stat().st_mtime
-    mtime_b = P.b.path.stat().st_mtime
-    P.a.rule_call.state_file.write_text("running")
-
-    time.sleep(0.05)
-    run_pipeline(P)
-
-    assert P.a.path.stat().st_mtime > mtime_a
-    assert P.b.path.stat().st_mtime == mtime_b
 
 
 def test_conditional_pipeline(tmp_path):
@@ -841,6 +843,25 @@ def test_autoclean_deletes_intermediates(tmp_path):
     assert not P.a.path.exists()
 
 
+@pytest.mark.parametrize("reuse_unchanged", [False, True])
+def test_autoclean_removes_rebuilt_parent_after_consumer_settles(
+    tmp_path, reuse_unchanged
+):
+    """Autoclean removes a rebuilt intermediate whether its consumer runs or caches."""
+    P = Pipeline(DAG(tmp_path))
+    P.a = R_make_a(P, x="x")
+    P.b = R_make_b(P, P.a)
+    run_pipeline(P, autoclean=True, reuse_unchanged=reuse_unchanged)
+    assert not P.a.rule_call.workdir.exists()
+
+    report = run_pipeline(P, autoclean=True, reuse_unchanged=reuse_unchanged)
+
+    assert report[P.a.rule_call.relative_path.as_posix()].cached is False
+    assert report[P.b.rule_call.relative_path.as_posix()].cached is reuse_unchanged
+    assert not P.a.rule_call.workdir.exists()
+    assert P.b.path.exists()
+
+
 def test_autoclean_deletes_intermediate_workdir(tmp_path):
     """autoclean=True removes the whole rule-call directory, including {workdir} side files."""
     P = Pipeline(DAG(tmp_path))
@@ -1083,6 +1104,35 @@ def test_symlink_file_rule_links_to_source_content(tmp_path):
     assert P.raw.path.read_text() == "hello\n"
 
 
+@pytest.mark.parametrize("relative_source", [False, True])
+def test_symlink_file_preserves_paths_with_spaces(
+    tmp_path, monkeypatch, relative_source
+):
+    """Symlink ingestion must preserve source paths through command substitution.
+
+    Quoting the realpath argument alone is insufficient: its output must also
+    remain a single argument to ln, for absolute and relative source paths.
+    """
+
+    class RawData(NodeType):
+        filename = "raw reads.txt"
+
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "input data" / "reads '1'.txt"
+    source.parent.mkdir()
+    source.write_text("reads\n")
+    path = source.relative_to(tmp_path) if relative_source else source
+    ingest = symlink_file_rule("ingest", RawData)
+    pipeline = Pipeline(DAG(tmp_path / "node store"))
+    pipeline.raw = ingest(pipeline, path=str(path))
+
+    run_pipeline(pipeline)
+
+    assert pipeline.raw.path.is_symlink()
+    assert pipeline.raw.path.resolve() == source
+    assert pipeline.raw.path.read_text() == "reads\n"
+
+
 def test_symlink_file_decorator_matches_factory_and_links(tmp_path):
     class RawData(NodeType):
         filename = "raw.txt"
@@ -1313,3 +1363,150 @@ def test_factory_all_threads_reaches_command_callback(tmp_path):
     run_pipeline(pipeline, resource_caps={"threads": 4})
     assert pipeline.result.rule_call.command_args().constraints.threads == 4
     assert pipeline.result.path.read_text() == "4"
+
+
+# ── scheduling stops, fail-fast drain, resource pool ─────────────────────────
+
+
+R_make_b_root = Rule("make_b_root", Inputs(x=str), Outputs(b=B), "touch {b}")
+R_slow_a = Rule("slow_a", Inputs(x=str), Outputs(a=A), "sleep 0.3; touch {a}")
+
+
+def test_scheduler_remaining_excludes_running_calls(tmp_path):
+    """`remaining` lists not-done, not-running calls, as the protocol documents.
+
+    A running call is neither schedulable nor waiting, so a scheduler must not
+    see it as pending work. make_a is held running until make_c_from_b, the
+    child of the finished make_b_root, has been offered to the scheduler.
+    """
+    release = threading.Event()
+    seen = []
+
+    def runner(call, log_path):
+        if call.rule.__name__ == "make_a":
+            assert release.wait(10)
+        call.workdir.mkdir(parents=True, exist_ok=True)
+        for output_node in call.outputs:
+            output_node.path.touch()
+
+    def scheduler(ready, remaining, available_resources):
+        seen.append(
+            (
+                sorted(call.rule.__name__ for call in ready),
+                sorted(call.rule.__name__ for call in remaining),
+            )
+        )
+        if any(call.rule.__name__ == "make_c_from_b" for call in ready):
+            release.set()
+        return ready
+
+    P = Pipeline(DAG(tmp_path))
+    P.a = R_make_a(P, x="x")
+    P.b = R_make_b_root(P, x="x")
+    P.c = R_make_c_from_b(P, P.b)
+    run_pipeline(
+        P,
+        scheduler=scheduler,
+        rule_call_runner=runner,
+        resource_caps={"threads": 2},
+    )
+
+    assert seen[0] == (
+        ["make_a", "make_b_root"],
+        ["make_a", "make_b_root", "make_c_from_b"],
+    )
+    assert seen[1] == (["make_c_from_b"], ["make_c_from_b"])
+
+
+def test_fail_fast_records_calls_already_running(tmp_path):
+    """Without keep_going, a failure stops new submissions but not running calls.
+
+    Calls already running finish anyway. Recording them keeps their work: the
+    next run finds them cached instead of rerunning them as compromised.
+    """
+    P = Pipeline(DAG(tmp_path))
+    P.slow = R_slow_a(P, x="slow")
+    P.bad = R_fail_a(P, x="bad")
+
+    with pytest.raises(subprocess.CalledProcessError):
+        run_pipeline(P, resource_caps={"threads": 2})
+
+    assert P.slow.rule_call.state_file.read_text() == "up_to_date"
+    plan = plan_execution(P.dag)
+    assert plan.verdicts[P.slow.rule_call.relative_path] is Verdict.UP_TO_DATE
+
+
+def test_fail_fast_does_not_start_new_calls(tmp_path):
+    """After a failure without keep_going, ready calls are never submitted."""
+    P = Pipeline(DAG(tmp_path))
+    P.bad = R_fail_a(P, x="bad")
+    P.later = R_make_b_root(P, x="later")
+
+    with pytest.raises(subprocess.CalledProcessError):
+        run_pipeline(P, resource_caps={"threads": 1})
+
+    assert not P.later.rule_call.workdir.exists()
+
+
+def test_scheduler_selecting_nothing_warns_and_stops(tmp_path, caplog):
+    """A scheduler selecting nothing while nothing runs ends the run, visibly.
+
+    The run returns normally, as documented, but names the calls left ready,
+    so a too-strict custom scheduler is not mistaken for a finished pipeline.
+    """
+    P = Pipeline(DAG(tmp_path))
+    P.a = R_make_a(P, x="x")
+
+    with caplog.at_level(logging.INFO, logger="necroflow"):
+        report = run_pipeline(P, scheduler=lambda ready, remaining, available: [])
+
+    assert report == {}
+    assert not P.a.path.exists()
+    assert "selected none of 1 ready call(s)" in caplog.text
+    assert P.a.rule_call.relative_path.as_posix() in caplog.text
+
+
+def test_resource_pool_admits_one_oversized_call_alone(tmp_path):
+    """Capped resources limit admission, except for a lone oversized call.
+
+    An oversized call may start while nothing runs, otherwise it could never
+    run; while it runs, nothing else is admitted.
+    """
+    P = Pipeline(DAG(tmp_path))
+    light = R_make_a(P, x="light").rule_call
+    heavy = R_make_a_heavy(P, x="heavy").rule_call
+    pool = ResourcePool({"threads": 2})
+
+    assert pool.admits(heavy)
+    pool.acquire(heavy)
+    assert pool.available() == {"threads": -2}
+    assert pool.free_threads() == 1
+    assert not pool.admits(light)
+
+    pool.release(heavy)
+    pool.acquire(light)
+    assert pool.available() == {"threads": 1}
+    assert not pool.admits(heavy)
+    assert pool.admits(R_make_a(P, x="second").rule_call)
+
+
+def test_run_leaves_logging_configuration_to_the_application(tmp_path):
+    """A library run adds no log handler and keeps the necroflow logger's level.
+
+    Configuring logging belongs to the application. A handler added by the
+    library printed every line twice once the host had configured root
+    logging, and reset a level the host had chosen. Only the CLI sets it up.
+    """
+    log = logging.getLogger("necroflow")
+    saved_handlers, saved_level = log.handlers[:], log.level
+    log.handlers.clear()
+    log.setLevel(logging.WARNING)
+    try:
+        P = Pipeline(DAG(tmp_path))
+        P.a = R_make_a(P, x="x")
+        run_pipeline(P)
+        assert log.handlers == []
+        assert log.level == logging.WARNING
+    finally:
+        log.handlers[:] = saved_handlers
+        log.setLevel(saved_level)

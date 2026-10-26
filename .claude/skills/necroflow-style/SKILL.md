@@ -18,10 +18,9 @@ Prefer plain files over embedded databases for local state.
 
 ### Content-addressed, not time-addressed
 mtime invalidates a stored-hash fast path; it is not freshness policy.
-- Consumers persist `consumed_sha256` for each immutable parent Node.
+- Consumers persist a tagged `consumed_hash` for each parent Node.
 - Compare consumed hash with current parent bytes after parent RuleCall settles.
-- Identical rebuilt bytes must NOT invalidate consumers.
-- Mutable parent execution does invalidate consumers; external mutable edits do not.
+- Rebuilds rerun all active descendants by default; `reuse_unchanged=True` may preserve consumers of identical rebuilt bytes.
 - Constraints and `repeat` remain outside fingerprints.
 - Use framed canonical SHA-256 identity, not `repr(tuple(...))`.
 
@@ -32,15 +31,18 @@ Use `node.relative_path` for Node identity and `call.relative_path` for RuleCall
 ### Single responsibility per module
 When a module grows a second conceptual domain, extract it:
 - `nodes.py` — Node and NodeType typed output concepts
-- `rule_call.py` — RuleCall identity, RuleCallState, persisted state methods
-- `planning.py` — required closure and lazy cache classification
+- `rule_call.py` — RuleCall identity, command realization, persisted state and metadata
+- `planning.py` — required closure, `Verdict`, and lazy cache classification
 - `rules.py` — declarations, contracts, mutability, resource parsing
 - `schedulers.py` — RuleCall Scheduler protocol and FIFO
-- `executor.py` — orchestration, resources, reports, cleanup
+- `executor.py` — orchestration: `Execution` phases, `ResourcePool`, cleanup, failures
+- `runners.py` — running one call: default runner, retries, timing, `Outcome`
+- `report.py` — `RuleCallExecution` events and `run.toml` records
 
 ### Methods own their domain
 State transitions belong on the object that owns the state.
-- `call.mark_running()`, `call.mark_done()`, `call.is_compromised` → on `RuleCall`
+- `call.write_state()`, `call.is_compromised`, `call.read_dependencies()` → on `RuleCall`
+- Per-run state (`Phase`) belongs to the executor's `Execution`; cache verdicts to `ExecutionPlan`
 - `rule.resources` → on `Rule`
 - Free functions in `executor.py` that operated on node internals were moved to methods
 
@@ -92,7 +94,7 @@ require `P.name = node` or `P[label] = node`. It does not auto-register labels.
 ### Set-based done-tracking via `id()`
 The first executor: `done_ids = {id(n) for n in nodes if check_cache(n)}`. Two problems:
 1. `id()` breaks after deduplication (aliased nodes)
-2. A set of done ids carries no failure/running state — `RuleCallState` makes call state queryable.
+2. A set of done ids carries no failure/running state — a `Phase` per call key makes run state queryable.
 
 ### SQLite as "proper" persistence
 `StateDB` (SQLite) was introduced June 20, removed June 25 — 5 days. The plain `.rip/state` file approach was simpler, survived crashes identically, required no dependency, and composed with standard tools. Don't reach for a database for simple flags.

@@ -4,23 +4,16 @@ import hashlib
 import os
 import shlex
 import shutil
-import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 import tomlkit
 
-from necroflow.containers import (
-    CONTAINER_POLICY,
-    Docker,
-    docker_argv,
-    split_prefix,
-)
+from necroflow.containers import CONTAINER_POLICY, Docker, split_prefix
 from necroflow.contexts import CommandArgs, NamedValues
-from necroflow.hashers import Hasher, load_hasher, tagged_hash
+from necroflow.hashers import OutputHashes, load_hasher
 from necroflow.fingerprints import (
     IDENTITY_FORMAT,
     PROVENANCE_HASH_DOMAIN,
@@ -35,16 +28,21 @@ if TYPE_CHECKING:
     from necroflow.nodes import Node
 
 
-class RuleCallState(Enum):
-    MISSING = "missing"
-    STALE = "stale"
-    UP_TO_DATE = "up_to_date"
-    ORPHAN = "orphan"
-    READY = "ready"
-    RUNNING = "running"
-    FAILED = "failed"
-    INTERRUPTED = "interrupted"
-    UNDECIDED = "undecided"
+# Values `.rip/state` may hold. Only "up_to_date" is trusted; any other value,
+# including a "running" left by a crash, compromises the call.
+STORED_STATES = ("running", "up_to_date", "failed", "interrupted")
+
+
+def ancestor_call_keys(calls: Iterable[RuleCall]) -> set[Path]:
+    """Return the keys of `calls` and of every call they transitively consume."""
+    keys: set[Path] = set()
+    frontier = list(calls)
+    while frontier:
+        call = frontier.pop()
+        if call.relative_path not in keys:
+            keys.add(call.relative_path)
+            frontier.extend(call.parent_calls)
+    return keys
 
 
 def _safe_path_component(value: str, *, kind: str) -> str:
@@ -101,13 +99,12 @@ class RuleCall:
     output_nodes: dict[str, Node] = field(default_factory=dict)
     parents: list[Node] = field(init=False)
     parent_calls: list[RuleCall] = field(init=False)
-    state: RuleCallState | None = None
     rule_identity: dict[str, Any] = field(init=False)
     rule_hash: str = field(init=False)
     provenance_hash: str = field(init=False)
     relative_path: Path = field(init=False)
-    _realized_command: str | None = None
-    _container_input: str | None = None
+    # (selected Docker input or None, command body), cached after first use.
+    _realized: tuple[str | None, str] | None = None
     _thread_cap: int | None = None
 
     def __post_init__(self) -> None:
@@ -199,11 +196,10 @@ class RuleCall:
         return hashlib.sha256(canonical_bytes(identity, path="provenance")).hexdigest()
 
     def _constraints(self) -> dict[str, Any]:
+        """Command-facing constraints: raw declared values, threads resolved."""
         values = dict(self.rule.constraints)
-        if values.get("threads") == "all":
+        if values.get("threads", "all") == "all":
             values["threads"] = self.resources["threads"]
-        else:
-            values.setdefault("threads", self.resources["threads"])
         return values
 
     @property
@@ -211,50 +207,29 @@ class RuleCall:
         return self.dag.nodes_dir / self.relative_path
 
     @property
+    def metadata_dir(self) -> Path:
+        return self.workdir / ".rip"
+
+    @property
     def state_file(self) -> Path:
-        return self.workdir / ".rip" / "state"
+        return self.metadata_dir / "state"
 
     def log_path(self) -> Path:
         """Return this call's captured job-output path."""
-        return self.workdir / ".rip" / "job.log"
+        return self.metadata_dir / "job.log"
 
-    def run(self, log_path: Path) -> None:
-        """Execute this call's materializer or resolved shell command."""
-        self.workdir.mkdir(parents=True, exist_ok=True)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("w") as log:
-            materializer = self.rule.materializer
-            if materializer is not None:
-                materializer(self, log)
-                return
-            command = self.resolve()
-            if command is None:
-                raise RuntimeError(
-                    f"rule {self.rule.__name__!r} has neither a command nor a "
-                    "materializer"
-                )
-            container = self.container
-            if container is not None:
-                argv = docker_argv(self, container, command)
-                subprocess.run(argv, check=True, stdout=log, stderr=log)
-                return
-            options = {
-                "shell": True,
-                "check": True,
-                "stdout": log,
-                "stderr": log,
-            }
-            if self.shellpath is not None:
-                options["executable"] = self.shellpath
-            subprocess.run(command, **options)
+    @property
+    def container_input(self) -> str | None:
+        """Return the Docker input named by the command's `{name}:` prefix, if any."""
+        if self.command is None:
+            return None
+        return self._realize()[0]
 
     @property
     def container(self) -> Docker | None:
         """Return the Docker settings selected by the resolved command, if any."""
-        self.resolve()
-        if self._container_input is None:
-            return None
-        return self.config[self._container_input]
+        name = self.container_input
+        return None if name is None else self.config[name]
 
     @property
     def is_compromised(self) -> bool:
@@ -265,25 +240,20 @@ class RuleCall:
 
     @property
     def resources(self) -> dict[str, int]:
-        resources = self.rule.resources
-        if (
-            self.rule.constraints.get("threads") == "all"
-            and self._thread_cap is not None
-        ):
-            resources["threads"] = self._thread_cap
-        return resources
+        """Integer scheduler resources; `threads="all"` is the bound thread cap."""
+        return self.rule.resources_for(self._thread_cap)
 
     def bind_thread_cap(self, cap: int) -> None:
         """Resolve an all-threads declaration for this execution."""
         if self.rule.constraints.get("threads") == "all" and self._thread_cap != cap:
             self._thread_cap = cap
-            self._realized_command = None
+            self._realized = None
 
-    def mark_running(self) -> None:
-        self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        self.state_file.write_text("running")
-
-    def mark_done(self, state: str) -> None:
+    def write_state(self, state: str) -> None:
+        """Persist this call's run state in `.rip/state`."""
+        if state not in STORED_STATES:
+            raise ValueError(f"unknown RuleCall state: {state!r}")
+        self.metadata_dir.mkdir(parents=True, exist_ok=True)
         self.state_file.write_text(state)
 
     def output_size_bytes(self) -> int:
@@ -333,33 +303,45 @@ class RuleCall:
         visited[self.relative_path] = config
         return config
 
-    def write_dependencies(
-        self,
-        hash_cache: dict[Path, str] | None = None,
-        hasher: Hasher | None = None,
-    ) -> None:
-        """Persist lineage, consumed hashes, output hashes, and invalidators.
+    def write_dependencies(self, hashes: OutputHashes | None = None) -> None:
+        """Persist lineage, consumed parent hashes, output hashes, and invalidators.
 
         Hashing uses this call's own `threads` resource: the executor still
         holds those threads for the call while it is being completed. A parent
         rehashed here, e.g. after a hasher switch, gets its stored hash refreshed.
         """
-        from necroflow.planning import current_output_hash
-
-        if hash_cache is None:
-            hash_cache = {}
-        hasher = load_hasher(hasher)
+        if hashes is None:
+            hashes = OutputHashes(load_hasher(None), store=True)
         threads = self.resources["threads"]
-        parents = []
-        for parent in self.parents:
-            parents.append(
-                {
-                    "node_key": parent.relative_path.as_posix(),
-                    "consumed_hash": current_output_hash(
-                        parent, hash_cache, hasher, threads, store=True
-                    ),
-                }
-            )
+        consumed = [hashes.current(parent, threads) for parent in self.parents]
+        self.metadata_dir.mkdir(parents=True, exist_ok=True)
+        record = tomlkit.dumps(self._dependency_record(consumed))
+        (self.metadata_dir / "dependencies.toml").write_text(record)
+        for output in self.outputs:
+            if not output.path.exists():
+                continue
+            hashes.record(output, threads)
+            token = output.invalidation_token()
+            if token is not None:
+                output.invalidation_file.write_text(token)
+
+    def read_dependencies(self) -> list[dict] | None:
+        """Return recorded parent entries, or None when missing or malformed."""
+        path = self.metadata_dir / "dependencies.toml"
+        if not path.exists():
+            return None
+        try:
+            parents = tomlkit.parse(path.read_text()).get("parents")
+        except Exception:
+            return None
+        if not isinstance(parents, list) or not all(
+            isinstance(parent, dict) for parent in parents
+        ):
+            return None
+        return parents
+
+    def _dependency_record(self, consumed: list[str | None]) -> dict[str, Any]:
+        """Return the `dependencies.toml` document for these consumed hashes."""
         data = {
             "rule": self.rule.__name__,
             "config": self._accumulated_config(),
@@ -373,7 +355,10 @@ class RuleCall:
                 }
                 for output in self.outputs
             ],
-            "parents": parents,
+            "parents": [
+                {"node_key": parent.relative_path.as_posix(), "consumed_hash": digest}
+                for parent, digest in zip(self.parents, consumed)
+            ],
             "identity": {
                 "format": IDENTITY_FORMAT,
                 "rule_hash": self.rule_hash,
@@ -393,41 +378,25 @@ class RuleCall:
             ]
         if self.shellpath is not None:
             data["execution"] = {"shellpath": self.shellpath}
-        if self.container is not None:
-            data.setdefault("execution", {})["container_input"] = self._container_input
+        if self.container_input is not None:
+            data.setdefault("execution", {})["container_input"] = self.container_input
         if self.command is not None:
-            command_data = {
-                "kind": "python" if callable(self.command) else "shell",
-                "realized": self.resolve(),
-            }
-            if callable(self.command):
-                _tree, source_path = command_ast(self.command)
-                command_data["source"] = os.path.relpath(
-                    source_path, self.dag.nodes_dir
-                )
-                command_data["python"] = python_identity()
-            else:
-                command_data["template"] = self.command
-            data["command"] = command_data
-        rip = self.workdir / ".rip"
-        rip.mkdir(parents=True, exist_ok=True)
-        (rip / "dependencies.toml").write_text(tomlkit.dumps(data))
-        for output in self.outputs:
-            if not output.path.exists():
-                continue
-            digest = tagged_hash(hasher, output.path, threads)
-            (rip / (output.path.name + ".hash")).write_text(digest)
-            hash_cache[output.relative_path] = digest
-            invalidator = output.node_type.invalidator
-            if invalidator is None:
-                continue
-            token = invalidator(output)
-            if not isinstance(token, str):
-                raise TypeError(
-                    f"invalidator for {output.node_type.__name__} must return str, "
-                    f"got {type(token).__name__}"
-                )
-            (rip / (output.path.name + ".invalidation")).write_text(token)
+            data["command"] = self._command_record()
+        return data
+
+    def _command_record(self) -> dict[str, Any]:
+        """Return how this call's command was declared and realized."""
+        record = {
+            "kind": "python" if callable(self.command) else "shell",
+            "realized": self.resolve(),
+        }
+        if callable(self.command):
+            _tree, source_path = command_ast(self.command)
+            record["source"] = os.path.relpath(source_path, self.dag.nodes_dir)
+            record["python"] = python_identity()
+        else:
+            record["template"] = self.command
+        return record
 
     @property
     def outputs(self) -> tuple[Node, ...]:
@@ -458,23 +427,42 @@ class RuleCall:
         """Resolve this call command from input, output, config, and resources."""
         if self.command is None:
             return None
-        if self._realized_command is not None:
-            return self._realized_command
-        if callable(self.command):
-            result = self.command(self.command_args())
-            if not isinstance(result, str) or not result.strip():
-                raise TypeError(
-                    f"Python command callback {self.command.__qualname__!r} must return "
-                    f"a non-empty shell string, got {result!r}"
+        return self._realize()[1]
+
+    def _realize(self) -> tuple[str | None, str]:
+        """Return (selected Docker input or None, command body), cached.
+
+        A template's `{name}:` Docker prefix is split off before formatting;
+        a Python callback's prefix is split off the string it returns.
+        """
+        if self._realized is None:
+            if callable(self.command):
+                self._realized = self._call_command_callback()
+            else:
+                container_input, template = split_prefix(
+                    self.command, self.rule.docker_inputs
                 )
-            self._container_input, body = split_prefix(result, self.rule.docker_inputs)
-            if not body.strip():
-                raise TypeError(
-                    f"Python command callback {self.command.__qualname__!r} returned "
-                    "an empty container command body"
-                )
-            self._realized_command = body
-            return body
+                body = template.format(**self._template_substitutions())
+                self._realized = (container_input, body)
+        return self._realized
+
+    def _call_command_callback(self) -> tuple[str | None, str]:
+        result = self.command(self.command_args())
+        if not isinstance(result, str) or not result.strip():
+            raise TypeError(
+                f"Python command callback {self.command.__qualname__!r} must return "
+                f"a non-empty shell string, got {result!r}"
+            )
+        container_input, body = split_prefix(result, self.rule.docker_inputs)
+        if not body.strip():
+            raise TypeError(
+                f"Python command callback {self.command.__qualname__!r} returned "
+                "an empty container command body"
+            )
+        return container_input, body
+
+    def _template_substitutions(self) -> dict[str, Any]:
+        """Return shell-quoted values for every string-template placeholder."""
         command_inputs = self.command_args().inputs
         substitutions: dict[str, Any] = {
             name: _ShellArguments(value) if isinstance(value, tuple) else value
@@ -488,12 +476,7 @@ class RuleCall:
         for output_name, output in self.output_nodes.items():
             substitutions[output_name] = output.path
         substitutions["workdir"] = self.workdir
-        quoted = {
+        return {
             key: _quote_command_substitution(value)
             for key, value in substitutions.items()
         }
-        self._container_input, template = split_prefix(
-            self.command, self.rule.docker_inputs
-        )
-        self._realized_command = template.format(**quoted)
-        return self._realized_command

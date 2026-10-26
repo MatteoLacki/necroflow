@@ -33,6 +33,11 @@ _SI_SUFFIXES = {"K": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15}
 _BIN_SUFFIXES = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50}
 
 
+def default_thread_cap() -> int:
+    """Threads a run may use when no cap is given: the machine's CPU count."""
+    return os.cpu_count() or 1
+
+
 def parse_resource(s: str | int) -> int:
     """Parse a resource value with optional unit suffix.
 
@@ -478,13 +483,18 @@ class Rule(Generic[_ReturnT]):
 
     @property
     def resources(self) -> dict[str, int]:
-        """Return integer scheduler resources with one thread by default."""
+        """Return integer scheduler resources, `threads="all"` as the CPU count."""
+        return self.resources_for(None)
+
+    def resources_for(self, thread_cap: int | None) -> dict[str, int]:
+        """Return integer scheduler resources with one thread by default.
+
+        `threads="all"` resolves to `thread_cap`, or to the default thread cap
+        (the CPU count) when no run has bound one.
+        """
+        cap = default_thread_cap() if thread_cap is None else thread_cap
         result = {
-            k: (
-                (os.cpu_count() or 1)
-                if k == "threads" and v == "all"
-                else parse_resource(v)
-            )
+            k: cap if k == "threads" and v == "all" else parse_resource(v)
             for k, v in self.constraints.items()
         }
         result.setdefault("threads", 1)
@@ -971,7 +981,7 @@ def _make_symlink_file_rule(
         name=name,
         inputs=Inputs(**{path_arg: str}),
         outputs=Outputs(**{oname: output}),
-        command=f"ln -s $(realpath {{{path_arg}}}) {{{oname}}}",
+        command=f'ln -s "$(realpath {{{path_arg}}})" {{{oname}}}',
         info=info or f"Symlink an external file into {output.__name__}.",
     )
 

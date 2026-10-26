@@ -42,3 +42,11 @@
    - Configure GitHub Actions to run the release checks for tags matching `v*`.
    - Publish the tag as a GitHub Release with generated notes, for example `gh release create vX.Y.Z --verify-tag --generate-notes --title "vX.Y.Z"`.
    - Consider attaching the checked source distribution and wheel to the GitHub Release and using trusted publishing for PyPI.
+
+
+   ❯ codex
+Disconnected from this task. Any running work continues.
+To reconnect, run:
+  codex resume 01a1167a-16e7-70e1-8bd5-a07121949e4c
+Stop the current turn: run codex agents, select this task, and press x.
+Token usage so far: total=762,309 input=715,819 (+ 7,251,840 cached) output=46,490 (reasoning 24,387)

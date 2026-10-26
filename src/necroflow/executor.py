@@ -3,215 +3,335 @@
 from __future__ import annotations
 
 import concurrent.futures
+from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import replace
+from enum import Enum
 import inspect
-import os
 from pathlib import Path
-import subprocess
-from typing import Any
-
-import tomlkit
 
 from necroflow import logger as _logger
-from necroflow.hashers import Hasher
-from necroflow.tgf import write_ancestor_tgf
 from necroflow.dag import DAG
 from necroflow.fs import _acquire_lock
-from necroflow.planning import ExecutionPlan, classify_available, plan_execution
-from necroflow.rule_call import RuleCall, RuleCallState
+from necroflow.hashers import Hasher
+from necroflow.planning import ExecutionPlan, Verdict, plan_execution
+from necroflow.report import RuleCallExecution, count_events
+from necroflow.rule_call import RuleCall
+from necroflow.rules import default_thread_cap
+from necroflow.runners import Outcome, Runner, attempt, run_call
 from necroflow.schedulers import Scheduler, fifo_scheduler
+from necroflow.tgf import write_ancestor_tgf
 
 
-@dataclass
-class RuleCallExecution:
-    """One RuleCall cache hit or execution attempt."""
+class Phase(Enum):
+    """Where one active RuleCall is within this run."""
 
-    call_key: str
-    rule: str
-    state: str
-    cached: bool
-    workdir: str
-    output_node_keys: tuple[str, ...]
-    output_paths: tuple[str, ...]
-    started_at: str | None = None
-    finished_at: str | None = None
-    exit_code: int | None = None
-    error: str | None = None
-    output_size_bytes: int | None = None
+    WAITING = "waiting"  # some parent call is not done yet
+    READY = "ready"
+    RUNNING = "running"
+    DONE = "done"  # cached, or executed successfully
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+    BLOCKED = "blocked"  # an ancestor failed or was interrupted
 
-    @classmethod
-    def from_call(
-        cls,
-        call: RuleCall,
+
+# `.rip/state` values for the phases of a call that runs.
+_STORED_STATE = {
+    Phase.RUNNING: "running",
+    Phase.DONE: "up_to_date",
+    Phase.FAILED: "failed",
+    Phase.INTERRUPTED: "interrupted",
+}
+
+
+class ExecutionFailed(ExceptionGroup):
+    """Raised by a keep-going run with failures; carries the whole report."""
+
+    def __new__(cls, report: dict[str, RuleCallExecution], errors: list[Exception]):
+        group = super().__new__(cls, "necroflow: some RuleCalls failed", errors)
+        group.execution_report = report
+        return group
+
+    def __init__(self, report: dict[str, RuleCallExecution], errors: list[Exception]):
+        super().__init__("necroflow: some RuleCalls failed", errors)
+
+
+class ResourcePool:
+    """Capped resources held by running calls.
+
+    Resources without a cap never limit admission. A call exceeding a cap on
+    its own may still start while nothing else runs, so it cannot stall the run.
+    """
+
+    def __init__(self, caps: dict[str, int]):
+        self.caps = dict(caps)
+        self._used = dict.fromkeys(caps, 0)
+        self._holders = 0
+
+    def available(self) -> dict[str, int]:
+        return {name: cap - self._used[name] for name, cap in self.caps.items()}
+
+    def free_threads(self) -> int:
+        """Threads no running call holds, at least one."""
+        return max(1, self.available()["threads"])
+
+    def admits(self, call: RuleCall) -> bool:
+        if self._holders == 0:
+            return True
+        return all(
+            self._used[name] + amount <= self.caps[name]
+            for name, amount in self._capped(call)
+        )
+
+    def acquire(self, call: RuleCall) -> None:
+        self._holders += 1
+        for name, amount in self._capped(call):
+            self._used[name] += amount
+
+    def release(self, call: RuleCall) -> None:
+        self._holders -= 1
+        for name, amount in self._capped(call):
+            self._used[name] -= amount
+
+    def _capped(self, call: RuleCall) -> list[tuple[str, int]]:
+        return [(name, n) for name, n in call.resources.items() if name in self.caps]
+
+
+class Execution:
+    """One run over a plan's active RuleCalls: settle, schedule, run, record.
+
+    Owns all run-local state: each call's Phase, the resources held by running
+    calls, the report, and the failures to raise once the run ends. A call
+    whose parents are all DONE is settled: cached calls become DONE at once,
+    the rest READY for the scheduler. After a call finishes, only its children
+    are settled again.
+    """
+
+    def __init__(
+        self,
+        plan: ExecutionPlan,
         *,
-        state: str,
-        cached: bool,
-        started_at: str | None = None,
-        finished_at: str | None = None,
-        exit_code: int | None = None,
-        error: str | None = None,
-        output_size_bytes: int | None = None,
-    ) -> RuleCallExecution:
-        """Build one report event from a canonical RuleCall."""
-        return cls(
-            call_key=call.relative_path.as_posix(),
-            rule=call.rule.__name__,
-            state=state,
-            cached=cached,
-            workdir=str(call.workdir),
-            output_node_keys=tuple(
-                output.relative_path.as_posix() for output in call.outputs
-            ),
-            output_paths=tuple(str(output.path) for output in call.outputs),
-            started_at=started_at,
-            finished_at=finished_at,
-            exit_code=exit_code,
-            error=error,
-            output_size_bytes=output_size_bytes,
+        scheduler: Scheduler,
+        pool: ResourcePool,
+        runner: Runner,
+        keep_going: bool,
+        autoclean: bool,
+    ):
+        self.plan = plan
+        self.scheduler = scheduler
+        self.pool = pool
+        self.runner = runner
+        self.keep_going = keep_going
+        self.autoclean = autoclean
+        self.report: dict[str, RuleCallExecution] = {}
+        self.failures: list[Exception] = []
+        self.stopped = False  # a failure without keep_going stops submissions
+        self.cleaned = 0
+        self.phase = {call.relative_path: Phase.WAITING for call in plan.active}
+        self.children: dict[Path, list[RuleCall]] = {key: [] for key in self.phase}
+        for call in plan.active:
+            for parent in call.parent_calls:
+                self.children[parent.relative_path].append(call)
+        # Autoclean never removes requested calls or calls without consumers.
+        self.protected = plan.requested_call_keys | {
+            key for key, children in self.children.items() if not children
+        }
+        self._running: dict[concurrent.futures.Future[Outcome], RuleCall] = {}
+
+    def run(self) -> None:
+        try:
+            if self.autoclean:
+                self._clean_orphans()
+            self._settle(self.plan.active)
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=len(self.plan.active) or 1
+            ) as threads:
+                while True:
+                    ready = self._calls_in(Phase.READY)
+                    if ready and not self.stopped:
+                        self._submit(threads, ready)
+                    if not self._running:
+                        break
+                    self._finish_some()
+            unscheduled = self._calls_in(Phase.READY)
+            if unscheduled and not self.stopped:
+                _logger.unscheduled(unscheduled)
+        finally:
+            completed, cached, failed = count_events(self.report)
+            blocked = len(self._calls_in(Phase.BLOCKED))
+            _logger.summary(completed, cached, failed, self.cleaned, blocked)
+
+    def raise_failures(self) -> None:
+        """Re-raise the first failure, or all of them for a keep-going run."""
+        if not self.failures:
+            return
+        if not self.keep_going:
+            raise self.failures[0]
+        raise ExecutionFailed(self.report, self.failures)
+
+    def _calls_in(self, *phases: Phase) -> list[RuleCall]:
+        """Active calls in any of `phases`, in registration (FIFO) order."""
+        return [
+            call
+            for call in self.plan.active
+            if self.phase[call.relative_path] in phases
+        ]
+
+    def _transition(self, call: RuleCall, phase: Phase) -> None:
+        """Move a call to `phase`; entering or leaving RUNNING updates `.rip/state`."""
+        key = call.relative_path
+        if Phase.RUNNING in (phase, self.phase[key]):
+            call.write_state(_STORED_STATE[phase])
+        self.phase[key] = phase
+
+    def _settle(self, calls: list[RuleCall]) -> None:
+        """Decide waiting calls whose parents are all done: cached or ready."""
+        pending = deque(calls)
+        while pending:
+            call = pending.popleft()
+            key = call.relative_path
+            if self.phase[key] is not Phase.WAITING or not self._parents_done(call):
+                continue
+            verdict = self.plan.verdicts.get(key)
+            if verdict is None:
+                # Mid-run, hashing may use only the threads no running call holds.
+                verdict = self.plan.classify(call, self.pool.free_threads())
+            if verdict is Verdict.UP_TO_DATE:
+                self._transition(call, Phase.DONE)
+                self._record(_cached_event(call))
+                self._clean_parents(call)
+                pending.extend(self.children[key])
+            else:
+                self._transition(call, Phase.READY)
+
+    def _parents_done(self, call: RuleCall) -> bool:
+        return all(
+            self.phase[parent.relative_path] is Phase.DONE
+            for parent in call.parent_calls
         )
 
-    def duration_seconds(self) -> float | None:
-        """Return elapsed wall-clock seconds when both timestamps exist."""
-        if self.started_at is None or self.finished_at is None:
-            return None
-        started = datetime.fromisoformat(self.started_at)
-        finished = datetime.fromisoformat(self.finished_at)
-        return (finished - started).total_seconds()
+    def _submit(
+        self, threads: concurrent.futures.Executor, ready: list[RuleCall]
+    ) -> None:
+        """Start the scheduler's picks, in its order, while resources admit them."""
+        remaining = self._calls_in(Phase.WAITING, Phase.READY)
+        available = self.pool.available()
+        for call in _validated_schedule(self.scheduler, ready, remaining, available):
+            if not self.pool.admits(call):
+                continue
+            self.pool.acquire(call)
+            self._transition(call, Phase.RUNNING)
+            _logger.job_start(call)
+            self._running[threads.submit(attempt, call, self.runner)] = call
 
-    def to_toml_dict(self) -> dict[str, Any]:
-        data: dict[str, Any] = {
-            "key": self.call_key,
-            "rule": self.rule,
-            "state": self.state,
-            "cached": self.cached,
-            "workdir": self.workdir,
-            "output_node_keys": list(self.output_node_keys),
-            "output_paths": list(self.output_paths),
-        }
-        optional = {
-            "started_at": self.started_at,
-            "finished_at": self.finished_at,
-            "duration_seconds": self.duration_seconds(),
-            "exit_code": self.exit_code,
-            "error": self.error,
-            "output_size_bytes": self.output_size_bytes,
-            "output_size_human": (
-                _human_size(self.output_size_bytes)
-                if self.output_size_bytes is not None
-                else None
-            ),
-        }
-        data.update(
-            {key: value for key, value in optional.items() if value is not None}
+    def _finish_some(self) -> None:
+        """Wait for at least one running call, then record every finished one."""
+        done, _ = concurrent.futures.wait(
+            self._running, return_when=concurrent.futures.FIRST_COMPLETED
         )
-        return data
+        for future in done:
+            self._finish(self._running.pop(future), future.result())
 
+    def _finish(self, call: RuleCall, outcome: Outcome) -> None:
+        self.pool.release(call)
+        if outcome.ok:
+            try:
+                self._commit(call, outcome)
+            except Exception as exc:
+                # A missing declared output or failed metadata write fails the call.
+                outcome = replace(outcome, error=exc)
+        if not outcome.ok:
+            self._fail(call, outcome)
+            return
+        self._clean_parents(call)
+        self._settle(self.children[call.relative_path])
 
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _human_size(size: int) -> str:
-    value = float(size)
-    units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"]
-    for unit in units:
-        if value < 1024 or unit == units[-1]:
-            return f"{int(value)} B" if unit == "B" else f"{value:.1f} {unit}"
-        value /= 1024
-    return f"{size} B"
-
-
-def _write_run_stats(call: RuleCall, event: RuleCallExecution) -> None:
-    run = {
-        "started_at": event.started_at,
-        "finished_at": event.finished_at,
-        "duration_seconds": event.duration_seconds(),
-        "exit_code": event.exit_code,
-        "output_size_bytes": event.output_size_bytes,
-        "output_size_human": (
-            _human_size(event.output_size_bytes)
-            if event.output_size_bytes is not None
-            else None
-        ),
-    }
-    data = {"run": {key: value for key, value in run.items() if value is not None}}
-    rip = call.workdir / ".rip"
-    rip.mkdir(parents=True, exist_ok=True)
-    (rip / "run.toml").write_text(tomlkit.dumps(data), encoding="utf-8")
-
-
-def _record_cached(report: dict[str, RuleCallExecution], calls: list[RuleCall]) -> int:
-    added = 0
-    for call in calls:
-        key = call.relative_path.as_posix()
-        if call.state != RuleCallState.UP_TO_DATE or key in report:
-            continue
-        report[key] = RuleCallExecution.from_call(
+    def _commit(self, call: RuleCall, outcome: Outcome) -> None:
+        """Validate every co-output, then record the call as up to date."""
+        missing = [output.path for output in call.outputs if not output.path.exists()]
+        if missing:
+            raise RuntimeError(
+                "command succeeded but output missing: " + ", ".join(map(str, missing))
+            )
+        call.write_dependencies(self.plan.hashes)
+        write_ancestor_tgf(call)
+        event = RuleCallExecution.from_call(
             call,
             state="up_to_date",
-            cached=True,
+            cached=False,
+            started_at=outcome.started_at,
+            finished_at=outcome.finished_at,
+            exit_code=0,
             output_size_bytes=call.output_size_bytes(),
         )
-        added += 1
-    return added
+        event.write_run_toml()
+        self._record(event)
+        self._transition(call, Phase.DONE)
+        _logger.job_done(call, event.duration_seconds())
 
+    def _fail(self, call: RuleCall, outcome: Outcome) -> None:
+        phase = Phase.INTERRUPTED if outcome.interrupted else Phase.FAILED
+        self._transition(call, phase)
+        event = RuleCallExecution.from_call(
+            call,
+            state=phase.value,
+            cached=False,
+            started_at=outcome.started_at,
+            finished_at=outcome.finished_at,
+            exit_code=outcome.exit_code,
+            error=str(outcome.error),
+        )
+        self._record(event)
+        _logger.job_failed(
+            call, event.duration_seconds(), outcome.exit_code, outcome.error
+        )
+        self._block_descendants(call)
+        self.failures.append(outcome.error)
+        if not self.keep_going:
+            # Running calls still finish and are recorded; nothing new starts.
+            self.stopped = True
 
-@dataclass
-class _AutocleanPlan:
-    enabled: bool
-    children: dict[Path, list[RuleCall]] = field(default_factory=dict)
-    final_keys: set[Path] = field(default_factory=set)
+    def _block_descendants(self, call: RuleCall) -> None:
+        pending = list(self.children[call.relative_path])
+        while pending:
+            child = pending.pop()
+            if self.phase[child.relative_path] is Phase.WAITING:
+                self._transition(child, Phase.BLOCKED)
+                pending.extend(self.children[child.relative_path])
 
+    def _record(self, event: RuleCallExecution) -> None:
+        self.report[event.call_key] = event
 
-def _build_autoclean_plan(enabled: bool, active: list[RuleCall]) -> _AutocleanPlan:
-    if not enabled:
-        return _AutocleanPlan(enabled=False)
-    active_keys = {call.relative_path for call in active}
-    children = {call.relative_path: [] for call in active}
-    for call in active:
+    def _clean_orphans(self) -> None:
+        for call in self.plan.orphans:
+            if call.remove_workdir():
+                _logger.cleaned(call)
+                self.cleaned += 1
+
+    def _clean_parents(self, call: RuleCall) -> None:
+        """Remove parent workdirs whose consumers are all done (with autoclean)."""
+        if not self.autoclean:
+            return
         for parent in call.parent_calls:
-            if parent.relative_path in active_keys:
-                children[parent.relative_path].append(call)
-    requested_keys = {
-        node.rule_call.relative_path
-        for call in active[:1]
-        for node in call.dag.required_nodes
-    }
-    final_keys = requested_keys | {
-        key for key, values in children.items() if not values
-    }
-    return _AutocleanPlan(True, children, final_keys)
-
-
-def _cleanup_parents(call: RuleCall, plan: _AutocleanPlan) -> int:
-    if not plan.enabled:
-        return 0
-    cleaned = 0
-    for parent in call.parent_calls:
-        key = parent.relative_path
-        if key in plan.final_keys:
-            continue
-        if (
-            all(
-                child.state == RuleCallState.UP_TO_DATE
-                for child in plan.children.get(key, ())
+            key = parent.relative_path
+            if key in self.protected:
+                continue
+            consumers_done = all(
+                self.phase[child.relative_path] is Phase.DONE
+                for child in self.children[key]
             )
-            and parent.remove_workdir()
-        ):
-            _logger.cleaned(parent)
-            cleaned += 1
-    return cleaned
+            if consumers_done and parent.remove_workdir():
+                _logger.cleaned(parent)
+                self.cleaned += 1
 
 
-def _clean_orphans(plan: ExecutionPlan, *, autoclean: bool, dry_run: bool) -> int:
-    if not autoclean or dry_run:
-        return 0
-    cleaned = [call for call in plan.orphans if call.remove_workdir()]
-    for call in cleaned:
-        _logger.cleaned(call)
-    return len(cleaned)
+def _cached_event(call: RuleCall) -> RuleCallExecution:
+    return RuleCallExecution.from_call(
+        call,
+        state="up_to_date",
+        cached=True,
+        output_size_bytes=call.output_size_bytes(),
+    )
 
 
 def _validate_scheduler(scheduler: Scheduler) -> None:
@@ -254,73 +374,20 @@ def _validated_schedule(
     return result
 
 
-def _run_with_retries(call: RuleCall, runner) -> None:
-    maximum = call.rule.repeat
-    for attempt in range(1, maximum + 1):
-        try:
-            call.clear_outputs()
-            runner(call, call.log_path())
-            return
-        except subprocess.CalledProcessError as exc:
-            if attempt == maximum:
-                raise
-            _logger.job_retry(call, attempt, maximum, exc.returncode)
-
-
-@dataclass
-class _CommandTiming:
-    started_at: str | None = None
-    finished_at: str | None = None
-
-
-def _timed_run_with_retries(call: RuleCall, runner, timing: _CommandTiming) -> None:
-    # Stamped in the worker: the coordinator may be hashing another call's
-    # outputs when this one finishes, and that must not count as its runtime.
-    timing.started_at = _utc_now()
-    try:
-        _run_with_retries(call, runner)
-    finally:
-        timing.finished_at = _utc_now()
-
-
-def _promote_ready(active: list[RuleCall]) -> None:
-    for call in active:
-        if call.state in {RuleCallState.MISSING, RuleCallState.STALE} and all(
-            parent.state == RuleCallState.UP_TO_DATE for parent in call.parent_calls
-        ):
-            call.state = RuleCallState.READY
-
-
-def _complete_call(
-    call: RuleCall,
-    plan: ExecutionPlan,
-    report: dict[str, RuleCallExecution],
-    *,
-    started_at: str | None,
-    finished_at: str | None,
-) -> RuleCallExecution:
-    missing = [output.path for output in call.outputs if not output.path.exists()]
-    if missing:
-        raise RuntimeError(
-            "command succeeded but output missing: " + ", ".join(map(str, missing))
-        )
-    call.write_dependencies(plan.hash_cache, plan.hasher)
-    if call.outputs:
-        write_ancestor_tgf(call.outputs[0])
-    call.mark_done("up_to_date")
-    call.state = RuleCallState.UP_TO_DATE
-    event = RuleCallExecution.from_call(
-        call,
-        state="up_to_date",
-        cached=False,
-        started_at=started_at,
-        finished_at=finished_at,
-        exit_code=0,
-        output_size_bytes=call.output_size_bytes(),
-    )
-    report[event.call_key] = event
-    _write_run_stats(call, event)
-    return event
+def _dry_run_report(plan: ExecutionPlan) -> dict[str, RuleCallExecution]:
+    """Log what would run; report only the calls already known to be cached."""
+    report: dict[str, RuleCallExecution] = {}
+    would_run = 0
+    for call in plan.active:
+        verdict = plan.verdicts.get(call.relative_path)
+        if verdict is Verdict.UP_TO_DATE:
+            event = _cached_event(call)
+            report[event.call_key] = event
+        elif verdict is not None and verdict.will_run:
+            _logger.dry_run_call(call, verdict.name)
+            would_run += 1
+    _logger.dry_run_summary(would_run, len(report))
+    return report
 
 
 def run(
@@ -330,27 +397,32 @@ def run(
     keep_going: bool = False,
     autoclean: bool = False,
     dry_run: bool = False,
-    rule_call_runner=None,
+    rule_call_runner: Runner | None = None,
     forced_stale_call_keys: set[Path] | None = None,
     on_complete: Callable[[dict[str, RuleCallExecution]], None] | None = None,
     hasher: Hasher | str | None = None,
+    reuse_unchanged: bool = False,
 ) -> dict[str, RuleCallExecution]:
     """Execute required RuleCalls atomically; return report keyed by call path.
 
     • forced_stale_call_keys is a set of canonical RuleCall.relative_path values forced to rerun despite valid cache.
     • hasher names the output content hasher (default BLAKE3); see `necroflow.hashers`.
+    • rule_call_runner(call, log_path) replaces the default runner, `runners.run_call`.
+    • Rebuilt calls force all active descendants to rerun by default.
+      reuse_unchanged=True keeps consumers cached when rebuilt parent bytes
+      match their recorded consumed hashes and their other cache checks pass.
+    • Without keep_going, the first failure stops new submissions; running calls
+      finish and are recorded, on_complete is skipped, and that failure is raised.
+      With keep_going, independent branches continue, on_complete runs, and an
+      `ExecutionFailed` group carrying the report is raised.
     """
     if not isinstance(dag, DAG):
         raise TypeError(f"run requires a DAG, got {type(dag).__name__}")
     scheduler = fifo_scheduler if scheduler is None else scheduler
     _validate_scheduler(scheduler)
-    runner = RuleCall.run if rule_call_runner is None else rule_call_runner
-    _logger.setup()
-    caps = {"threads": os.cpu_count() or 1}
-    if resource_caps:
-        caps.update(resource_caps)
-    for call in dag.calls.values():
-        call.bind_thread_cap(caps["threads"])
+    runner = run_call if rule_call_runner is None else rule_call_runner
+    caps = {"threads": default_thread_cap(), **(resource_caps or {})}
+    dag.bind_thread_cap(caps["threads"])
 
     with _acquire_lock(dag.nodes_dir):
         # Nothing runs yet, so hashes taken while planning may use every thread.
@@ -361,164 +433,21 @@ def run(
             hasher=hasher,
             hash_threads=caps["threads"],
             store_refreshed_hashes=True,
+            reuse_unchanged=reuse_unchanged,
         )
-        n_cleaned = _clean_orphans(plan, autoclean=autoclean, dry_run=dry_run)
-        report: dict[str, RuleCallExecution] = {}
-        n_skipped = _record_cached(report, plan.active)
-
         if dry_run:
-            would_run = sum(
-                call.state in {RuleCallState.MISSING, RuleCallState.STALE}
-                for call in plan.active
-            )
-            for call in plan.active:
-                if call.state in {RuleCallState.MISSING, RuleCallState.STALE}:
-                    _logger.dry_run_node(call)
-            _logger.dry_run_summary(would_run, n_skipped)
-            return report
+            return _dry_run_report(plan)
+        execution = Execution(
+            plan,
+            scheduler=scheduler,
+            pool=ResourcePool(caps),
+            runner=runner,
+            keep_going=keep_going,
+            autoclean=autoclean,
+        )
+        execution.run()
+        if on_complete is not None and not execution.stopped:
+            on_complete(execution.report)
 
-        running: dict = {}
-        running_resources: dict[str, int] = {}
-        errors: list[Exception] = []
-        executed_call_keys: set[Path] = set()
-        n_run = 0
-        n_failed = 0
-        autoclean_plan = _build_autoclean_plan(autoclean, plan.active)
-        unfinished = {
-            RuleCallState.MISSING,
-            RuleCallState.STALE,
-            RuleCallState.READY,
-            RuleCallState.RUNNING,
-        }
-
-        try:
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=len(plan.active) or 1
-            ) as pool:
-                while any(
-                    call.state is None or call.state in unfinished
-                    for call in plan.active
-                ):
-                    # Mid-run classification may rehash parents; give it only
-                    # the threads no running call holds.
-                    plan.hash_threads = max(
-                        1, caps["threads"] - running_resources.get("threads", 0)
-                    )
-                    classify_available(plan, executed_call_keys=executed_call_keys)
-                    n_skipped += _record_cached(report, plan.active)
-                    _promote_ready(plan.active)
-                    ready = [
-                        call
-                        for call in plan.active
-                        if call.state == RuleCallState.READY
-                    ]
-                    remaining = [
-                        call
-                        for call in plan.active
-                        if call.state is None or call.state in unfinished
-                    ]
-                    available = {
-                        name: cap - running_resources.get(name, 0)
-                        for name, cap in caps.items()
-                    }
-                    for call in _validated_schedule(
-                        scheduler, ready, remaining, available
-                    ):
-                        can_run = not running or all(
-                            running_resources.get(name, 0) + amount <= caps[name]
-                            for name, amount in call.resources.items()
-                            if name in caps
-                        )
-                        if not can_run:
-                            continue
-                        call.mark_running()
-                        call.state = RuleCallState.RUNNING
-                        _logger.job_start(call)
-                        timing = _CommandTiming()
-                        future = pool.submit(
-                            _timed_run_with_retries, call, runner, timing
-                        )
-                        running[future] = (call, timing)
-                        for name, amount in call.resources.items():
-                            running_resources[name] = (
-                                running_resources.get(name, 0) + amount
-                            )
-
-                    if not running:
-                        break
-
-                    done, _ = concurrent.futures.wait(
-                        running, return_when=concurrent.futures.FIRST_COMPLETED
-                    )
-                    for future in done:
-                        call, timing = running.pop(future)
-                        try:
-                            future.result()
-                            event = _complete_call(
-                                call,
-                                plan,
-                                report,
-                                started_at=timing.started_at,
-                                finished_at=timing.finished_at,
-                            )
-                            executed_call_keys.add(call.relative_path)
-                            n_cleaned += _cleanup_parents(call, autoclean_plan)
-                            _logger.job_done(call, event.duration_seconds())
-                            n_run += 1
-                        except Exception as exc:
-                            exit_code = (
-                                exc.returncode
-                                if isinstance(exc, subprocess.CalledProcessError)
-                                else None
-                            )
-                            interrupted = exit_code is not None and exit_code < 0
-                            call.state = (
-                                RuleCallState.INTERRUPTED
-                                if interrupted
-                                else RuleCallState.FAILED
-                            )
-                            state = "interrupted" if interrupted else "failed"
-                            call.mark_done(state)
-                            event = RuleCallExecution.from_call(
-                                call,
-                                state=state,
-                                cached=False,
-                                started_at=timing.started_at,
-                                finished_at=timing.finished_at,
-                                exit_code=exit_code,
-                                error=str(exc),
-                            )
-                            report[event.call_key] = event
-                            if exit_code is not None:
-                                _logger.job_failed(
-                                    call,
-                                    event.duration_seconds(),
-                                    exit_code,
-                                    call.log_path(),
-                                )
-                            else:
-                                _logger.job_error(
-                                    call,
-                                    event.duration_seconds(),
-                                    exc,
-                                    call.log_path(),
-                                )
-                            _logger.job_output(call.log_path())
-                            n_failed += 1
-                            if not keep_going:
-                                raise
-                            errors.append(exc)
-                        finally:
-                            for name, amount in call.resources.items():
-                                running_resources[name] -= amount
-        finally:
-            _logger.summary(n_run, n_skipped, n_failed, n_cleaned)
-
-        if on_complete is not None:
-            on_complete(report)
-
-    if errors:
-        error = ExceptionGroup("necroflow: some RuleCalls failed", errors)
-        setattr(error, "execution_report", report)
-        raise error
-    return report
+    execution.raise_failures()
+    return execution.report
