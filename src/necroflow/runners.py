@@ -87,6 +87,7 @@ def attempt(call: RuleCall, runner: Runner) -> Outcome:
     error: Exception | None = None
     for number in range(1, maximum + 1):
         try:
+            call.validate_dependencies()
             call.clear_outputs()
             runner(call, call.log_path())
             return Outcome(started_at, _utc_now())

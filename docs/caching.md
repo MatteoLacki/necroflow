@@ -211,3 +211,15 @@ instances against *overlapping* node stores (for example `nodes` and
 `nodes/sub`) remains unsupported because no OS primitive detects the overlap.
 
 [Previous: README](../README.md) | [README](../README.md) | [Next: Command-Line Interface](cli.md)
+
+### Null settings in provenance
+
+TOML has no null. In `dependencies.toml`, `config` uses an empty string at each
+`None` position and records that position in top-level `config_null_paths`.
+Each path is an array of mapping keys (strings) and array indices (integers).
+Only listed positions denote null; unlisted empty strings remain real strings.
+This covers nested settings and accumulated ancestor settings. CLI/MCP provenance
+restores those positions to JSON null. Documents without this field retain their
+existing meaning. Identity hashing and parent/identity fields are unchanged.
+Provenance serialization is validated before a runner starts or clears outputs;
+filesystem failures during the eventual metadata write can still occur.

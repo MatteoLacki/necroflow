@@ -60,7 +60,7 @@ from necroflow.hashers import (
     tagged_hash,
 )
 from necroflow.planning import plan_execution
-from necroflow.rule_call import ancestor_call_keys
+from necroflow.rule_call import ancestor_call_keys, provenance_config
 from necroflow.rules import default_thread_cap
 from necroflow.gc import collect
 
@@ -459,7 +459,7 @@ def _provenance_payload(path: Path) -> dict:
         "rule": doc.get("rule", ""),
         "rule_hash": identity.get("rule_hash", ""),
         "provenance_hash": identity.get("provenance_hash", ""),
-        "config": _json_ready(doc.get("config", {})),
+        "config": _json_ready(provenance_config(doc)),
         "execution": _json_ready(doc.get("execution", {})),
     }
 

@@ -4,7 +4,7 @@ import hashlib
 import os
 import shlex
 import shutil
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -43,6 +43,37 @@ def ancestor_call_keys(calls: Iterable[RuleCall]) -> set[Path]:
             keys.add(call.relative_path)
             frontier.extend(call.parent_calls)
     return keys
+
+
+def provenance_config(record: Mapping) -> dict:
+    """Decode null placeholders in a parsed dependencies document."""
+    config = record.get("config", {})
+    # TOML containers cannot hold None; unwrap before restoring null values.
+    if hasattr(config, "unwrap"):
+        config = config.unwrap()
+    for path in record.get("config_null_paths", []):
+        target = config
+        for component in path[:-1]:
+            target = target[component]
+        target[path[-1]] = None
+    return config
+
+
+def _encode_config(config: Mapping) -> tuple[dict, list[list[str | int]]]:
+    """Represent nulls separately, retaining unambiguous mapping/array paths."""
+    null_paths = []
+
+    def encode(value, path):
+        if value is None:
+            null_paths.append(path)
+            return ""
+        if isinstance(value, Mapping):
+            return {key: encode(item, [*path, key]) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [encode(item, [*path, index]) for index, item in enumerate(value)]
+        return value
+
+    return encode(config, []), null_paths
 
 
 def _safe_path_component(value: str, *, kind: str) -> str:
@@ -303,6 +334,15 @@ class RuleCall:
         visited[self.relative_path] = config
         return config
 
+    def validate_dependencies(self) -> None:
+        """Reject unserializable provenance before executing or clearing outputs."""
+        try:
+            tomlkit.dumps(self._dependency_record([""] * len(self.parents)))
+        except Exception as exc:
+            raise ValueError(
+                f"Cannot serialize provenance for {self.relative_path}: {exc}"
+            ) from exc
+
     def write_dependencies(self, hashes: OutputHashes | None = None) -> None:
         """Persist lineage, consumed parent hashes, output hashes, and invalidators.
 
@@ -342,9 +382,10 @@ class RuleCall:
 
     def _dependency_record(self, consumed: list[str | None]) -> dict[str, Any]:
         """Return the `dependencies.toml` document for these consumed hashes."""
+        config, null_paths = _encode_config(self._accumulated_config())
         data = {
             "rule": self.rule.__name__,
-            "config": self._accumulated_config(),
+            "config": config,
             "outputs": [
                 {
                     "name": output.output_name,
@@ -366,6 +407,8 @@ class RuleCall:
             },
             "recipe": self.rule_identity,
         }
+        if null_paths:
+            data["config_null_paths"] = null_paths
         if self.input_values:
             data["input_order"] = self._positional_input_order()
             data["input_values"] = [
