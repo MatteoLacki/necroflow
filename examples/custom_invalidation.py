@@ -5,7 +5,7 @@ Run from the necroflow/ directory:
     source .venv/bin/activate
     python examples/custom_invalidation.py
 
-The PreparedText NodeType hashes an external dependency file. The first
+The PreparedText Node hashes an external dependency file. The first
 run() writes the output. The example then edits the dependency file and
 runs run() again; the changed invalidation token marks the node STALE and
 reruns the command at the same content-addressed output path.
@@ -17,7 +17,7 @@ import hashlib
 import time
 from pathlib import Path
 
-from necroflow import DAG, NodeType, Pipeline, command, output
+from necroflow import DAG, Node, Pipeline, command, output
 
 WORK = Path("/tmp/necroflow_custom_invalidation")
 OUTDIR = WORK / "results"
@@ -28,7 +28,7 @@ def sha256_of_dependency(node) -> str:
     return hashlib.sha256(Path(node.config["dependency"]).read_bytes()).hexdigest()
 
 
-class PreparedText(NodeType):
+class PreparedText(Node):
     filename = "prepared.txt"
     invalidator = sha256_of_dependency
 

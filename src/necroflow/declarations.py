@@ -67,6 +67,15 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
             f"{missing_annotations!r}"
         )
 
+    for parameter in inspect.signature(fn).parameters.values():
+        if parameter.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
+            raise TypeError(
+                f"rule {rule_name!r}: *args and **kwargs declarations are unsupported; use explicit parameters and tuple-valued inputs"
+            )
+
     raw_anns = fn.__annotations__
     inputs_specs = {}
     resources = {}
@@ -134,16 +143,16 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
         ):
             raise ValueError(
                 f"rule {rule_name!r}: body may contain only "
-                "name = output(NodeType) declarations before the final return"
+                "name = output(Node) declarations before the final return"
             )
         if len(stmt.value.args) != 1 or stmt.value.keywords:
             raise ValueError(
-                f"rule {rule_name!r}: output() requires exactly one positional NodeType"
+                f"rule {rule_name!r}: output() requires exactly one positional Node"
             )
         type_expr = stmt.value.args[0]
         if not isinstance(type_expr, ast.Name):
             raise ValueError(
-                f"rule {rule_name!r}: output() argument must be a concrete NodeType name"
+                f"rule {rule_name!r}: output() argument must be a concrete Node name"
             )
         try:
             output_type = namespace[type_expr.id]
@@ -152,13 +161,13 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
                 output_type = getattr(builtins, type_expr.id)
             except AttributeError as exc:
                 raise ValueError(
-                    f"rule {rule_name!r}: output() argument must be a concrete NodeType name"
+                    f"rule {rule_name!r}: output() argument must be a concrete Node name"
                 ) from exc
         output_name = stmt.targets[0].id
         if not _is_nodetype(output_type):
             raise TypeError(
                 f"rule {rule_name!r}: output {output_name!r} must be a "
-                f"NodeType, got {output_type!r}"
+                f"Node, got {output_type!r}"
             )
         if output_name in declarations:
             raise ValueError(

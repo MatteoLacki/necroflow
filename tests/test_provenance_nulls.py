@@ -5,12 +5,12 @@ import json
 import pytest
 import tomlkit
 
-from necroflow import DAG, NodeType, Pipeline, command, output, run
+from necroflow import DAG, Node, Pipeline, command, output, run
 from necroflow.cli import _provenance_payload, main
 from necroflow.rules import Inputs, Outputs, Command
 
 
-class Out(NodeType):
+class Out(Node):
     filename = "out.txt"
 
 

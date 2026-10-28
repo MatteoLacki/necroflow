@@ -12,7 +12,7 @@ from necroflow import (
     DAG,
     Inputs,
     Many,
-    NodeType,
+    Node,
     output,
     Outputs,
     Pipeline,
@@ -21,19 +21,19 @@ from necroflow.planning import plan_execution
 from necroflow.rules import Command
 
 
-class Bam(NodeType):
+class Bam(Node):
     filename = "input.bam"
 
 
-class OtherBam(NodeType):
+class OtherBam(Node):
     filename = "other.bam"
 
 
-class Reference(NodeType):
+class Reference(Node):
     filename = "reference.fa"
 
 
-class Merged(NodeType):
+class Merged(Node):
     filename = "merged.bam"
 
 
@@ -56,7 +56,7 @@ def variadic_command(args: CommandArgs) -> str:
 def _source(
     pipeline: Pipeline,
     label: str,
-    node_type: type[NodeType] = Bam,
+    node_type: type[Node] = Bam,
 ):
     return Command(
         "source",
@@ -235,7 +235,7 @@ def test_invalid_variadic_annotations_are_rejected():
             Outputs(merged=Merged),
             "touch {merged}",
         )
-    with pytest.raises(TypeError, match="element type is not a NodeType"):
+    with pytest.raises(TypeError, match="element type is not a Node"):
         Command(
             "strings",
             Inputs(values=Annotated[tuple[str, ...], Many()]),

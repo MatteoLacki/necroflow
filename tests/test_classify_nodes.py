@@ -9,7 +9,7 @@ import tomlkit
 from necroflow import (
     DAG,
     Inputs,
-    NodeType,
+    Node,
     Outputs,
     Pipeline,
     Verdict,
@@ -20,19 +20,19 @@ from necroflow.planning import plan_execution
 from necroflow.rules import Command
 
 
-class Source(NodeType):
+class Source(Node):
     filename = "source.txt"
 
 
-class Result(NodeType):
+class Result(Node):
     filename = "result.txt"
 
 
-class Log(NodeType):
+class Log(Node):
     filename = "result.log"
 
 
-class Bundle(NodeType):
+class Bundle(Node):
     filename = "bundle"
 
 

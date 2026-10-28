@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 def _node_label(node: Node) -> str:
     parts = [node.rule.__name__]
-    suffix = node.node_type.__name__
+    suffix = type(node).__name__
     if node.output_name and node.output_name != suffix:
         suffix += f":{node.output_name}" if suffix else node.output_name
     if suffix:

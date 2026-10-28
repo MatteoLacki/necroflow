@@ -51,11 +51,11 @@ class DAG:
                     "use a resource-file override to select one request"
                 )
             expected = {
-                name: (node.node_type, node.relative_path)
+                name: (type(node), node.relative_path)
                 for name, node in existing.output_nodes.items()
             }
             candidate = {
-                name: (node.node_type, node.relative_path)
+                name: (type(node), node.relative_path)
                 for name, node in call.output_nodes.items()
             }
             if candidate != expected:

@@ -1,9 +1,9 @@
 """Build a rule chain with a rebound local variable and one public label."""
 
-from necroflow import DAG, NodeType, Pipeline, command, output, text_file, workflow
+from necroflow import DAG, Node, Pipeline, command, output, text_file, workflow
 
 
-class Text(NodeType):
+class Text(Node):
     filename = "text.txt"
 
 

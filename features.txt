@@ -3,10 +3,10 @@ necroflow feature tree
 
 necroflow
 ├── Core model
-│   ├── NodeType typed file/artifact classes
-│   ├── NodeType subtype families for format contracts
-│   ├── NodeType union inputs for alternative type contracts
-│   ├── fixed mixed NodeType/value unions with runtime parent selection
+│   ├── Node typed file/artifact classes
+│   ├── Node subtype families for format contracts
+│   ├── Node union inputs for alternative type contracts
+│   ├── fixed mixed Node/value unions with runtime parent selection
 │   ├── Node typed output/edge/result selectors
 │   ├── RuleCall atomic identity, cache, state, execution, report, cleanup
 │   ├── Module-level rule declarations
@@ -14,11 +14,11 @@ necroflow
 │   │   ├── decorator sugar: @command(...)
 │   │   ├── built-in decorators: @text_file / @symlink_file
 │   │   ├── explicit built-in factories: text_file_rule / symlink_file_rule
-│   │   ├── lint-clean name = output(NodeType) declarations
+│   │   ├── lint-clean name = output(Node) declarations
 │   │   ├── typed Inputs / Outputs
 │   │   ├── filename-less abstract input contracts; explicit output filenames
 │   │   ├── scalar/config and mixed-value defaults with explicit Node dependencies
-│   │   ├── ordered tuple[NodeType, ...] variadic inputs
+│   │   ├── ordered tuple[Node, ...] variadic inputs
 │   │   ├── optional inclusive Many(min=..., max=...) bounds
 │   │   ├── multi-output rules
 │   │   ├── atomic co-output caching and execution per RuleCall
@@ -77,7 +77,7 @@ necroflow
 │   ├── destination-filesystem result-path preflight before copying
 │   ├── output content hashes with mtime-gated stored-hash fast path
 │   ├── consumed parent content-hash metadata (BLAKE3 default, SHA-256, or custom hasher)
-│   ├── invalidator tokens on NodeType
+│   ├── invalidator tokens on Node
 │   └── .rip metadata directories
 │
 ├── Execution engine

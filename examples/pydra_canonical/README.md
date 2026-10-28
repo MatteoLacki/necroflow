@@ -37,7 +37,7 @@ Config is a real dependency even though `tr` does not read it, matching the
 original graph. Inputs/returns use typed `fileformats.generic.File` values.
 `File` tracks source contents; the original canonical example's string input
 path does not. These are generic file types rather than replicas of Necroflow's
-four domain-specific NodeTypes.
+four domain-specific Node subclasses.
 
 ## Run through Make
 

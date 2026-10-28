@@ -4,16 +4,16 @@ import shutil
 import pytest
 
 import necroflow.cli as cli_core
-from necroflow import DAG, Inputs, NodeType, Outputs, Pipeline
+from necroflow import DAG, Inputs, Node, Outputs, Pipeline
 from necroflow.cli import main
 from necroflow.rules import Command
 
 
-class Result(NodeType):
+class Result(Node):
     filename = "result.txt"
 
 
-class Source(NodeType):
+class Source(Node):
     filename = "source.txt"
 
 
@@ -66,8 +66,8 @@ def _run_source_and_consumer(nodes_dir):
 
 def _write_gc_scope(path, command="printf new > {result}"):
     path.write_text(
-        "from necroflow import NodeType, command, output\n"
-        "class Result(NodeType):\n"
+        "from necroflow import Node, command, output\n"
+        "class Result(Node):\n"
         "    filename = 'result.txt'\n"
         f"@command({command!r})\n"
         "def produce(value: str):\n"

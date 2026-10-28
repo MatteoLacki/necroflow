@@ -5,18 +5,18 @@ from pathlib import Path
 
 import pytest
 
-from necroflow import Pipeline, DAG, NodeType
+from necroflow import Pipeline, DAG, Node
 
 
-class A(NodeType):
+class A(Node):
     filename = "a"
 
 
-class B(NodeType):
+class B(Node):
     filename = "b"
 
 
-class C(NodeType):
+class C(Node):
     filename = "c"
 
 
@@ -170,11 +170,11 @@ def test_interrupted_node_state(tmp_path):
 # --- integration: retry after failure / interruption ---
 
 
-class X(NodeType):
+class X(Node):
     filename = "x"
 
 
-class Y(NodeType):
+class Y(Node):
     filename = "y"
 
 
@@ -246,10 +246,10 @@ def test_interrupted_node_reruns_on_retry(tmp_path):
 def test_directory_output_content_change_invalidates_children(tmp_path):
     """Directory outputs must hash relative file names and bytes for child staleness."""
 
-    class Directory(NodeType):
+    class Directory(Node):
         filename = "dataset"
 
-    class Copied(NodeType):
+    class Copied(Node):
         filename = "copied.txt"
 
     make_directory = Command(
@@ -285,7 +285,7 @@ def test_directory_output_content_change_invalidates_children(tmp_path):
     assert second.copied.path.read_text() == "changed"
 
 
-# --- integration: NodeType invalidators ---
+# --- integration: Node invalidators ---
 
 
 def _sha256_file(path):
@@ -299,7 +299,7 @@ def test_nodetype_invalidator_external_file_change_reruns_call(tmp_path):
     def external_hash(node):
         return _sha256_file(Path(node.config["dependency"]))
 
-    class ExternalInvalidated(NodeType):
+    class ExternalInvalidated(Node):
         filename = "external.txt"
         invalidator = external_hash
 
@@ -329,7 +329,7 @@ def test_nodetype_invalidator_output_file_change_reruns_call(tmp_path):
     def output_hash(node):
         return _sha256_file(node.path)
 
-    class OutputHashInvalidated(NodeType):
+    class OutputHashInvalidated(Node):
         filename = "output-hash.txt"
         invalidator = output_hash
 
@@ -358,7 +358,7 @@ def test_nodetype_invalidator_missing_metadata_reruns_call(tmp_path):
     def output_hash(node):
         return _sha256_file(node.path)
 
-    class OutputInvalidated(NodeType):
+    class OutputInvalidated(Node):
         filename = "output.txt"
         invalidator = output_hash
 
@@ -388,7 +388,7 @@ def test_nodetype_invalidator_missing_metadata_reruns_call(tmp_path):
 def test_nodetype_invalidator_must_return_string_token(tmp_path):
     """Invalidator tokens must be stable text suitable for plain metadata files."""
 
-    class InvalidToken(NodeType):
+    class InvalidToken(Node):
         filename = "result"
         invalidator = lambda node: 42
 
@@ -416,7 +416,7 @@ def test_nodetype_invalidator_exception_fails_fast(tmp_path):
             raise RuntimeError("invalidator failed")
         return "ok"
 
-    class RaisingInvalidator(NodeType):
+    class RaisingInvalidator(Node):
         filename = "raising.txt"
         invalidator = maybe_raise
 
@@ -447,11 +447,11 @@ def test_multi_output_invalidator_reruns_shared_command_once(tmp_path):
     def external_hash(node):
         return _sha256_file(Path(node.config["dependency"]))
 
-    class InvalidatedA(NodeType):
+    class InvalidatedA(Node):
         filename = "a.txt"
         invalidator = external_hash
 
-    class PlainB(NodeType):
+    class PlainB(Node):
         filename = "b.txt"
 
     r_make_pair = Command(

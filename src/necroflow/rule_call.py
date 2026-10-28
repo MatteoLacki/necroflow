@@ -402,9 +402,7 @@ class RuleCall:
                 {
                     "name": output.output_name,
                     "filename": output.path.name,
-                    "type": (
-                        f"{output.node_type.__module__}.{output.node_type.__qualname__}"
-                    ),
+                    "type": (f"{type(output).__module__}.{type(output).__qualname__}"),
                 }
                 for output in self.outputs
             ],
@@ -502,7 +500,13 @@ class RuleCall:
         return self._realized
 
     def _call_command_callback(self) -> tuple[str | None, str]:
-        result = self.command(self.command_args())
+        from necroflow.command_builders import NestedCommand
+
+        result = (
+            self.command(self)
+            if isinstance(self.command, NestedCommand)
+            else self.command(self.command_args())
+        )
         if not isinstance(result, str) or not result.strip():
             raise TypeError(
                 f"Python command callback {self.command.__qualname__!r} must return "

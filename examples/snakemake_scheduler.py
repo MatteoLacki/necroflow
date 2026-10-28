@@ -43,7 +43,7 @@ Three deliberate deviations from Snakemake, all forced by necroflow's model:
 
 from pathlib import Path
 
-from necroflow import DAG, NodeType, Pipeline, command, output
+from necroflow import DAG, Node, Pipeline, command, output
 from necroflow.rules import Constraints, Inputs, Outputs, Command
 
 
@@ -122,15 +122,15 @@ def make_snakemake_greedy_scheduler(greediness: float = 1.0):
 # ── demo ──────────────────────────────────────────────────────────────────────
 
 
-class Raw(NodeType):
+class Raw(Node):
     filename = "raw.txt"
 
 
-class Small(NodeType):
+class Small(Node):
     filename = "small.txt"
 
 
-class Big(NodeType):
+class Big(Node):
     filename = "big.txt"
 
 

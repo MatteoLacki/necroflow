@@ -7,20 +7,20 @@ import pytest
 from typing import Literal, Union
 import necroflow.dag as dag_core
 import necroflow.fs as fs_core
-from necroflow import DAG, NodeType, Pipeline
+from necroflow import DAG, Node, Pipeline
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
 
-class Txt(NodeType):
+class Txt(Node):
     filename = "out.txt"
 
 
-class Upper(NodeType):
+class Upper(Node):
     filename = "upper.txt"
 
 
-class Log(NodeType):
+class Log(Node):
     filename = "log.txt"
 
 
@@ -28,7 +28,7 @@ class SortedTxt(Txt):
     filename = "sorted.txt"
 
 
-class Joined(NodeType):
+class Joined(Node):
     filename = "joined.txt"
 
 
@@ -88,7 +88,7 @@ def test_compiled_paths_use_full_64_character_fingerprint(tmp_path):
 
 
 def test_rule_call_rejects_component_over_name_max(tmp_path, monkeypatch):
-    class LongName(NodeType):
+    class LongName(Node):
         filename = "x" * 11
 
     r_make_long_name = Command(
@@ -131,12 +131,12 @@ def test_fingerprint_differs_on_parent():
 
 
 def test_fingerprint_changes_on_inputs_type_change():
-    """Changing the declared Inputs NodeType must change the fingerprint."""
+    """Changing the declared Inputs Node must change the fingerprint."""
 
-    class FastqA(NodeType):
+    class FastqA(Node):
         filename = "fastq"
 
-    class FastqB(NodeType):
+    class FastqB(Node):
         filename = "fastq"
 
     Ra_raw = Command("raw", Inputs(path=str), Outputs(fastq=FastqA), "touch {fastq}")
@@ -154,12 +154,12 @@ def test_fingerprint_changes_on_inputs_type_change():
 
 
 def test_fingerprint_changes_on_outputs_type_change():
-    """Changing the declared Outputs NodeType must change the fingerprint."""
+    """Changing the declared Outputs Node must change the fingerprint."""
 
-    class BamA(NodeType):
+    class BamA(Node):
         filename = "aligned.bam"
 
-    class BamB(NodeType):
+    class BamB(Node):
         filename = "aligned.bam"
 
     Ra_align = Command("align", Inputs(path=str), Outputs(bam=BamA), "touch {bam}")
@@ -251,7 +251,7 @@ def test_node_equality_defers_for_unrelated_types(tmp_path):
 
 
 def test_output_filename_must_be_one_safe_relative_component(tmp_path):
-    class Escaping(NodeType):
+    class Escaping(Node):
         filename = "../escape.txt"
 
     rule = Command("escape", Inputs(x=str), Outputs(out=Escaping), "touch {out}")
@@ -261,9 +261,9 @@ def test_output_filename_must_be_one_safe_relative_component(tmp_path):
 
 
 def test_rule_rejects_filename_less_output_type_at_declaration():
-    """A filename-less NodeType is an input contract, not a concrete output."""
+    """A filename-less Node is an input contract, not a concrete output."""
 
-    class MmappetDataset(NodeType):
+    class MmappetDataset(Node):
         pass
 
     with pytest.raises(
@@ -281,7 +281,7 @@ def test_rule_rejects_filename_less_output_type_at_declaration():
 def test_command_decorator_rejects_filename_less_output_type():
     """Decorator sugar must reject abstract outputs while the module loads."""
 
-    class MmappetDataset(NodeType):
+    class MmappetDataset(Node):
         pass
 
     with pytest.raises(
@@ -298,7 +298,7 @@ def test_command_decorator_rejects_filename_less_output_type():
 def test_filename_less_nodetype_remains_a_valid_input_contract(tmp_path):
     """Abstract format families must continue accepting concrete subclasses."""
 
-    class MmappetDataset(NodeType):
+    class MmappetDataset(Node):
         pass
 
     class PrecursorTable(MmappetDataset):
@@ -502,7 +502,7 @@ def test_resolve_command_substitutes_union_typed_input(tmp_path):
 
     # Regression test: RuleCall.resolve used to build its {name} substitution dict by
     # filtering node.rule.inputs.specs with _is_nodetype(), which is a strict
-    # isclass()-and-issubclass()-NodeType check -- False for a `TypeA | TypeB` union,
+    # isclass()-and-issubclass()-Node check -- False for a `TypeA | TypeB` union,
     # even though docs/rules.md documents unions as a supported "either format is
     # fine" input contract (and rule-call-time validation already accepted them via
     # _is_node_input_contract). A union-typed positional input's placeholder was
@@ -1333,21 +1333,21 @@ def test_command_decorator_rejects_invalid_output_declarations():
             txt = output(Txt)
             return other
 
-    with pytest.raises(ValueError, match="exactly one positional NodeType"):
+    with pytest.raises(ValueError, match="exactly one positional Node"):
 
         @command("touch {txt}")
         def wrong_arity(word: str):
             txt = output()
             return txt
 
-    with pytest.raises(ValueError, match="concrete NodeType name"):
+    with pytest.raises(ValueError, match="concrete Node name"):
 
         @command("touch {txt}")
         def expression_type(word: str):
             txt = output(Txt())
             return txt
 
-    with pytest.raises(TypeError, match="must be a NodeType"):
+    with pytest.raises(TypeError, match="must be a Node"):
 
         @command("touch {txt}")
         def non_node_type(word: str):
@@ -1420,8 +1420,8 @@ def test_command_factory_preserves_order_and_doc():
     assert rule.resources["threads"] == 2
     result = rule(P, text="value")
     assert result._fields == ("left", "right")
-    assert result.left.node_type is Txt
-    assert result.right.node_type is Log
+    assert type(result.left) is Txt
+    assert type(result.right) is Log
 
 
 def test_command_factory_and_rule_accept_input_defaults(tmp_path):

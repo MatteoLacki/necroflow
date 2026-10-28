@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 
 from necroflow import (
-    NodeType,
+    Node,
     Pipeline,
     command,
     symlink_file,
@@ -31,15 +31,15 @@ from necroflow import (
 
 
 # --- node types ---
-class MzMlSpectra(NodeType):
+class MzMlSpectra(Node):
     filename = "spectra.mzml"
 
 
-class MgfSpectra(NodeType):
+class MgfSpectra(Node):
     filename = "spectra.mgf"
 
 
-# A union, not a shared abstract base with no filename: NodeType output filenames are
+# A union, not a shared abstract base with no filename: Node output filenames are
 # fixed per class, and Sage dispatches input format by file extension (silently -- a
 # mismatched extension parses as zero spectra with no error, verified against real
 # Sage), so mzML and MGF need their own concrete types rather than one shared filename.
@@ -52,27 +52,27 @@ class MgfSpectra(NodeType):
 SpectraFile = MzMlSpectra | MgfSpectra
 
 
-class Fasta(NodeType):
+class Fasta(Node):
     filename = "fasta.fasta"
 
 
-class SageConfig(NodeType):
+class SageConfig(Node):
     filename = "sage_config.json"
 
 
-class SageResultsJson(NodeType):
+class SageResultsJson(Node):
     filename = "results.json"
 
 
-class SageResultsPin(NodeType):
+class SageResultsPin(Node):
     filename = "results.sage.pin"
 
 
-class SageResultsTsv(NodeType):
+class SageResultsTsv(Node):
     filename = "results.sage.tsv"
 
 
-class SageMatchedFragments(NodeType):
+class SageMatchedFragments(Node):
     filename = "matched_fragments.sage.tsv"
 
 
@@ -94,7 +94,7 @@ class RecalibratedSpectra(MgfSpectra):
     filename = "recalibrated_spectra.mgf"
 
 
-class RecalibrationTolerance(NodeType):
+class RecalibrationTolerance(Node):
     filename = "recalibration_tolerance.json"
 
 
@@ -107,7 +107,7 @@ class RecalibrationTolerance(NodeType):
 # (necroflow only ever sees the path text, never the file's bytes, so an in-place edit
 # would silently leave every downstream node marked UP_TO_DATE forever).
 #
-# Two rules, not one with a runtime-chosen filename -- NodeType output filenames are
+# Two rules, not one with a runtime-chosen filename -- Node output filenames are
 # fixed per class (see SpectraFile above), so the extension has to be picked at the
 # call site (see raw_spectra() below) rather than inside a single templated command.
 @symlink_file

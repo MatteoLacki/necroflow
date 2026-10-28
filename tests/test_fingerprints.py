@@ -13,7 +13,7 @@ from necroflow import (
     DAG,
     Inputs,
     NamedValues,
-    NodeType,
+    Node,
     Outputs,
     Pipeline,
     command,
@@ -30,15 +30,15 @@ from necroflow.fingerprints import (
 )
 
 
-class Source(NodeType):
+class Source(Node):
     filename = "source.txt"
 
 
-class Result(NodeType):
+class Result(Node):
     filename = "result.txt"
 
 
-class Log(NodeType):
+class Log(Node):
     filename = "command.log"
 
 

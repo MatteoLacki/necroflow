@@ -5,22 +5,22 @@ Run:
 """
 
 from pathlib import Path
-from necroflow import DAG, NodeType, Pipeline, command, output, workflow
+from necroflow import DAG, Node, Pipeline, command, output, workflow
 
 
-class Text(NodeType):
+class Text(Node):
     filename = "text.txt"
 
 
-class Upper(NodeType):
+class Upper(Node):
     filename = "upper.txt"
 
 
-class Lower(NodeType):
+class Lower(Node):
     filename = "lower.txt"
 
 
-class Merged(NodeType):
+class Merged(Node):
     filename = "merged.txt"
 
 

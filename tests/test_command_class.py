@@ -1,10 +1,10 @@
 """The declaration name changes without breaking old imports or identities."""
 
-from necroflow import Command, DAG, Pipeline, NodeType, command, output
+from necroflow import Command, DAG, Pipeline, Node, command, output
 from necroflow.rules import Rule, Inputs, Outputs
 
 
-class Result(NodeType):
+class Result(Node):
     filename = "result.txt"
 
 

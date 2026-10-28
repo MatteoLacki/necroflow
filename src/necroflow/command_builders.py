@@ -89,11 +89,12 @@ class NestedCommand:
             declaration.__qualname__ + ".command",
         )
 
-    def __call__(self, args):
+    def __call__(self, call):
         values = {
-            **dict(args.inputs),
-            **dict(args.config),
-            **dict(args.constraints),
-            **dict(args.outputs),
+            **dict(call.inputs),
+            **dict(call.input_values),
+            **call.config,
+            **call.resources,
+            **call.output_nodes,
         }
         return self.factory(**{name: values[name] for name in self.names})

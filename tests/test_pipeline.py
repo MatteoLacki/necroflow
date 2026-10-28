@@ -6,30 +6,30 @@ import pytest
 from pathlib import Path
 from necroflow import (
     DAG,
-    NodeType,
+    Node,
     Pipeline,
     command,
     output,
 )
 
 
-class A(NodeType):
+class A(Node):
     filename = "a.txt"
 
 
-class B(NodeType):
+class B(Node):
     filename = "b.txt"
 
 
-class C(NodeType):
+class C(Node):
     filename = "c.txt"
 
 
-class D(NodeType):
+class D(Node):
     filename = "d.txt"
 
 
-class E(NodeType):
+class E(Node):
     filename = "e.txt"
 
 
@@ -425,18 +425,11 @@ def test_direct_node_construction_is_rejected():
         Node()
 
 
-def test_direct_nodetype_construction_is_rejected():
-    """NodeType declarations create nodes only through managed Command calls."""
-
-    with pytest.raises(TypeError, match="NodeType declaration, not a Node constructor"):
-        A()
-
-
 @pytest.mark.parametrize("same_type", [False, True])
 def test_rule_rejects_cooutputs_with_the_same_realized_filename(tmp_path, same_type):
     """Co-output collisions explain the fix before DAG or filesystem mutation."""
 
-    class AlsoA(NodeType):
+    class AlsoA(Node):
         filename = "a.txt"
 
     second_type = A if same_type else AlsoA
@@ -457,8 +450,8 @@ def test_rule_rejects_cooutputs_with_the_same_realized_filename(tmp_path, same_t
     assert "outputs 'first' (A)" in message
     assert f"'second' ({second_type.__name__})" in message
     assert "same filename 'a.txt'" in message
-    assert "Change one output's NodeType.filename to a distinct filename" in message
-    assert "separate NodeType subclass" in message
+    assert "Change one output's Node.filename to a distinct filename" in message
+    assert "separate Node subclass" in message
     assert "renaming only the output variable does not change its filename" in message
     assert dag.calls == {}
     assert dag.nodes == []

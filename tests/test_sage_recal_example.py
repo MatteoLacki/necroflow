@@ -42,9 +42,9 @@ def test_run_sage_calls_get_distinct_lineage_and_caching():
 
     # Both run_sage calls produce the same four output types...
     for tsv_node in (pipeline.recal_tsv, pipeline.tsv):
-        assert tsv_node.node_type is example.SageResultsTsv
+        assert type(tsv_node) is example.SageResultsTsv
     for json_node in (pipeline.recal_json, pipeline.json):
-        assert json_node.node_type is example.SageResultsJson
+        assert type(json_node) is example.SageResultsJson
 
     # ...but distinct lineage (subset+calibration-config vs. full+recalibrated-config)
     # gives each call its own fingerprint/cache directory -- the reuse property this
@@ -103,9 +103,9 @@ def test_example_config_matches_bundled_fixture_paths():
 
 
 def test_spectra_dispatch_picks_the_matching_node_type_by_extension():
-    # Regression test: MzMlSpectra and MgfSpectra are two concrete NodeTypes joined by
+    # Regression test: MzMlSpectra and MgfSpectra are two concrete Node subclasses joined by
     # a union (SpectraFile = MzMlSpectra | MgfSpectra), not one shared type with a
-    # runtime-chosen filename -- NodeType filenames are fixed per class, so an .mgf
+    # runtime-chosen filename -- Node filenames are fixed per class, so an .mgf
     # input must never get symlinked under a fixed "spectra.mzml" name. Verified
     # against real Sage: a mismatched extension doesn't error, it silently parses as
     # zero spectra ("0 spectra/s", 0 PSMs, exit 0).
@@ -113,14 +113,14 @@ def test_spectra_dispatch_picks_the_matching_node_type_by_extension():
 
     pipeline = Pipeline(DAG("/results"))
     mzml_node = example.raw_spectra(pipeline, "/data/run.mzML")
-    assert mzml_node.node_type is example.MzMlSpectra
+    assert type(mzml_node) is example.MzMlSpectra
     assert issubclass(example.MzMlSpectra, example.SpectraFile)
 
     mgf_node = example.raw_spectra(pipeline, "/data/run.mgf")
-    assert mgf_node.node_type is example.MgfSpectra
+    assert type(mgf_node) is example.MgfSpectra
     assert issubclass(example.MgfSpectra, example.SpectraFile)
 
-    assert mzml_node.node_type is not mgf_node.node_type
+    assert type(mzml_node) is not type(mgf_node)
 
     import pytest
 
@@ -130,7 +130,7 @@ def test_spectra_dispatch_picks_the_matching_node_type_by_extension():
 
 def test_spectra_file_is_a_union_not_a_shared_base_type():
     # If this ever regresses (e.g. someone replaces the union with a shared abstract
-    # NodeType base that both MzMlSpectra and MgfSpectra inherit from), a NodeType
+    # Node base that both MzMlSpectra and MgfSpectra inherit from), a Node
     # base's own `filename` -- or the lack of any real filename to fall back on --
     # would risk every .mgf input silently getting symlinked under a ".mzml" name
     # again, or vice versa -- see the test above.

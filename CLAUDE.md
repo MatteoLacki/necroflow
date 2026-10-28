@@ -118,7 +118,7 @@ These have been true since the June refactors and are load-bearing design decisi
   after every job.
 - **`.rip/` per-RuleCall metadata**: `dependencies.toml` (lineage, mixed-input plain values,
   and consumed immutable parent hashes), `{filename}.hash`, `job.log`, `state`, `run.toml` (call timings/size), `graph.tgf`
-  (ancestor DAG in Trivial Graph Format), `{filename}.invalidation` (NodeType invalidator token, when set).
+  (ancestor DAG in Trivial Graph Format), `{filename}.invalidation` (Node invalidator token, when set).
 - **Canonicalization is eager; labels are explicit.** Every `Pipeline(dag, ...)` references a
   shared DAG. A rule call fingerprints and interns its `RuleCall` immediately; equivalent calls
   return identical Node objects. Attribute/item assignment records qualified Pipeline-local labels.
@@ -147,10 +147,10 @@ These have been true since the June refactors and are load-bearing design decisi
   and both fall back to physical copies. Linux copies use destination permission policy
   without preserving source ACLs, ownership, or extended attributes.
   `manifest.toml` records each visible path, canonical origin node key, and content hash.
-- **Filename-less NodeTypes are input-only.** A `NodeType` with `filename = None` may be
+- **Filename-less Node subclasses are input-only.** A `Node` with `filename = None` may be
   used as a fixed, union, or variadic input contract, but every Command output must resolve to an
   explicit filename. Command declaration rejects filename-less outputs; output names are not fallbacks.
-- **Mixed fixed inputs select their branch per call.** A union containing NodeType and plain-value
+- **Mixed fixed inputs select their branch per call.** A union containing Node and plain-value
   arms remains positional. A matching Node creates a parent edge; a matching plain value creates no
   edge and enters provenance as a named canonical value along with positional input order. Only
   matching plain values may be defaults, and positional defaults must be trailing. Mixed variadic
@@ -160,8 +160,8 @@ These have been true since the June refactors and are load-bearing design decisi
   lives outside the node store and is passed in as a path. A `mutable=True` Command flag existed for
   this until 2026-09-16 and was removed: it stopped external byte edits from staling consumers but
   could not stop the workdir itself being discarded whenever identity moved.
-- **Variadic Node inputs retain groups.** `tuple[NodeType, ...]` accepts an ordered
-  tuple, while `Annotated[tuple[NodeType, ...], Many(...)]` applies inclusive size
+- **Variadic Node inputs retain groups.** `tuple[Node, ...]` accepts an ordered
+  tuple, while `Annotated[tuple[Node, ...], Many(...)]` applies inclusive size
   bounds. RuleCall/fingerprint/command contexts retain named tuple groups;
   `RuleCall.parents` is their declaration-order flattening for graph traversal.
 - **Addresses are eager.** The Pipeline owns fingerprint/shell policy while its DAG owns the
@@ -203,7 +203,7 @@ running calls finish and are recorded, and that failure is re-raised; with it, a
 
 ```
 src/necroflow/
-  nodes.py           — Node and NodeType typed output concepts
+  nodes.py           — Node and Node typed output concepts
   rule_call.py       — concrete invocation: identity, command realization, `.rip/` state and
                        dependency metadata
   contexts.py        — immutable NamedValues and CommandArgs public views
@@ -259,14 +259,17 @@ Tests live in `tests/` (one file per concern); runnable examples in `examples/`.
 Bare `@command` and option-only `@command(repeat=...)` accept outputs followed by
 one literal `command = "..."` or zero-argument nested `def command()`, then the
 output return. Existing decorator/factory syntax remains supported. Resource
-parameters are keyword-only at invocation and excluded from both identity hashes.
+parameters follow the declared Python signature and are excluded from both identity hashes.
 `DAG(..., resources={rule_name: {resource: value}})` and CLI `--resources FILE`
-apply file overrides before interning: file > call keyword > declaration default.
+apply file overrides before interning: file > call argument > declaration default.
 New Resource calls with conflicting requests fail; legacy-only constraint
 interning retains its existing first-declaration behavior. Unknown file rule or
 resource names fail before execution. Stored provenance records executed resources
 outside config; resource-only changes reuse caches without rewriting old metadata.
 
-`Node[T]` retains its NodeType for static analysis. `output(T)` returns `Node[T]`
-in annotations; runtime behavior stays declaration-only. Input annotations remain
-NodeType contracts and all existing hashes remain unchanged.
+Artifact classes subclass `Node`; outputs are instances of those classes.
+`output(T)` has static return type `T` and remains declaration-only. Decorated
+commands preserve parameter and return types, including tuple outputs. Nested
+builders receive artifact objects and use `.path` for filesystem access.
+Templates and external CommandArgs callbacks retain path rendering. Template
+hashes remain unchanged; nested builders use a new binding identity marker.

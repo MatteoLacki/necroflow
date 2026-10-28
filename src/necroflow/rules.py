@@ -18,11 +18,13 @@ from typing import (
     get_args,
     get_origin,
     overload,
+    ParamSpec,
+    TYPE_CHECKING,
 )
 
 from necroflow.containers import docker_input_names, split_prefix
 from necroflow.contexts import NamedValues, CommandArgs
-from necroflow.nodes import Node, NodeType, _is_nodetype
+from necroflow.nodes import Node, _is_nodetype
 from necroflow.fingerprints import validate_command_callback
 from necroflow.workflow import _active_pipeline
 from necroflow.declarations import parse_declaration, is_inline_declaration
@@ -30,8 +32,12 @@ from necroflow.resources import normalize_resource
 
 BUILTIN_COMMAND_PLACEHOLDERS = {"workdir", "constraint"}
 
+if TYPE_CHECKING:
+    from necroflow.pipeline import Pipeline
+
+_Params = ParamSpec("_Params")
 _ReturnT = TypeVar("_ReturnT")
-_OutputT = TypeVar("_OutputT", bound=NodeType)
+_OutputT = TypeVar("_OutputT", bound=Node)
 
 _SI_SUFFIXES = {"K": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15}
 _BIN_SUFFIXES = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50}
@@ -123,7 +129,7 @@ class _NodeInputContract:
 
 
 def _pascal_to_snake(name: str) -> str:
-    """Convert a NodeType class name into its default output name."""
+    """Convert a Node class name into its default output name."""
     return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
@@ -133,7 +139,7 @@ def _union_members(ann) -> tuple:
 
 
 def _is_nodetype_union(ann) -> bool:
-    """Return whether an annotation is a non-empty all-NodeType union."""
+    """Return whether an annotation is a non-empty all-Node union."""
     members = _union_members(ann)
     return bool(members) and all(_is_nodetype(member) for member in members)
 
@@ -143,9 +149,9 @@ def _node_input_contract(
 ) -> _NodeInputContract | None:
     """Classify an input annotation as a positional Node contract or config.
 
-    Fixed NodeTypes and unions containing NodeTypes produce positional contracts.
+    Fixed Node subclasses and unions containing Node subclasses produce positional contracts.
     A fixed mixed union may select either a managed Node or a plain value.
-    ``tuple[NodeType, ...]`` produces a variadic contract, optionally bounded
+    ``tuple[Node, ...]`` produces a variadic contract, optionally bounded
     by one ``Many`` item in ``Annotated`` metadata. Invalid or ambiguous Node
     declarations raise immediately; ordinary config annotations return
     ``None`` and are therefore handled as keyword inputs by ``Command``.
@@ -175,14 +181,14 @@ def _node_input_contract(
                 ):
                     raise TypeError(
                         f"Command {rule_name!r}: input {input_name!r} mixes "
-                        "NodeType and non-NodeType tuple element union members"
+                        "Node and non-Node tuple element union members"
                     )
             if _is_nodetype(element_type) or _is_nodetype_union(element_type):
                 return _NodeInputContract(element_type, variadic=True, many=many)
             if many is not None:
                 raise TypeError(
                     f"Command {rule_name!r}: input {input_name!r} uses Many with "
-                    "a tuple whose element type is not a NodeType"
+                    "a tuple whose element type is not a Node"
                 )
             return None
         if many is not None or any(
@@ -190,7 +196,7 @@ def _node_input_contract(
         ):
             raise TypeError(
                 f"Command {rule_name!r}: input {input_name!r} uses a fixed-length "
-                "Node tuple; use tuple[NodeType, ...]"
+                "Node tuple; use tuple[Node, ...]"
             )
         return None
 
@@ -209,7 +215,7 @@ def _node_input_contract(
 
 
 def _type_contract_name(ann) -> str:
-    """Render a NodeType contract for validation error messages."""
+    """Render a Node contract for validation error messages."""
     members = _union_members(ann)
     if members:
         return " | ".join(sorted(_type_contract_name(member) for member in members))
@@ -217,7 +223,7 @@ def _type_contract_name(ann) -> str:
 
 
 def _matches_node_type(actual, expected) -> bool:
-    """Return whether an actual NodeType satisfies a type or union contract."""
+    """Return whether an actual Node satisfies a type or union contract."""
     members = _union_members(expected)
     if members:
         return any(
@@ -243,20 +249,20 @@ def _matches_value_type(value: Any, expected: Any) -> bool:
     return False
 
 
-def output(node_type: type[_OutputT]) -> Node[_OutputT]:
+def output(node_type: type[_OutputT]) -> _OutputT:
     """Declare an output in a decorated rule body.
 
-    The decorator parses ``name = output(NodeType)`` assignments without
-    executing them. The generic return annotation retains the declared NodeType:
-    ``output(Bam)`` infers ``Node[Bam]`` in static analyzers.
+    The decorator parses ``name = output(Node)`` assignments without
+    executing them. The generic return annotation retains the declared Node:
+    ``output(Bam)`` infers ``Bam`` in static analyzers.
     """
     raise RuntimeError(
-        "output() is declaration-only; use it as name = output(NodeType) "
+        "output() is declaration-only; use it as name = output(Node) "
         "inside a decorated rule declaration"
     )
 
 
-class Command(Generic[_ReturnT]):
+class Command(Generic[_Params, _ReturnT]):
     """A declared rule: validates inputs and produces output Nodes when called."""
 
     def __init__(
@@ -272,6 +278,7 @@ class Command(Generic[_ReturnT]):
         materializer: Callable | None = None,
         input_defaults: Mapping[str, Any] | None = None,
         resource_defaults: Mapping[str, Any] | None = None,
+        signature: inspect.Signature | None = None,
     ):
         """Validate and store a rule declaration and derive its call schema."""
         self.__name__ = name
@@ -303,11 +310,14 @@ class Command(Generic[_ReturnT]):
             for input_name, contract in contracts.items()
             if contract is None
         }
+        self._declaration_signature = signature
         self._input_defaults, self._pos_input_defaults = self._validated_input_defaults(
             input_defaults, contracts
         )
         self._validate_config_values(self._input_defaults)
-        self._signature = self._build_signature()
+        self._signature = (
+            signature if signature is not None else self._build_signature()
+        )
         reserved = BUILTIN_COMMAND_PLACEHOLDERS & (
             set(inputs.specs) | set(outputs.specs) | set(self.resource_defaults)
         )
@@ -351,16 +361,16 @@ class Command(Generic[_ReturnT]):
 
     @staticmethod
     def _validate_outputs(name: str, outputs: Outputs) -> None:
-        """Require concrete NodeTypes with explicit filenames for every output."""
+        """Require concrete Node subclasses with explicit filenames for every output."""
         for output_name, output_type in outputs.specs.items():
             if not _is_nodetype(output_type):
                 raise TypeError(
-                    f"Command {name!r}: output {output_name!r} must be a NodeType, "
+                    f"Command {name!r}: output {output_name!r} must be a Node, "
                     f"got {output_type!r}"
                 )
             if output_type.filename is None:
                 raise TypeError(
-                    f"Command {name!r}: output {output_name!r} NodeType "
+                    f"Command {name!r}: output {output_name!r} Node "
                     f"{output_type.__name__} must define filename"
                 )
 
@@ -415,7 +425,7 @@ class Command(Generic[_ReturnT]):
         for name, _contract in self._pos_inputs:
             if name in positional_defaults:
                 seen_default = True
-            elif seen_default:
+            elif seen_default and self._declaration_signature is None:
                 raise TypeError(
                     f"Command {self.__name__!r}: positional input {name!r} without a "
                     "default follows a positional input with a default"
@@ -564,8 +574,8 @@ class Command(Generic[_ReturnT]):
                         f"{name}: {position!r} expected Node, "
                         f"got {type(parent).__name__!r}"
                     )
-                if not _matches_node_type(parent.node_type, contract.element_type):
-                    got = parent.node_type.__name__ if parent.node_type else "None"
+                if not _matches_node_type(type(parent), contract.element_type):
+                    got = type(parent).__name__ if type(parent) else "None"
                     raise TypeError(
                         f"{name}: {position!r} expected "
                         f"{_type_contract_name(contract.element_type)}, got {got}"
@@ -636,6 +646,14 @@ class Command(Generic[_ReturnT]):
             value = nodes[0]
         return cast(_ReturnT, value)
 
+    @overload
+    def __call__(self, *args: _Params.args, **kwargs: _Params.kwargs) -> _ReturnT: ...
+
+    @overload
+    def __call__(
+        self, pipeline: Pipeline, /, *args: _Params.args, **kwargs: _Params.kwargs
+    ) -> _ReturnT: ...
+
     def __call__(self, *args: Any, **kwargs: Any) -> _ReturnT:
         """Compile using an explicit Pipeline or the active workflow context."""
         from necroflow.pipeline import Pipeline
@@ -702,7 +720,7 @@ def command(
     doc: str | None = None,
     repeat: int = 1,
     **options,
-) -> Command[Any]: ...
+) -> Command[..., Any]: ...
 
 
 @overload
@@ -711,13 +729,13 @@ def command(
     *,
     repeat: int = 1,
     **constraints,
-) -> Callable[[Callable[..., _ReturnT]], Command[_ReturnT]]: ...
+) -> Callable[[Callable[_Params, _ReturnT]], Command[_Params, _ReturnT]]: ...
 
 
 @overload
 def command(
-    cmd: Callable[..., _ReturnT], *, repeat: int = 1, **constraints
-) -> Command[_ReturnT]: ...
+    cmd: Callable[_Params, _ReturnT], *, repeat: int = 1, **constraints
+) -> Command[_Params, _ReturnT]: ...
 
 
 def command(
@@ -766,7 +784,7 @@ def command(
             factory_constraints, Constraints
         ):
             raise TypeError("factory command constraints must be a Constraints object")
-        return Command[Any](
+        return Command[..., Any](
             name=name,
             inputs=inputs,
             outputs=outputs,
@@ -779,7 +797,7 @@ def command(
     if name is not None or doc is not None:
         raise TypeError("name= and doc= are only valid for factory commands")
 
-    def decorator(fn: Callable[..., _ReturnT]) -> Command[_ReturnT]:
+    def decorator(fn: Callable[_Params, _ReturnT]) -> Command[_Params, _ReturnT]:
         """Build a Command from a decorated declaration and captured command policy."""
         inline = cmd is None
         parsed = parse_declaration(fn, inline=inline)
@@ -791,8 +809,8 @@ def command(
         )
         input_defaults = _decorated_input_defaults(fn, set(inputs))
         return cast(
-            Command[_ReturnT],
-            Command[Any](
+            Command[_Params, _ReturnT],
+            Command[..., Any](
                 name=rule_name,
                 inputs=Inputs(**inputs),
                 outputs=Outputs(**outputs),
@@ -802,6 +820,7 @@ def command(
                 info=info,
                 repeat=repeat,
                 input_defaults=input_defaults,
+                signature=inspect.signature(fn),
             ),
         )
 
@@ -831,9 +850,7 @@ def _validate_builtin_declaration(fn: Callable, kind: str) -> tuple:
         raise TypeError(f"{kind} rule {name!r} must declare exactly one output")
     output_name, output = next(iter(outputs.items()))
     if not _is_nodetype(output):
-        raise TypeError(
-            f"{kind} rule {name!r} output must be a NodeType, got {output!r}"
-        )
+        raise TypeError(f"{kind} rule {name!r} output must be a Node, got {output!r}")
     return name, parameter.name, output_name, output, info
 
 
@@ -845,12 +862,13 @@ def _make_text_file_rule(
     encoding: str,
     output_name: str | None,
     info: str | None,
-) -> Command[Node]:
+    signature: inspect.Signature | None = None,
+) -> Command[..., Node]:
     """Build the internal materializer-backed text-file Command."""
     if input_name in BUILTIN_COMMAND_PLACEHOLDERS:
         raise ValueError(f"text_file input_name {input_name!r} is reserved")
     if not _is_nodetype(output):
-        raise TypeError(f"text_file output must be a NodeType, got {output!r}")
+        raise TypeError(f"text_file output must be a Node, got {output!r}")
     oname = output_name or _pascal_to_snake(output.__name__)
     recipe = (
         f"necroflow.text_file/v1:encoding={encoding}:"
@@ -871,6 +889,7 @@ def _make_text_file_rule(
         info=info or f"Write {input_name!r} to {output.__name__}.",
         recipe_identity=recipe,
         materializer=materializer,
+        signature=signature,
     )
 
 
@@ -881,7 +900,7 @@ def text_file_rule(
     input_name: str = "text",
     encoding: str = "utf-8",
     output_name: str | None = None,
-) -> Command[Node]:
+) -> Command[..., Node]:
     """Return a built-in rule that writes a string config value to a file."""
     return _make_text_file_rule(
         name,
@@ -893,13 +912,13 @@ def text_file_rule(
     )
 
 
-def text_file(fn: Callable[..., _ReturnT], /) -> Command[_ReturnT]:
+def text_file(fn: Callable[_Params, _ReturnT], /) -> Command[_Params, _ReturnT]:
     """Declare a built-in text-file rule. Use text_file_rule(...) for a non-default encoding."""
     name, input_name, output_name, output, info = _validate_builtin_declaration(
         fn, "text_file"
     )
     return cast(
-        Command[_ReturnT],
+        Command[_Params, _ReturnT],
         _make_text_file_rule(
             name,
             output,
@@ -907,6 +926,7 @@ def text_file(fn: Callable[..., _ReturnT], /) -> Command[_ReturnT]:
             encoding="utf-8",
             output_name=output_name,
             info=info,
+            signature=inspect.signature(fn),
         ),
     )
 
@@ -918,12 +938,13 @@ def _make_symlink_file_rule(
     path_arg: str,
     output_name: str | None,
     info: str | None,
-) -> Command[Node]:
+    signature: inspect.Signature | None = None,
+) -> Command[..., Node]:
     """Build the internal shell-backed external-file symlink Command."""
     if path_arg in BUILTIN_COMMAND_PLACEHOLDERS:
         raise ValueError(f"symlink_file path_arg {path_arg!r} is reserved")
     if not _is_nodetype(output):
-        raise TypeError(f"symlink_file output must be a NodeType, got {output!r}")
+        raise TypeError(f"symlink_file output must be a Node, got {output!r}")
     oname = output_name or _pascal_to_snake(output.__name__)
     return Command(
         name=name,
@@ -931,6 +952,7 @@ def _make_symlink_file_rule(
         outputs=Outputs(**{oname: output}),
         command=f'ln -s "$(realpath {{{path_arg}}})" {{{oname}}}',
         info=info or f"Symlink an external file into {output.__name__}.",
+        signature=signature,
     )
 
 
@@ -940,7 +962,7 @@ def symlink_file_rule(
     *,
     path_arg: str = "path",
     output_name: str | None = None,
-) -> Command[Node]:
+) -> Command[..., Node]:
     """Return a rule that symlinks an external path into the output tree."""
     return _make_symlink_file_rule(
         name,
@@ -951,18 +973,19 @@ def symlink_file_rule(
     )
 
 
-def symlink_file(fn: Callable[..., _ReturnT], /) -> Command[_ReturnT]:
+def symlink_file(fn: Callable[_Params, _ReturnT], /) -> Command[_Params, _ReturnT]:
     """Declare a built-in external-file symlink rule."""
     name, path_arg, output_name, output_type, info = _validate_builtin_declaration(
         fn, "symlink_file"
     )
     return cast(
-        Command[_ReturnT],
+        Command[_Params, _ReturnT],
         _make_symlink_file_rule(
             name,
             output_type,
             path_arg=path_arg,
             output_name=output_name,
             info=info,
+            signature=inspect.signature(fn),
         ),
     )

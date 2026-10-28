@@ -21,9 +21,9 @@ def align(fastq: Fastq, ref: str):
 ```
 
 - First decorator argument = command template; remaining keywords = resource constraints.
-- Function parameters: NodeType annotations are positional node inputs; plain types
+- Function parameters: Node annotations are positional node inputs; plain types
   (`str`, `int`, unions) are config keywords.
-- Outputs use real local assignments: `name = output(NodeType)`. Return every
+- Outputs use real local assignments: `name = output(Node)`. Return every
   declared name exactly once, using a tuple for multiple outputs. The docstring becomes
   `node.info`.
 - Call the decorated name directly: `bam, log = align(fastq_node, ref="hg38")`.
@@ -61,7 +61,7 @@ input/output, or the constraint.
 - Config values are fingerprinted by value. A file path string does not hash that file.
   Ingest external datasets with `@symlink_file` or
   `symlink_file_rule(name, OutputType)` so source edits enter stale detection.
-- Subtypes satisfy parent NodeType inputs; declare the most general true contract.
+- Subtypes satisfy parent Node inputs; declare the most general true contract.
 
 ## Built-in file rules
 

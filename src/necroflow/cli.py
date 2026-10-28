@@ -367,7 +367,7 @@ def _node_display_label(node, label: str | None = None) -> str:
         label
         or node.rule_call.dag.label_for(node)
         or node.output_name
-        or (node.node_type.__name__ if node.node_type else "output")
+        or (type(node).__name__ if type(node) else "output")
     )
 
 
@@ -390,7 +390,7 @@ def _node_json(node, state: str | None = None) -> dict:
         "labels": list(node.rule_call.dag.labels_for(node)),
         "output_name": node.output_name,
         "rule": node.rule.__name__ if node.rule else "unknown",
-        "node_type": node.node_type.__name__ if node.node_type else None,
+        "node_type": type(node).__name__,
         "state": state,
         "path": str(node.path) if node.path is not None else None,
         "resources": dict(node.rule_call.resources),

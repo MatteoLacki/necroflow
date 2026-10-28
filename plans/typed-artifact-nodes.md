@@ -1,6 +1,6 @@
 # Typed artifact nodes
 
-Status: plan only. Design-stage replacement, not a compatibility layer.
+Status: implemented. Node subclasses now describe and instantiate artifacts.
 
 ## Target
 
@@ -129,4 +129,4 @@ retaining parallel old/new examples. No compatibility-only module or test suite.
 
 Use the existing typing fixture and focused runtime tests; add only missing
 behavioral coverage. Run relevant Pyright checks and the full suite once integrated.
-No commit, push, release, or implementation is included in this planning step.
+Pre-implementation checkpoint: 6a5ba54. Implementation remains a separate working-tree change.

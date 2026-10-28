@@ -188,13 +188,13 @@ class Pipeline:
     def nodes(self) -> list[Node]:
         return self._state.nodes_list
 
-    def __getattr__(self, name: str) -> Node:
+    def __getattr__(self, name: str) -> Any:
         try:
             return self._state.node_names[self._qualified_label(name)]
         except KeyError as exc:
             raise AttributeError(name) from exc
 
-    def __getitem__(self, name: str) -> Node:
+    def __getitem__(self, name: str) -> Any:
         if not isinstance(name, str):
             raise TypeError("Pipeline label must be a string")
         return self._state.node_names[self._qualified_label(name)]

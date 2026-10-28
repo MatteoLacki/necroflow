@@ -110,7 +110,7 @@ Fingerprint policy is framework-owned; custom fingerprint providers and the
 
 ### Custom invalidation
 
-A `NodeType` may define an optional `invalidator` callback next to `filename`. The callback receives the concrete `Node` and must return a stable string token. Necroflow stores that token under the node's `.rip/` metadata after a successful run and marks the node `STALE` if the token is missing or changes later.
+A `Node` may define an optional `invalidator` callback next to `filename`. The callback receives the concrete `Node` and must return a stable string token. Necroflow stores that token under the node's `.rip/` metadata after a successful run and marks the node `STALE` if the token is missing or changes later.
 
 ```python
 import hashlib
@@ -119,7 +119,7 @@ from pathlib import Path
 def sha256_of_path(node):
     return hashlib.sha256(Path(node.config["path"]).read_bytes()).hexdigest()
 
-class ToolBinary(NodeType):
+class ToolBinary(Node):
     filename = "tool.ready"
     invalidator = sha256_of_path
 ```
@@ -179,7 +179,7 @@ stored-hash fast path and consumed-hash comparison apply automatically:
 `Path.stat()` follows the symlink to the real file, so editing it normally bumps the
 mtime necroflow sees, invalidates the stored-hash fast path, and exposes changed
 bytes to each downstream consumer. No
-`NodeType.invalidator` is needed for this case — the existing STALE machinery
+`Node.invalidator` is needed for this case — the existing STALE machinery
 already covers it once the file is a real node in the DAG.
 
 This is still **in-place overwrite**, not content-addressed versioning: the
@@ -196,7 +196,7 @@ revisits the original path again, so a later edit to the source file goes
 unnoticed. Use `ln -s`, not `cp`, when the goal is to detect upstream changes.
 (A `cp` import is still the right choice for the *config-file* case in
 [Generated Config Files](generated-config-files.md#external-config-files),
-where the accompanying `NodeType.invalidator` explicitly re-reads the original
+where the accompanying `Node.invalidator` explicitly re-reads the original
 path on every classification — that pattern doesn't rely on the symlink/mtime
 trick at all.)
 

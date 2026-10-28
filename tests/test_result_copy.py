@@ -9,12 +9,12 @@ import sys
 
 import pytest
 
-from necroflow import DAG, NodeType, Pipeline
+from necroflow import DAG, Node, Pipeline
 import necroflow.cli as cli
 from necroflow.rules import Inputs, Outputs, Command
 
 
-class Result(NodeType):
+class Result(Node):
     filename = "result.txt"
 
 
@@ -142,8 +142,8 @@ def test_publication_failure_leaves_completed_nodes_cached(tmp_path, monkeypatch
     """Retrying publication reuses successful nodes after a copy error."""
     factory = tmp_path / "pipeline.py"
     factory.write_text(
-        "from necroflow import NodeType, command, output\n"
-        "class Result(NodeType): filename = 'result.txt'\n"
+        "from necroflow import Node, command, output\n"
+        "class Result(Node): filename = 'result.txt'\n"
         "@command('echo result > {out}')\n"
         "def source():\n"
         "    out = output(Result)\n"

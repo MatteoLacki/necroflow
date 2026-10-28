@@ -3,22 +3,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from necroflow import NodeType, Pipeline, Resource, command, text_file, output, workflow
+from necroflow import Node, Pipeline, Resource, command, text_file, output, workflow
 
 
-class RawText(NodeType):
+class RawText(Node):
     filename = "input.txt"
 
 
-class ToolConfig(NodeType):
+class ToolConfig(Node):
     filename = "tool_config.json"
 
 
-class ProcessedText(NodeType):
+class ProcessedText(Node):
     filename = "processed.txt"
 
 
-class Summary(NodeType):
+class Summary(Node):
     filename = "summary.txt"
 
 

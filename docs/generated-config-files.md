@@ -47,12 +47,12 @@ When the external config should be a typed artifact in the DAG, add an import or
 copy rule and pass the resulting node downstream:
 
 ```python
-from necroflow import NodeType, Pipeline, command, output, workflow
+from necroflow import Node, Pipeline, command, output, workflow
 
-class SageConfig(NodeType):
+class SageConfig(Node):
     filename = "sage.json"
 
-class SageOut(NodeType):
+class SageOut(Node):
     filename = "results.sage.tsv"
 @command("cp {path} {sage_config}")
 def import_sage_config(path: str):
@@ -69,7 +69,7 @@ def pipeline(P: Pipeline, config: dict) -> None:
 ```
 
 This keeps the config as a normal upstream artifact. If in-place edits to the
-source config should invalidate downstream work, add a `NodeType.invalidator` to
+source config should invalidate downstream work, add a `Node.invalidator` to
 the imported config type that reads the copied config content, or make the config
 producer itself a necroflow rule.
 
@@ -83,9 +83,9 @@ as `printf {config}`.
 
 ```python
 import json
-from necroflow import NodeType, command, text_file, output
+from necroflow import Node, command, text_file, output
 
-class SageConfig(NodeType):
+class SageConfig(Node):
     filename = "sage.json"
 @text_file
 def write_sage_config(text: str):

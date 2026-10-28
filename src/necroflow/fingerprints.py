@@ -247,9 +247,15 @@ def _command_identity(command: Any, recipe_identity: str | None) -> Any:
     if isinstance(command, str):
         return {"kind": "shell", "template": command}
     if callable(command):
+        from necroflow.command_builders import NestedCommand
+
         tree, _source_path = command_ast(command)
         return {
-            "kind": "python",
+            "kind": (
+                "python-nested-artifacts-v1"
+                if isinstance(command, NestedCommand)
+                else "python"
+            ),
             "python": python_identity(),
             "ast": tree,
         }

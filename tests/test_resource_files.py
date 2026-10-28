@@ -13,8 +13,8 @@ from test_inline_commands import inline
 @pytest.fixture
 def job(tmp_path):
     factory = tmp_path / "workflow.py"
-    factory.write_text("""from necroflow import command, output, Resource, NodeType
-class Result(NodeType):
+    factory.write_text("""from necroflow import command, output, Resource, Node
+class Result(Node):
     filename = "result.txt"
 @command
 def make(threads: Resource[int] = 1):

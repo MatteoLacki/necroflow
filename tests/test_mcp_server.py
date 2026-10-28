@@ -10,9 +10,9 @@ import necroflow.cli as cli_core
 import necroflow.mcp_server as mcp_server
 
 FACTORY_SRC = textwrap.dedent("""\
-    from necroflow import Pipeline, NodeType, command, output
-    class A(NodeType): filename = "a.txt"
-    class B(NodeType): filename = "b.txt"
+    from necroflow import Pipeline, Node, command, output
+    class A(Node): filename = "a.txt"
+    class B(Node): filename = "b.txt"
     @command("echo {v} > {a}")
     def make_a(v: str):
         a = output(A)

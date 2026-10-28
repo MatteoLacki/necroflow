@@ -19,13 +19,13 @@ The decorator form below remains supported as syntactic sugar.
 
 For a decorated rule, the function signature is the complete input schema.
 Every parameter must have a type annotation: Node dependencies use a
-`NodeType` contract, scalar/config inputs use ordinary Python types, and a
+`Node` contract, scalar/config inputs use ordinary Python types, and a
 fixed mixed union may select either kind at call time.
 Necroflow rejects an unannotated parameter when the decorator constructs the
 Command, even if the command does not reference that parameter. Calls likewise
 reject keyword inputs absent from the declared schema before fingerprinting or
 DAG interning. The function's return annotation is optional and ignored;
-outputs are declared only with `output(ConcreteNodeType)`.
+outputs are declared only with `output(ConcreteNode)`.
 
 ## Inline commands and resources
 
@@ -59,15 +59,15 @@ def align(reads: Fastq, threads: Resource[int] = 4):
     def command():
         return (
             f"align -t {threads} "
-            f"{shlex.quote(str(reads))} > {shlex.quote(str(bam))}"
+            f"{shlex.quote(str(reads.path))} > {shlex.quote(str(bam.path))}"
         )
 
     return bam
 ```
 
 The outer declaration is parsed, never executed. Nested builders run during command
-realization, before the external command starts. Inputs and outputs are resolved
-Paths, variadic inputs are tuples of Paths, mixed values and scalar settings retain
+realization, before the external command starts. Inputs and outputs are instances of their declared Node subclasses; use
+`.path` for filesystem access. Variadic inputs are tuples of artifacts. Mixed values and scalar settings retain
 their values, and resources are resolved integers. Builders own shell quoting.
 They may use module imports/helpers, but cannot capture unrelated outer closure
 values. They must be synchronous, non-generator, undecorated functions returning
@@ -175,7 +175,7 @@ like changing any other config input.
 
 ## Mixed Node/value inputs
 
-A fixed union may combine one or more `NodeType` contracts with ordinary Python
+A fixed union may combine one or more `Node` contracts with ordinary Python
 types. It remains one positional logical input:
 
 ```python
@@ -189,7 +189,7 @@ P.external = consume(P, "/data/external.bam")  # no parent dependency
 P.absent = consume(P)           # same call identity as consume(P, None)
 ```
 
-At call time, a managed `Node` is checked against the NodeType arms and must
+At call time, a managed `Node` is checked against the Node arms and must
 belong to the compiling Pipeline's DAG. Any other value is checked against the
 non-Node arms. A matching Node creates a DAG edge and contributes parent lineage
 to provenance. A matching plain value creates no edge and contributes its named,
@@ -211,7 +211,7 @@ dependency groups.
 
 ## Variadic Node inputs
 
-Use `tuple[NodeType, ...]` when a rule consumes an ordered number of Nodes
+Use `tuple[Node, ...]` when a rule consumes an ordered number of Nodes
 that is only known while the workflow runs. The call receives one actual
 tuple for that named input:
 
@@ -233,7 +233,7 @@ A plain `tuple[Bam, ...]` accepts zero or more Nodes. `Many()` changes the
 default minimum to one; `min` and `max` are inclusive, and `max=None` is
 unbounded. Values must be tuples rather than lists, generators, or expanded
 positional arguments. Tuple elements retain their order and must belong to the
-same DAG as the compiling Pipeline. NodeType unions also work, for example
+same DAG as the compiling Pipeline. Node unions also work, for example
 `tuple[Bam | Cram, ...]`.
 
 Several variadic groups may appear alongside fixed Node inputs. Each group is
@@ -356,12 +356,12 @@ containing `,`, `"`, or newlines are rejected.
 Import `output` with the decorator and bind every output to a real local name:
 
 ```python
-from necroflow import NodeType, command, output
+from necroflow import Node, command, output
 
-class Bam(NodeType):
+class Bam(Node):
     filename = "aligned.bam"
 
-class Log(NodeType):
+class Log(Node):
     filename = "align.log"
 
 @command("aligner {reads} > {bam} 2> {log}")
@@ -372,7 +372,7 @@ def align(reads: str):
 ```
 
 The decorated body is a declaration, not executable rule code. After an optional
-docstring it contains one or more top-level `name = output(ConcreteNodeType)`
+docstring it contains one or more top-level `name = output(ConcreteNode)`
 assignments and a final return of each declared name exactly once. The return order
 defines the rule call's single-node or tuple shape. This is ordinary valid Python, so
 linters understand that the names are bound and type checkers can preserve the return
@@ -509,7 +509,7 @@ for node in P.nodes:
 
 ## Types and subtypes
 
-NodeTypes form an inheritance hierarchy — a rule accepting `Bam` also accepts `SortedBam`:
+Node subclasses form an inheritance hierarchy — a rule accepting `Bam` also accepts `SortedBam`:
 
 ```python
 class SortedBam(Bam):
@@ -528,10 +528,10 @@ def quantify(bam: SortedBam, gene_model: str):  # only accepts sorted bam
     return counts
 ```
 
-The same pattern is useful for format families. Define a base `NodeType` for the
+The same pattern is useful for format families. Define a base `Node` for the
 format contract, then make every concrete output subclass it. Downstream rules
 can accept the base class when they only care that the input is a valid member
-of that family. A `NodeType` whose `filename` is `None` is input-only:
+of that family. A `Node` whose `filename` is `None` is input-only:
 using it in `output(...)` or `Outputs(...)` raises `TypeError` when the Command is
 declared. Every concrete output type must resolve to a non-`None` filename;
 necroflow does not infer one from the output variable or mapping key.
@@ -540,7 +540,7 @@ This makes a filename-less base class an abstract format contract without
 requiring a separate marker:
 
 ```python
-class MmappetDataset(NodeType):
+class MmappetDataset(Node):
     """Base type for mmappet directory outputs."""
 
 
@@ -552,7 +552,7 @@ class FilteredPrecursors(MmappetDataset):
     filename = "filtered.mmappet"
 
 
-class IndexedDataset(NodeType):
+class IndexedDataset(Node):
     """Base type for outputs with a ready-to-query index."""
 
 
@@ -591,7 +591,7 @@ both filtered precursors and indexed". Use a union for alternatives:
 Mixed unions such as `PrecursorTable | str | None` additionally allow a plain
 positional value or absence under the mixed-input rules above.
 
-Unions are for inputs only. A rule output should be a concrete `NodeType`, not a
+Unions are for inputs only. A rule output should be a concrete `Node`, not a
 union, because necroflow needs one exact artifact type to choose the filename,
 node identity, downstream type, and provenance shape. If two rules can produce
 alternative formats, give each producer a concrete output type and let downstream
@@ -648,19 +648,25 @@ recipe or provenance identity.
 
 ## Generic output typing
 
-`output(ProcessedText)` is inferred as `Node[ProcessedText]`, retaining the output
+`output(ProcessedText)` is inferred as `ProcessedText`, retaining the output
 contract for LSP completion and static checks. Existing declarations need no changes.
 An explicit return annotation is optional:
 
 ```python
 @command
-def process_text(raw_text: RawText) -> Node[ProcessedText]:
+def process_text(raw_text: RawText) -> ProcessedText:
     processed_text = output(ProcessedText)
     command = "tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}"
     return processed_text
 ```
 
-Multiple outputs infer `tuple[Node[Bam], Node[Log]]`. The declaration's input
-annotations remain NodeType contracts (`RawText`, not `Node[RawText]`); this change
-only preserves output type information. Bare `Node` annotations remain supported.
-Runtime construction, output parsing, and fingerprints are unchanged.
+Multiple outputs infer `tuple[Bam, Log]`. Input annotations describe actual
+artifact instances passed by callers and received by nested builders. Decorated
+commands preserve parameter types and Python argument binding, including
+positional-only and keyword-only parameters. Bare `Node` accepts any artifact.
+Dynamic Pipeline labels have no static subtype information; keep the direct
+command result when precise typing matters.
+
+Outputs are instances of their declared subclasses. Templates keep existing
+fingerprints; nested builders carry a new binding identity marker. Return
+annotations do not replace explicit `output(...)` declarations.

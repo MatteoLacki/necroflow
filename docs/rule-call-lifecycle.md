@@ -174,8 +174,8 @@ compiled, the resulting FASTQ is a parent Node.
 ## 4. Inputs and configuration are validated
 
 The rule validates Node inputs (positional or by name) against declared
-NodeTypes and config values against their declared Python types. A fixed mixed
-union works the same way: a Node selects its NodeType arm, while any other
+Node subclasses and config values against their declared Python types. A fixed mixed
+union works the same way: a Node selects its Node arm, while any other
 value selects a matching non-Node arm. Decorated command rules derive scalar/config and mixed
 value defaults from their Python signature; explicit Command and factory
 construction use ``input_defaults``. Command construction rejects unknown or
@@ -304,17 +304,18 @@ call.relative_path = Path(rule.__name__) / provenance_hash
 call.workdir = S.dag.nodes_dir / call.relative_path
 ```
 
-Each output receives its declared `NodeType.filename`. Command construction has
-already rejected output NodeTypes whose `filename` is `None`; filename-less
-NodeTypes remain valid as input contracts, but there is no output-name fallback:
+Each output receives its declared `Node.filename`. Command construction has
+already rejected output Node subclasses whose `filename` is `None`; filename-less
+Node subclasses remain valid as input contracts, but there is no output-name fallback:
 
 ```python
 node.relative_path = call.relative_path / output_filename
 node.path = S.dag.nodes_dir / node.relative_path
 ```
 
-`Node` stores only `output_name`, `node_type`, `relative_path`, `path`, `rule_call`, `state`,
-and `info`. `config`, `rule`, `command`, `parents`, and `output_nodes` are not
+Each artifact is an instance of its declared `Node` subclass and stores
+`output_name`, `relative_path`, `path`, `rule_call`, and `info`.
+Its class supplies `filename` and `invalidator`. `config`, `rule`, `command`, `parents`, and `output_nodes` are not
 copied onto the Node — they are properties that read through `node.rule_call`.
 One `RuleCall` per invocation stays the single place those values live.
 
@@ -332,7 +333,7 @@ rule returns.
 Co-outputs must resolve to distinct paths within their shared hashed workdir.
 Duplicate paths raise `ValueError` during the rule call, before DAG interning or
 filesystem mutation. The error identifies the rule, both output names and
-NodeTypes, and the conflicting filename. Change one output's `NodeType.filename`
+Node subclasses, and the conflicting filename. Change one output's `Node.filename`
 to fix it; if both outputs use the same type, declare a separate subclass with a
 different filename. Renaming an output variable alone does not change its path.
 Inputs retain their parent calls' paths, so matching basenames across distinct
@@ -529,7 +530,9 @@ The complete resource-file rule set is validated after all jobs compile and befo
 execution. Thread caps bind before inspection/planning; changing an all-threads
 cap clears the realized command so the scheduler and command see the same value.
 
-`Node` is generic in its declared NodeType. `output(T)` has static return type
-`Node[T]`; decorator return inference preserves that type (and tuples of typed
-Nodes). These typing parameters do not enter runtime recipe or provenance identity,
-and return annotations still do not replace output declarations.
+`output(T)` has static return type `T`, where `T` is a Node subclass.
+Command decorators preserve parameters and return types, including tuples.
+Nested builders receive artifact instances and access paths through `.path`;
+templates and external callbacks retain path bindings. Template identities stay
+unchanged; nested-builder identities include an artifact-binding marker.
+Return annotations do not replace output declarations.

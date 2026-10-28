@@ -58,7 +58,7 @@ Built-in `text_file` and `symlink_file` inputs remain explicit.
 ## Mixed Node/value inputs
 
 A fixed union such as `Bam | str | None` is one positional logical input. A
-managed Node selects a NodeType arm, creates a parent edge, and contributes
+managed Node selects a Node arm, creates a parent edge, and contributes
 lineage. A matching plain value creates no edge and contributes a named canonical
 `input_values` entry plus positional order to provenance. `CommandArgs.inputs`
 exposes a resolved Path for the Node branch or the unchanged plain value for the
@@ -86,8 +86,8 @@ AST plus Python implementation/version. Fingerprinting is framework-owned.
 
 ## Variadic Node inputs
 
-`tuple[NodeType, ...]` declares an ordered variadic Node group and accepts an
-actual tuple as one positional rule argument. `Annotated[tuple[NodeType, ...],
+`tuple[Node, ...]` declares an ordered variadic Node group and accepts an
+actual tuple as one positional rule argument. `Annotated[tuple[Node, ...],
 Many()]` defaults to at least one element; `min` and `max` are inclusive and
 `max=None` is unbounded. Several groups may coexist with fixed Node inputs.
 RuleCall and fingerprint contexts retain named tuples, while `RuleCall.parents`
@@ -96,11 +96,11 @@ contains tuples of resolved Paths. Static placeholders quote every group path
 separately; callable commands control custom layouts. Grouping, order, names,
 and `Many` bounds affect the default fingerprint.
 
-## Abstract NodeType contracts
+## Abstract Node contracts
 
-A `NodeType` with `filename = None` is an input-only format contract. Rules may
+A `Node` with `filename = None` is an input-only format contract. Rules may
 accept it and receive Nodes of concrete subclasses, but every declared output
-NodeType must resolve to a non-`None` filename. `Command` construction rejects
+Node must resolve to a non-`None` filename. `Command` construction rejects
 filename-less outputs immediately; output names are not filename fallbacks.
 
 ## RuleCall cache
@@ -109,9 +109,9 @@ RuleCall is atomic cache, state, scheduling, execution, report, and cleanup unit
 
 Persistent state that changes outside the DAG does not belong in a node workdir: a workdir is a function of its declared inputs, so any identity change gives a fresh empty one. Such state belongs outside the node store, passed in as a path. A `mutable=True` Command flag existed for this until 2026-09-16 and was removed -- it stopped external byte changes from staling consumers, but could do nothing about the workdir itself being discarded whenever identity moved, which is the failure that actually costs work.
 
-## NodeType invalidators
+## Node invalidators
 
-`NodeType.invalidator` is optional and defaults to `None`. When set, it is a callable receiving the concrete `Node` and returning a stable `str` token. Necroflow stores the token at `.rip/{filename}.invalidation` after a successful run. During classification, an existing output with a missing or changed token is marked `STALE`; callback exceptions fail fast. The token does not participate in the node fingerprint.
+`Node.invalidator` is optional and defaults to `None`. When set, it is a callable receiving the concrete `Node` and returning a stable `str` token. Necroflow stores the token at `.rip/{filename}.invalidation` after a successful run. During classification, an existing output with a missing or changed token is marked `STALE`; callback exceptions fail fast. The token does not participate in the node fingerprint.
 
 ## Path limit checks
 
@@ -259,10 +259,13 @@ return outputs. `declarations.py` parses this without executing the outer body;
 `command_builders.py` binds nested builder inputs/outputs/settings/resources.
 `Resource[int]` is an Annotated integer alias handled separately from config and
 excluded from both hashes. `--resources FILE` / `DAG(..., resources=mapping)` applies
-file > call keyword > default precedence before interning; unknown entries fail.
+file > call argument > default precedence before interning; unknown entries fail.
 Legacy syntax/hashes remain supported. New Resource requests conflict explicitly
 when deduplicating; legacy-only constraints retain prior interning behavior.
 
-`Node[T]` retains its NodeType for static analysis. `output(T)` returns `Node[T]`
-in annotations; runtime behavior stays declaration-only. Input annotations remain
-NodeType contracts and all existing hashes remain unchanged.
+Artifact classes subclass `Node`; outputs are instances of those classes.
+`output(T)` has static return type `T` and remains declaration-only. Decorated
+commands preserve parameter and return types, including tuple outputs. Nested
+builders receive artifact objects and use `.path` for filesystem access.
+Templates and external CommandArgs callbacks retain path rendering. Template
+hashes remain unchanged; nested builders use a new binding identity marker.

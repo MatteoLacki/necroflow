@@ -92,7 +92,7 @@ External edits that preserve or backdate output mtime are unsupported and can ev
 
 ### Invalidators
 
-A NodeType may define `invalidator(node) -> str`. Its token lives at `.rip/{filename}.invalidation`. Missing or changed token stales the owning call. Invalidators are checked when that call becomes classifiable.
+A Node may define `invalidator(node) -> str`. Its token lives at `.rip/{filename}.invalidation`. Missing or changed token stales the owning call. Invalidators are checked when that call becomes classifiable.
 
 ## Forced invalidation
 

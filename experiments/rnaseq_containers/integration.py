@@ -7,14 +7,14 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from necroflow import DAG, Docker, NodeType, Pipeline, command, output
+from necroflow import DAG, Docker, Node, Pipeline, command, output
 
 from compare import main as compare_results
 from pipeline import ROOT, build, load_job, main as run_pipeline
 from prepare import nextflow
 
 
-class Probe(NodeType):
+class Probe(Node):
     filename = "probe.txt"
 
 

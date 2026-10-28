@@ -6,14 +6,14 @@ featureCounts, or bcftools. Commands run only when a DAG is executed.
 
 from types import SimpleNamespace
 
-from necroflow import Resource, DAG, NodeType, Pipeline, command, output, workflow
+from necroflow import Resource, DAG, Node, Pipeline, command, output, workflow
 
 
-class Fastq(NodeType):
+class Fastq(Node):
     filename = "reads.fastq.gz"
 
 
-class Bam(NodeType):
+class Bam(Node):
     filename = "aligned.bam"
 
 
@@ -21,19 +21,19 @@ class SortedBam(Bam):
     filename = "sorted.bam"
 
 
-class Log(NodeType):
+class Log(Node):
     filename = "align.log"
 
 
-class Counts(NodeType):
+class Counts(Node):
     filename = "counts.txt"
 
 
-class Vcf(NodeType):
+class Vcf(Node):
     filename = "variants.vcf.gz"
 
 
-class AnnotatedVcf(NodeType):
+class AnnotatedVcf(Node):
     filename = "annotated.vcf.gz"
 
 

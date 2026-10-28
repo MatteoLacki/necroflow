@@ -2,16 +2,16 @@
 
 import pytest
 
-from necroflow import DAG, NodeType, Pipeline, Verdict
+from necroflow import DAG, Node, Pipeline, Verdict
 from necroflow.planning import plan_execution
 from necroflow.rules import Inputs, Outputs, Command
 
 
-class A(NodeType):
+class A(Node):
     filename = "a.txt"
 
 
-class B(NodeType):
+class B(Node):
     filename = "b.txt"
 
 
@@ -77,7 +77,7 @@ def test_plan_records_invalidator_reason_from_one_observation(tmp_path):
         calls += 1
         return "one"
 
-    class Tracked(NodeType):
+    class Tracked(Node):
         filename = "tracked.txt"
         invalidator = staticmethod(generation)
 
@@ -111,7 +111,7 @@ def test_plan_settles_a_cached_chain_in_one_pass(tmp_path):
     relies on that instead of repeating passes until nothing changes.
     """
 
-    class C(NodeType):
+    class C(Node):
         filename = "c.txt"
 
     make_c = Command("planning_make_c", Inputs(b=B), Outputs(c=C), "touch {c}")

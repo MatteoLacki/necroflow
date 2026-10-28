@@ -3,22 +3,22 @@ import logging
 from necroflow.rules import Constraints, Inputs, Outputs, Command
 import pytest
 
-from necroflow import Pipeline, DAG, NodeType
+from necroflow import Pipeline, DAG, Node
 
 
-class A(NodeType):
+class A(Node):
     filename = "a"
 
 
-class B(NodeType):
+class B(Node):
     filename = "b"
 
 
-class C(NodeType):
+class C(Node):
     filename = "c"
 
 
-class D(NodeType):
+class D(Node):
     filename = "d"
 
 

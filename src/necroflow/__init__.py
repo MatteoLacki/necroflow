@@ -3,7 +3,7 @@ __version__ = "0.0.8"
 from necroflow.resources import Resource
 from necroflow.containers import Docker
 from necroflow.dag import DAG
-from necroflow.nodes import Node, NodeType
+from necroflow.nodes import Node
 from necroflow.rules import (
     Command,
     Constraints,
@@ -36,7 +36,6 @@ __all__ = [
     "RuleCallExecution",
     "Verdict",
     "Phase",
-    "NodeType",
     "Inputs",
     "Many",
     "Outputs",

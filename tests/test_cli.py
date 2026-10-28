@@ -16,7 +16,7 @@ import necroflow.cli as cli_core
 from necroflow.planning import plan_execution
 from necroflow.tgf import render_dot
 from pathlib import Path
-from necroflow import NodeType, Pipeline, DAG, command, output
+from necroflow import Node, Pipeline, DAG, command, output
 from necroflow.cli import (
     _materialize_results,
     _graph_payload,
@@ -25,11 +25,11 @@ from necroflow.cli import (
 )
 
 
-class Out(NodeType):
+class Out(Node):
     filename = "out.txt"
 
 
-class Log(NodeType):
+class Log(Node):
     filename = "run.log"
 
 
@@ -265,9 +265,9 @@ def test_manifest_values_are_visible_result_paths(tmp_path):
 # ── main() integration ───────────────────────────────────────────────────────
 
 FACTORY_SRC = textwrap.dedent("""\
-    from necroflow import Pipeline, NodeType, command, output
-    class A(NodeType): filename = "a.txt"
-    class B(NodeType): filename = "b.txt"
+    from necroflow import Pipeline, Node, command, output
+    class A(Node): filename = "a.txt"
+    class B(Node): filename = "b.txt"
     @command("touch {a}")
     def make_a(v: str):
         a = output(A)
@@ -1615,10 +1615,10 @@ def test_main_execution_summary_counts_cooutput_rule_once(tmp_path):
 
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import NodeType
+        from necroflow import Node
         from necroflow.rules import Inputs, Outputs, Command
-        class A(NodeType): filename = "a.txt"
-        class B(NodeType): filename = "b.txt"
+        class A(Node): filename = "a.txt"
+        class B(Node): filename = "b.txt"
         make_pair = Command(
             "make_pair", Inputs(v=str), Outputs(a=A, b=B), "touch {a} {b}"
         )
@@ -1656,9 +1656,9 @@ def test_main_execution_summary_counts_parallel_command_time_once(tmp_path):
     """
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import NodeType, command, output
-        class A(NodeType): filename = "a.txt"
-        class B(NodeType): filename = "b.txt"
+        from necroflow import Node, command, output
+        class A(Node): filename = "a.txt"
+        class B(Node): filename = "b.txt"
         @command("sleep 1; touch {a}")
         def make_a(v: str):
             a = output(A)
@@ -1770,9 +1770,9 @@ def test_main_keep_going_failure_writes_execution_summary(tmp_path):
     """Failed calls stay in the execution report but never publish partial files."""
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import Pipeline, NodeType, command, output
-        class A(NodeType): filename = "a.txt"
-        class B(NodeType): filename = "b.txt"
+        from necroflow import Pipeline, Node, command, output
+        class A(Node): filename = "a.txt"
+        class B(Node): filename = "b.txt"
         @command("touch {a}; exit 1")
         def fail_a(v: str):
             a = output(A)
@@ -1821,8 +1821,8 @@ def test_main_keep_going_removes_failed_and_blocked_prior_results(tmp_path):
     """
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import NodeType, command, Inputs, Outputs
-        class Text(NodeType): filename = "out.txt"
+        from necroflow import Node, command, Inputs, Outputs
+        class Text(Node): filename = "out.txt"
         source = command(
             "if test -e {marker}; then printf partial > {out}; exit 1; fi; printf source > {out}",
             Inputs(marker=str), Outputs(out=Text), name="source",
@@ -1968,9 +1968,9 @@ def test_subpipeline_labels_are_requestable_from_cli(tmp_path, capsys):
     """The CLI must finish the root and resolve qualified subpipeline requests."""
     factory = tmp_path / "subpipelines.py"
     factory.write_text(textwrap.dedent("""\
-            from necroflow import NodeType, command, output, workflow
+            from necroflow import Node, command, output, workflow
 
-            class Result(NodeType):
+            class Result(Node):
                 filename = "result.txt"
 
             @command("touch {result}")
@@ -2065,10 +2065,10 @@ def test_graph_output_writes_rendered_dag(tmp_path, factory_file):
 
 _COOUTPUT_FACTORY_SRC = textwrap.dedent("""\
     from necroflow.rules import Inputs, Outputs, Command
-    from necroflow import NodeType
-    class A(NodeType): filename = "a.txt"
-    class B(NodeType): filename = "b.txt"
-    class C(NodeType): filename = "c.txt"
+    from necroflow import Node
+    class A(Node): filename = "a.txt"
+    class B(Node): filename = "b.txt"
+    class C(Node): filename = "c.txt"
     make_pair = Command("make_pair", Inputs(v=str), Outputs(a=A, b=B), "touch {a} {b}")
     use_a = Command("use_a", Inputs(a=A), Outputs(c=C), "cp {a} {c}")
     def factory(P, cfg):
@@ -2408,10 +2408,10 @@ def test_explain_leaves_consumers_of_unhashed_parents_undecided(tmp_path, capsys
     """
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import NodeType, command, output
-        class A(NodeType): filename = "a.txt"
-        class B(NodeType): filename = "b.txt"
-        class C(NodeType): filename = "c.txt"
+        from necroflow import Node, command, output
+        class A(Node): filename = "a.txt"
+        class B(Node): filename = "b.txt"
+        class C(Node): filename = "c.txt"
         @command("echo {v} > {a}")
         def make_a(v: str):
             a = output(A)

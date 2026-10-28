@@ -9,7 +9,6 @@ from necroflow import (
     Inputs,
     Many,
     Node,
-    NodeType,
     Outputs,
     Pipeline,
     command,
@@ -18,15 +17,15 @@ from necroflow import (
 )
 
 
-class Source(NodeType):
+class Source(Node):
     filename = "source.txt"
 
 
-class Left(NodeType):
+class Left(Node):
     filename = "left.txt"
 
 
-class Right(NodeType):
+class Right(Node):
     filename = "right.txt"
 
 
@@ -76,8 +75,8 @@ def merge_sources(sources: Annotated[tuple[Source, ...], Many()]):
 
 
 pipeline = Pipeline(DAG("/tmp/necroflow-typing"))
-source_node: Node = make_source(pipeline, text="value")
-default_source_node: Node = make_default_source(pipeline)
+source_node = make_source(pipeline, text="value")
+default_source_node = make_default_source(pipeline)
 left_node: Node
 right_node: Node
 left_node, right_node = split_source(pipeline, source_node)
@@ -128,7 +127,7 @@ def nested_source(text: str, threads: Resource[int] = 4):
     source = output(Source)
 
     def command():
-        return f"echo {text} > {source}"
+        return f"echo {text} > {source.path}"
 
     return source
 
@@ -139,24 +138,62 @@ nested_node: Node = nested_source(pipeline, text="hello", threads=2)
 
 # Exact inference matters: assignment to bare Node would also accept Any.
 def check_output_inference() -> None:
-    assert_type(output(Source), Node[Source])
-    assert_type(output(Left), Node[Left])
-    assert_type(output(Source).node_type, type[Source])
+    assert_type(output(Source), Source)
+    assert_type(output(Left), Left)
+    assert_type(type(output(Source)), type[Source])
 
 
-assert_type(make_source(pipeline, text="value"), Node[Source])
-assert_type(make_default_source(pipeline), Node[Source])
-assert_type(split_source(pipeline, source_node), tuple[Node[Left], Node[Right]])
-assert_type(callback_rule(pipeline, source_node), Node[Left])
-assert_type(inline_source(pipeline, text="hello"), Node[Source])
-assert_type(nested_source(pipeline, text="hello"), Node[Source])
+assert_type(make_source(pipeline, text="value"), Source)
+assert_type(make_default_source(pipeline), Source)
+assert_type(split_source(pipeline, source_node), tuple[Left, Right])
+assert_type(callback_rule(pipeline, source_node), Left)
+assert_type(inline_source(pipeline, text="hello"), Source)
+assert_type(nested_source(pipeline, text="hello"), Source)
 
 
 @command
-def annotated_source(text: str) -> Node[Source]:
+def annotated_source(text: str) -> Source:
     source = output(Source)
     command = "printf %s {text} > {source}"
     return source
 
 
-assert_type(annotated_source(pipeline, text="hello"), Node[Source])
+assert_type(annotated_source(pipeline, text="hello"), Source)
+
+
+from pathlib import Path
+from necroflow import text_file, symlink_file
+
+
+class SubSource(Source):
+    filename = "sub.txt"
+
+
+@text_file
+def text_source(text: str) -> Source:
+    source = output(Source)
+    return source
+
+
+@symlink_file
+def external_source(path: str) -> Source:
+    source = output(Source)
+    return source
+
+
+@command
+def precise(source: Source, /, *, count: int = 1, threads: Resource[int] = 1) -> Left:
+    left = output(Left)
+
+    def command():
+        return f"cat {source.path} > {left.path}"
+
+    return left
+
+
+def check_precise_calls(source: Source, sub: SubSource) -> None:
+    assert_type(source.path, Path)
+    assert_type(precise(source, count=2), Left)
+    assert_type(precise(pipeline, sub, threads=2), Left)
+    assert_type(text_source("hello"), Source)
+    assert_type(external_source(pipeline, "/tmp/input"), Source)

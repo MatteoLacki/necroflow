@@ -11,7 +11,7 @@ from necroflow import (
     DAG,
     Inputs,
     Many,
-    NodeType,
+    Node,
     Outputs,
     Pipeline,
     command,
@@ -22,15 +22,15 @@ from necroflow import (
 )
 
 
-class Text(NodeType):
+class Text(Node):
     filename = "text.txt"
 
 
-class Left(NodeType):
+class Left(Node):
     filename = "left.txt"
 
 
-class Right(NodeType):
+class Right(Node):
     filename = "right.txt"
 
 

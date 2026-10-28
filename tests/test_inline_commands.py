@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 import tomlkit
 
-from necroflow import DAG, Pipeline, NodeType, Resource, command, output, run
+from necroflow import DAG, Pipeline, Node, Resource, command, output, run
 from necroflow.rules import Command, Inputs, Outputs, Constraints
 
 
-class Result(NodeType):
+class Result(Node):
     filename = "result.txt"
 
 
@@ -28,7 +28,7 @@ def nested(text: str = "hello", threads: Resource[int] = 2):
     result = output(Result)
 
     def command():
-        return f"printf %s {shlex.quote(text)} > {shlex.quote(str(result))}"
+        return f"printf %s {shlex.quote(text)} > {shlex.quote(str(result.path))}"
 
     return result
 
@@ -117,7 +117,7 @@ def test_new_resource_conflicts_fail(tmp_path):
     "body",
     [
         '    command = "touch {result}"\n    result = output(Result)\n    return result\n',
-        '    result = output(Result)\n    command = f"touch {result}"\n    return result\n',
+        '    result = output(Result)\n    command = f"touch {result.path}"\n    return result\n',
         '    result = output(Result)\n    command = "touch {result}"\n    command = "echo no"\n    return result\n',
         "    result = output(Result)\n    return result\n",
         '    result = output(Result)\n    def command(x):\n        return "true"\n    return result\n',
@@ -155,7 +155,7 @@ def test_nested_resource_binding_and_all_cap(tmp_path):
         result = output(Result)
 
         def command():
-            return f"echo {threads} {label} > {result}"
+            return f"echo {threads} {label} > {result.path}"
 
         return result
 
@@ -181,7 +181,7 @@ def test_nested_undeclared_closure_rejected():
             result = output(Result)
 
             def command():
-                return f"echo {hidden} > {result}"
+                return f"echo {hidden} > {result.path}"
 
             return result
 
@@ -196,13 +196,13 @@ def test_nested_inputs_outputs_and_failure_preflight(tmp_path):
         result = output(Result)
 
         def command():
-            assert all(isinstance(path, Path) for path in sources)
+            assert all(isinstance(path, Result) for path in sources)
             assert optional is None
             return (
                 "cat "
-                + " ".join(shlex.quote(str(p)) for p in sources)
+                + " ".join(shlex.quote(str(p.path)) for p in sources)
                 + " > "
-                + shlex.quote(str(result))
+                + shlex.quote(str(result.path))
             )
 
         return result
@@ -259,7 +259,7 @@ def test_nested_recipe_hash_and_resource_default_independence(tmp_path):
 def build(label: str = "a", threads: Resource[int] = DEFAULT):
     result = output(Result)
     def command():
-        return f"echo {label} > {result}"
+        return f"echo {label} > {result.path}"
     return result
 """
     a = load_rule(tmp_path, body.replace("DEFAULT", "2"), "version_a").build
@@ -349,7 +349,7 @@ def test_nested_docker_and_multioutput(tmp_path):
     """Nested builders preserve Docker-prefix selection and named output returns."""
     from necroflow import Docker
 
-    class Other(NodeType):
+    class Other(Node):
         filename = "other.txt"
 
     @command
@@ -358,7 +358,7 @@ def test_nested_docker_and_multioutput(tmp_path):
         other = output(Other)
 
         def command():
-            return f"{{env}}:echo {threads} > {result}; touch {other}"
+            return f"{{env}}:echo {threads} > {result.path}; touch {other.path}"
 
         return result, other
 
@@ -380,10 +380,8 @@ def test_builder_runs_only_at_realization_and_retries(tmp_path):
         result = output(Result)
 
         def command():
-            marker = result.parent / "attempted"
-            return (
-                f"test -e {marker} && echo done > {result} || (touch {marker}; exit 1)"
-            )
+            marker = result.path.parent / "attempted"
+            return f"test -e {marker} && echo done > {result.path} || (touch {marker}; exit 1)"
 
         return result
 

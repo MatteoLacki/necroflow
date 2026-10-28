@@ -18,7 +18,7 @@ from necroflow import (
     DAG,
     Docker,
     Inputs,
-    NodeType,
+    Node,
     Outputs,
     Pipeline,
     command,
@@ -31,15 +31,15 @@ IMAGE = "example.org/tool@sha256:" + "0" * 64
 OTHER_IMAGE = "example.org/tool@sha256:" + "1" * 64
 
 
-class Text(NodeType):
+class Text(Node):
     filename = "text.txt"
 
 
-class Copy(NodeType):
+class Copy(Node):
     filename = "copy.txt"
 
 
-class Tree(NodeType):
+class Tree(Node):
     filename = "tree"
 
 

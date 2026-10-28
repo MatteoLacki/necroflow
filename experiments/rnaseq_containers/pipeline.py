@@ -9,7 +9,7 @@ import tomllib
 from dataclasses import asdict
 from pathlib import Path
 
-from necroflow import DAG, Docker, NodeType, Pipeline, command, output, workflow
+from necroflow import DAG, Docker, Node, Pipeline, command, output, workflow
 
 ROOT = Path(__file__).resolve().parent
 
@@ -19,23 +19,23 @@ def load_job(root=ROOT):
     return tomllib.loads((root / "job.toml").read_text())
 
 
-class Read1(NodeType):
+class Read1(Node):
     filename = "reads_1.fq"
 
 
-class Read2(NodeType):
+class Read2(Node):
     filename = "reads_2.fq"
 
 
-class Reference(NodeType):
+class Reference(Node):
     filename = "reference.fa"
 
 
-class Index(NodeType):
+class Index(Node):
     filename = "index"
 
 
-class ReportInput(NodeType):
+class ReportInput(Node):
     filename = None
 
 
@@ -47,11 +47,11 @@ class Quant(ReportInput):
     filename = "quant"
 
 
-class Report(NodeType):
+class Report(Node):
     filename = "report"
 
 
-class ReportConfig(NodeType):
+class ReportConfig(Node):
     filename = "multiqc_config"
 
 

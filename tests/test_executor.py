@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 import tomlkit
-from necroflow import NodeType, Pipeline, DAG, Verdict, run, output
+from necroflow import Node, Pipeline, DAG, Verdict, run, output
 from necroflow import fifo_scheduler, output
 from necroflow.executor import ResourcePool
 from necroflow.planning import plan_execution
@@ -33,23 +33,23 @@ def run_pipeline(pipeline, **kwargs):
     return run(pipeline.dag, **kwargs)
 
 
-class A(NodeType):
+class A(Node):
     filename = "a.txt"
 
 
-class B(NodeType):
+class B(Node):
     filename = "b.txt"
 
 
-class C(NodeType):
+class C(Node):
     filename = "c.txt"
 
 
-class D(NodeType):
+class D(Node):
     filename = "d.txt"
 
 
-class ShellOut(NodeType):
+class ShellOut(Node):
     filename = "shell.txt"
 
 
@@ -943,7 +943,7 @@ def test_resource_cap_respected(tmp_path):
 
 
 def test_text_file_rule_writes_exact_text(tmp_path):
-    class ConfigFile(NodeType):
+    class ConfigFile(Node):
         filename = "config.json"
 
     r_write_config = text_file_rule("write_config", ConfigFile)
@@ -958,7 +958,7 @@ def test_text_file_rule_writes_exact_text(tmp_path):
 def test_text_file_rule_is_idempotent(tmp_path):
     import time
 
-    class ConfigFile(NodeType):
+    class ConfigFile(Node):
         filename = "config.txt"
 
     r_write_config = text_file_rule("write_config", ConfigFile)
@@ -974,7 +974,7 @@ def test_text_file_rule_is_idempotent(tmp_path):
 
 
 def test_text_file_fingerprint_changes_with_text():
-    class ConfigFile(NodeType):
+    class ConfigFile(Node):
         filename = "config.txt"
 
     r_write_config = text_file_rule("write_config", ConfigFile)
@@ -987,7 +987,7 @@ def test_text_file_fingerprint_changes_with_text():
 
 
 def test_text_file_recipe_distinguishes_from_shell_rule():
-    class ConfigFile(NodeType):
+    class ConfigFile(Node):
         filename = "config.txt"
 
     text_rules_write_config = text_file_rule("write_config", ConfigFile)
@@ -1006,7 +1006,7 @@ def test_text_file_recipe_distinguishes_from_shell_rule():
 
 
 def test_text_file_rejects_non_string_text():
-    class ConfigFile(NodeType):
+    class ConfigFile(Node):
         filename = "config.txt"
 
     r_write_config = text_file_rule("write_config", ConfigFile)
@@ -1018,7 +1018,7 @@ def test_text_file_rejects_non_string_text():
 
 
 def test_text_file_custom_input_name(tmp_path):
-    class ConfigFile(NodeType):
+    class ConfigFile(Node):
         filename = "config.txt"
 
     r_write_config = text_file_rule(
@@ -1033,7 +1033,7 @@ def test_text_file_custom_input_name(tmp_path):
 
 
 def test_text_file_decorator_matches_factory_fingerprint():
-    class ConfigFile(NodeType):
+    class ConfigFile(Node):
         filename = "config.txt"
 
     @text_file
@@ -1061,7 +1061,7 @@ def test_text_file_rule_accepts_encoding(tmp_path):
     """text_file_rule(..., encoding=...) is the only way to select a non-default
     encoding now that @text_file is bare-only, matching @symlink_file's shape."""
 
-    class ConfigFile(NodeType):
+    class ConfigFile(Node):
         filename = "config.txt"
 
     write_config = text_file_rule("write_config", ConfigFile, encoding="utf-16-le")
@@ -1074,7 +1074,7 @@ def test_text_file_rule_accepts_encoding(tmp_path):
 
 
 def test_text_file_decorator_rejects_invalid_declaration():
-    class ConfigFile(NodeType):
+    class ConfigFile(Node):
         filename = "config.txt"
 
     with pytest.raises(TypeError, match="exactly one input"):
@@ -1089,7 +1089,7 @@ def test_text_file_decorator_rejects_invalid_declaration():
 
 
 def test_symlink_file_rule_links_to_source_content(tmp_path):
-    class RawData(NodeType):
+    class RawData(Node):
         filename = "raw.txt"
 
     source = tmp_path / "source.txt"
@@ -1114,7 +1114,7 @@ def test_symlink_file_preserves_paths_with_spaces(
     remain a single argument to ln, for absolute and relative source paths.
     """
 
-    class RawData(NodeType):
+    class RawData(Node):
         filename = "raw reads.txt"
 
     monkeypatch.chdir(tmp_path)
@@ -1134,7 +1134,7 @@ def test_symlink_file_preserves_paths_with_spaces(
 
 
 def test_symlink_file_decorator_matches_factory_and_links(tmp_path):
-    class RawData(NodeType):
+    class RawData(Node):
         filename = "raw.txt"
 
     @symlink_file
@@ -1173,14 +1173,14 @@ def test_symlink_file_change_reruns_downstream_consumer(tmp_path):
     A bare path config value is fingerprinted as text and never revisited, so
     dataset edits go unnoticed. symlink_file exists specifically to make the
     normal mtime-fast-path -> content-hash STALE machinery pick up the edit
-    through the symlink, without needing a NodeType.invalidator.
+    through the symlink, without needing a Node.invalidator.
     """
     import time
 
-    class RawData(NodeType):
+    class RawData(Node):
         filename = "raw.txt"
 
-    class Copied(NodeType):
+    class Copied(Node):
         filename = "copied.txt"
 
     source = tmp_path / "source.txt"
@@ -1212,7 +1212,7 @@ def test_symlink_file_change_reruns_downstream_consumer(tmp_path):
 
 
 def test_symlink_file_custom_path_arg(tmp_path):
-    class RawData(NodeType):
+    class RawData(Node):
         filename = "raw.txt"
 
     source = tmp_path / "source.txt"
@@ -1227,7 +1227,7 @@ def test_symlink_file_custom_path_arg(tmp_path):
 
 
 def test_symlink_file_rejects_reserved_path_arg():
-    class RawData(NodeType):
+    class RawData(Node):
         filename = "raw.txt"
 
     with pytest.raises(ValueError, match="reserved"):
@@ -1235,7 +1235,7 @@ def test_symlink_file_rejects_reserved_path_arg():
 
 
 def test_symlink_file_rejects_non_nodetype_output():
-    with pytest.raises(TypeError, match="must be a NodeType"):
+    with pytest.raises(TypeError, match="must be a Node"):
         r_ingest_raw = symlink_file_rule("ingest_raw", str)
 
 

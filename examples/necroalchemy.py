@@ -28,108 +28,108 @@ try:
 except NameError:
     pass
 
-from necroflow import DAG, NodeType, Pipeline, command, output, workflow
+from necroflow import DAG, Node, Pipeline, command, output, workflow
 
 # ── node types ────────────────────────────────────────────────────────────────
 
 
-class Seed(NodeType):
+class Seed(Node):
     """The input word written to disk — starting point for all transforms."""
 
     filename = "seed.txt"
 
 
-class Upper(NodeType):
+class Upper(Node):
     """The seed word converted to uppercase."""
 
     filename = "upper.txt"
 
 
-class Lower(NodeType):
+class Lower(Node):
     """The seed word converted to lowercase."""
 
     filename = "lower.txt"
 
 
-class Reversed(NodeType):
+class Reversed(Node):
     """The seed word with characters in reverse order."""
 
     filename = "rev.txt"
 
 
-class Rot13(NodeType):
+class Rot13(Node):
     """ROT13 cipher applied to the uppercased seed."""
 
     filename = "rot13.txt"
 
 
-class Repeated(NodeType):
+class Repeated(Node):
     """The lowercased word repeated n times, one per line."""
 
     filename = "rep.txt"
 
 
-class Merged(NodeType):
+class Merged(Node):
     """Uppercase and lowercase variants pasted side by side."""
 
     filename = "merged.txt"
 
 
-class SortedChars(NodeType):
+class SortedChars(Node):
     """Individual characters of the seed, sorted alphabetically."""
 
     filename = "sorted.txt"
 
 
-class UniqueChars(NodeType):
+class UniqueChars(Node):
     """Deduplicated character set derived from the sorted character list."""
 
     filename = "unique.txt"
 
 
-class Combined(NodeType):
+class Combined(Node):
     """All four transform outputs concatenated into one blob."""
 
     filename = "combined.txt"
 
 
-class Stats(NodeType):
+class Stats(Node):
     """Byte count of the combined blob."""
 
     filename = "stats.txt"
 
 
-class Audit(NodeType):
+class Audit(Node):
     """Unique-character count of the combined blob."""
 
     filename = "audit.txt"
 
 
-class UpperRot(NodeType):
+class UpperRot(Node):
     """ROT13 output re-uppercased for maximum shouting energy."""
 
     filename = "upper_rot.txt"
 
 
-class SortedCombined(NodeType):
+class SortedCombined(Node):
     """Combined blob with lines sorted lexicographically."""
 
     filename = "sorted_combined.txt"
 
 
-class LineCounts(NodeType):
+class LineCounts(Node):
     """Total line count of the combined blob."""
 
     filename = "lines.txt"
 
 
-class FinalMix(NodeType):
+class FinalMix(Node):
     """Shouted ROT13 and sorted blob concatenated."""
 
     filename = "final_mix.txt"
 
 
-class GrandSummary(NodeType):
+class GrandSummary(Node):
     """Final assembly of stats, line counts, and the final mix."""
 
     filename = "summary.txt"

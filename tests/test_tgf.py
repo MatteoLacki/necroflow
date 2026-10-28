@@ -1,22 +1,22 @@
 """Tests for dependency graph serialization."""
 
-from necroflow import DAG, NodeType, Pipeline
+from necroflow import DAG, Node, Pipeline
 from necroflow.rules import Inputs, Outputs, Command
 
 
-class A(NodeType):
+class A(Node):
     filename = "a.txt"
 
 
-class B(NodeType):
+class B(Node):
     filename = "b.txt"
 
 
-class C(NodeType):
+class C(Node):
     filename = "c.txt"
 
 
-class D(NodeType):
+class D(Node):
     filename = "d.txt"
 
 

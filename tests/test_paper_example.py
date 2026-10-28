@@ -22,13 +22,13 @@ def test_paper_example_workflows_have_consistent_contracts():
 
     extended = Pipeline(DAG("/tmp/necroflow-paper-example"))
     example.extended_pipeline(extended, config)
-    assert extended.counts.node_type is example.Counts
-    assert extended.vcf.node_type is example.Vcf
-    assert extended.annotated_vcf.node_type is example.AnnotatedVcf
-    assert extended.align_log.node_type is example.Log
+    assert type(extended.counts) is example.Counts
+    assert type(extended.vcf) is example.Vcf
+    assert type(extended.annotated_vcf) is example.AnnotatedVcf
+    assert type(extended.align_log) is example.Log
 
     dag, quant, variants = example.shared_dag()
     assert quant.sorted_bam.relative_path == variants.sorted_bam.relative_path
-    assert quant.counts.node_type is example.Counts
-    assert variants.vcf.node_type is example.Vcf
+    assert type(quant.counts) is example.Counts
+    assert type(variants.vcf) is example.Vcf
     assert len(dag.nodes) < len(quant.nodes) + len(variants.nodes)

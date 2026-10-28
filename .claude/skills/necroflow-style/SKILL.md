@@ -30,7 +30,7 @@ Use `node.relative_path` for Node identity and `call.relative_path` for RuleCall
 
 ### Single responsibility per module
 When a module grows a second conceptual domain, extract it:
-- `nodes.py` — Node and NodeType typed output concepts
+- `nodes.py` — Node and Node typed output concepts
 - `rule_call.py` — RuleCall identity, command realization, persisted state and metadata
 - `planning.py` — required closure, `Verdict`, and lazy cache classification
 - `rules.py` — declarations, contracts, mutability, resource parsing
