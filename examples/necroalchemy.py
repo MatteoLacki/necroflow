@@ -138,121 +138,152 @@ class GrandSummary(NodeType):
 # ── rules (16 rules → 17 nodes) ───────────────────────────────────────────────
 # Each command sleeps 1-3 s so the scheduler and parallelism are visible.
 
-_S = "sleep $((RANDOM % 3 + 1)) && "
 
-
-@command(_S + "echo {word} | tee {seed}")  # step 1 — materialise the seed word
+@command  # step 1 — materialise the seed word
 def make_seed(word: str):
     """Write the input word to a file — the starting point for all transforms."""
     seed = output(Seed)
+    command = "sleep $((RANDOM % 3 + 1)) && echo {word} | tee {seed}"
     return seed
 
 
-@command(_S + "tr a-z A-Z < {seed} | tee {upper}")  # steps 2-4 — fan-out
+@command  # steps 2-4 — fan-out
 def to_upper(seed: Seed):
     """Convert all characters to uppercase."""
     upper = output(Upper)
+    command = "sleep $((RANDOM % 3 + 1)) && tr a-z A-Z < {seed} | tee {upper}"
     return upper
 
 
-@command(_S + "tr A-Z a-z < {seed} | tee {lower}")
+@command
 def to_lower(seed: Seed):
     """Convert all characters to lowercase."""
     lower = output(Lower)
+    command = "sleep $((RANDOM % 3 + 1)) && tr A-Z a-z < {seed} | tee {lower}"
     return lower
 
 
-@command(_S + "rev {seed} | tee {reversed}")
+@command
 def reverse_it(seed: Seed):
     """Reverse the character order of the seed."""
     reversed = output(Reversed)
+    command = "sleep $((RANDOM % 3 + 1)) && rev {seed} | tee {reversed}"
     return reversed
 
 
-@command(_S + "grep -o . {seed} | sort | tee {sorted_chars}")  # step 5
+@command  # step 5
 def sort_chars(seed: Seed):
     """Extract individual characters and sort them alphabetically."""
     sorted_chars = output(SortedChars)
+    command = (
+        "sleep $((RANDOM % 3 + 1)) && grep -o . {seed} | sort | tee " "{sorted_chars}"
+    )
     return sorted_chars
 
 
-@command(_S + "tr A-Za-z N-ZA-Mn-za-m < {upper} | tee {rot13}")  # step 6
+@command  # step 6
 def encode_rot13(upper: Upper):
     """Apply ROT13 substitution cipher to the uppercased text."""
     rot13 = output(Rot13)
+    command = (
+        "sleep $((RANDOM % 3 + 1)) && tr A-Za-z N-ZA-Mn-za-m < {upper} | tee " "{rot13}"
+    )
     return rot13
 
 
-@command(_S + "for _ in $(seq {n}); do cat {lower}; done | tee {repeated}")  # step 7
+@command  # step 7
 def repeat_word(lower: Lower, n: int):
     """Repeat the lowercased word n times, one per line."""
     repeated = output(Repeated)
+    command = (
+        "sleep $((RANDOM % 3 + 1)) && for _ in $(seq {n}); do cat {lower}; "
+        "done | tee {repeated}"
+    )
     return repeated
 
 
-@command(_S + "paste {upper} {lower} | tee {merged}")  # step 8 — diamond merge
+@command  # step 8 — diamond merge
 def merge_cases(upper: Upper, lower: Lower):
     """Paste uppercase and lowercase versions side by side (diamond convergence)."""
     merged = output(Merged)
+    command = "sleep $((RANDOM % 3 + 1)) && paste {upper} {lower} | tee {merged}"
     return merged
 
 
-@command(_S + "uniq {sorted_chars} | tee {unique_chars}")  # step 9
+@command  # step 9
 def unique_chars(sorted_chars: SortedChars):
     """Deduplicate the sorted character list to get the unique character set."""
     unique_chars = output(UniqueChars)
+    command = "sleep $((RANDOM % 3 + 1)) && uniq {sorted_chars} | tee {unique_chars}"
     return unique_chars
 
 
-@command(_S + "cat {merged} {rot13} {repeated} {reversed} | tee {combined}")  # step 10
+@command  # step 10
 def combine_all(merged: Merged, rot13: Rot13, repeated: Repeated, reversed: Reversed):
     """Concatenate all four transform outputs into one blob (4-way fan-in)."""
     combined = output(Combined)
+    command = (
+        "sleep $((RANDOM % 3 + 1)) && cat {merged} {rot13} {repeated} "
+        "{reversed} | tee {combined}"
+    )
     return combined
 
 
-@command(
-    _S + "wc -c {combined} | tee {stats} && wc -l {unique_chars} | tee {audit}"
-)  # step 11+12
+@command  # step 11+12
 def make_stats(combined: Combined, unique_chars: UniqueChars):
     """Compute byte count of combined blob and unique-character count (co-outputs)."""
     stats = output(Stats)
     audit = output(Audit)
+    command = (
+        "sleep $((RANDOM % 3 + 1)) && wc -c {combined} | tee {stats} && wc -l "
+        "{unique_chars} | tee {audit}"
+    )
     return stats, audit
 
 
-@command(_S + "tr a-z A-Z < {rot13} | tee {upper_rot}")  # step 13
+@command  # step 13
 def shout_rot(rot13: Rot13):
     """Re-uppercase the ROT13 output for maximum shouting energy."""
     upper_rot = output(UpperRot)
+    command = "sleep $((RANDOM % 3 + 1)) && tr a-z A-Z < {rot13} | tee {upper_rot}"
     return upper_rot
 
 
-@command(_S + "sort {combined} | tee {sorted_combined}")  # step 14
+@command  # step 14
 def sort_combined(combined: Combined):
     """Lexicographically sort all lines in the combined blob."""
     sorted_combined = output(SortedCombined)
+    command = "sleep $((RANDOM % 3 + 1)) && sort {combined} | tee {sorted_combined}"
     return sorted_combined
 
 
-@command(_S + "wc -l < {combined} | tee {line_counts}")  # step 15
+@command  # step 15
 def count_lines(combined: Combined):
     """Count the total number of lines in the combined blob."""
     line_counts = output(LineCounts)
+    command = "sleep $((RANDOM % 3 + 1)) && wc -l < {combined} | tee {line_counts}"
     return line_counts
 
 
-@command(_S + "cat {upper_rot} {sorted_combined} | tee {final_mix}")  # step 16
+@command  # step 16
 def final_mix(upper_rot: UpperRot, sorted_combined: SortedCombined):
     """Concatenate shouted ROT13 and sorted blob into the final mix."""
     final_mix = output(FinalMix)
+    command = (
+        "sleep $((RANDOM % 3 + 1)) && cat {upper_rot} {sorted_combined} | tee "
+        "{final_mix}"
+    )
     return final_mix
 
 
-@command(_S + "cat {stats} {line_counts} {final_mix} | tee {grand_summary}")  # step 17
+@command  # step 17
 def grand_summary(stats: Stats, line_counts: LineCounts, final_mix: FinalMix):
     """Assemble stats, line counts, and final mix into the grand summary."""
     grand_summary = output(GrandSummary)
+    command = (
+        "sleep $((RANDOM % 3 + 1)) && cat {stats} {line_counts} {final_mix} | "
+        "tee {grand_summary}"
+    )
     return grand_summary
 
 

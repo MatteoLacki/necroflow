@@ -17,17 +17,21 @@ from typing import (
     cast,
     get_args,
     get_origin,
+    overload,
 )
 
 from necroflow.containers import docker_input_names, split_prefix
-from necroflow.contexts import NamedValues
+from necroflow.contexts import NamedValues, CommandArgs
 from necroflow.nodes import Node, NodeType, _is_nodetype
 from necroflow.fingerprints import validate_command_callback
 from necroflow.workflow import _active_pipeline
+from necroflow.declarations import parse_declaration, is_inline_declaration
+from necroflow.resources import normalize_resource
 
 BUILTIN_COMMAND_PLACEHOLDERS = {"workdir", "constraint"}
 
 _ReturnT = TypeVar("_ReturnT")
+_OutputT = TypeVar("_OutputT", bound=NodeType)
 
 _SI_SUFFIXES = {"K": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15}
 _BIN_SUFFIXES = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50}
@@ -144,7 +148,7 @@ def _node_input_contract(
     ``tuple[NodeType, ...]`` produces a variadic contract, optionally bounded
     by one ``Many`` item in ``Annotated`` metadata. Invalid or ambiguous Node
     declarations raise immediately; ordinary config annotations return
-    ``None`` and are therefore handled as keyword inputs by ``Rule``.
+    ``None`` and are therefore handled as keyword inputs by ``Command``.
     """
     base = annotation
     metadata: tuple[Any, ...] = ()
@@ -155,7 +159,7 @@ def _node_input_contract(
     many_values = [value for value in metadata if isinstance(value, Many)]
     if len(many_values) > 1:
         raise TypeError(
-            f"Rule {rule_name!r}: input {input_name!r} has more than one Many marker"
+            f"Command {rule_name!r}: input {input_name!r} has more than one Many marker"
         )
     many = many_values[0] if many_values else None
 
@@ -170,14 +174,14 @@ def _node_input_contract(
                     _is_nodetype(member) for member in element_members
                 ):
                     raise TypeError(
-                        f"Rule {rule_name!r}: input {input_name!r} mixes "
+                        f"Command {rule_name!r}: input {input_name!r} mixes "
                         "NodeType and non-NodeType tuple element union members"
                     )
             if _is_nodetype(element_type) or _is_nodetype_union(element_type):
                 return _NodeInputContract(element_type, variadic=True, many=many)
             if many is not None:
                 raise TypeError(
-                    f"Rule {rule_name!r}: input {input_name!r} uses Many with "
+                    f"Command {rule_name!r}: input {input_name!r} uses Many with "
                     "a tuple whose element type is not a NodeType"
                 )
             return None
@@ -185,14 +189,14 @@ def _node_input_contract(
             _is_nodetype(item) or _is_nodetype_union(item) for item in tuple_args
         ):
             raise TypeError(
-                f"Rule {rule_name!r}: input {input_name!r} uses a fixed-length "
+                f"Command {rule_name!r}: input {input_name!r} uses a fixed-length "
                 "Node tuple; use tuple[NodeType, ...]"
             )
         return None
 
     if many is not None:
         raise TypeError(
-            f"Rule {rule_name!r}: input {input_name!r} uses Many on a non-variadic "
+            f"Command {rule_name!r}: input {input_name!r} uses Many on a non-variadic "
             "Node tuple"
         )
     if _is_nodetype(base):
@@ -239,12 +243,12 @@ def _matches_value_type(value: Any, expected: Any) -> bool:
     return False
 
 
-def output(node_type: type[NodeType]) -> Node:
+def output(node_type: type[_OutputT]) -> Node[_OutputT]:
     """Declare an output in a decorated rule body.
 
     The decorator parses ``name = output(NodeType)`` assignments without
-    executing them.  The ``Node`` return annotation gives static analyzers the
-    real value shape produced when the resulting rule is called.
+    executing them. The generic return annotation retains the declared NodeType:
+    ``output(Bam)`` infers ``Node[Bam]`` in static analyzers.
     """
     raise RuntimeError(
         "output() is declaration-only; use it as name = output(NodeType) "
@@ -252,7 +256,7 @@ def output(node_type: type[NodeType]) -> Node:
     )
 
 
-class Rule(Generic[_ReturnT]):
+class Command(Generic[_ReturnT]):
     """A declared rule: validates inputs and produces output Nodes when called."""
 
     def __init__(
@@ -267,6 +271,7 @@ class Rule(Generic[_ReturnT]):
         recipe_identity: str | None = None,
         materializer: Callable | None = None,
         input_defaults: Mapping[str, Any] | None = None,
+        resource_defaults: Mapping[str, Any] | None = None,
     ):
         """Validate and store a rule declaration and derive its call schema."""
         self.__name__ = name
@@ -276,7 +281,12 @@ class Rule(Generic[_ReturnT]):
         self.command = command
         self.recipe_identity = recipe_identity
         self.materializer = materializer
-        self.constraints = constraints.specs if constraints else {}
+        self.resource_defaults = dict(resource_defaults or {})
+        self.constraints = dict(constraints.specs) if constraints else {}
+        overlap = self.constraints.keys() & self.resource_defaults.keys()
+        if overlap:
+            raise ValueError(f"resources declared twice: {sorted(overlap)}")
+        self.constraints.update(self.resource_defaults)
         self.repeat = self._validate_repeat(repeat)
         self.info = info
         contracts = {
@@ -299,18 +309,18 @@ class Rule(Generic[_ReturnT]):
         self._validate_config_values(self._input_defaults)
         self._signature = self._build_signature()
         reserved = BUILTIN_COMMAND_PLACEHOLDERS & (
-            set(inputs.specs) | set(outputs.specs)
+            set(inputs.specs) | set(outputs.specs) | set(self.resource_defaults)
         )
         if reserved:
             raise ValueError(
-                f"Rule {name!r}: reserved command placeholder name used as input/output: "
+                f"Command {name!r}: reserved command placeholder name used as input/output: "
                 f"{sorted(reserved)}"
             )
         constraint_names = set(self.constraints) | {"threads"}
         shadowed = constraint_names & (set(inputs.specs) | set(outputs.specs))
         if shadowed:
             raise ValueError(
-                f"Rule {name!r}: input/output name collides with a resource "
+                f"Command {name!r}: input/output name collides with a resource "
                 f"constraint name: {sorted(shadowed)}. Rename the input/output, "
                 "or the constraint if it is declared on this rule."
             )
@@ -321,7 +331,7 @@ class Rule(Generic[_ReturnT]):
         )
         if isinstance(command, list):
             raise TypeError(
-                f"Rule {name!r}: argv list commands are unsupported; "
+                f"Command {name!r}: argv list commands are unsupported; "
                 "use a shell string or a Python callback returning a shell string"
             )
         self.docker_inputs = docker_input_names(inputs.specs)
@@ -332,7 +342,7 @@ class Rule(Generic[_ReturnT]):
             self._validate_command(name, inputs, outputs, command, self.constraints)
             container_input, body = split_prefix(command, self.docker_inputs)
             if container_input is not None and not body.strip():
-                raise ValueError(f"Rule {name!r}: container command body is empty")
+                raise ValueError(f"Command {name!r}: container command body is empty")
         # Callbacks may select a Docker input only once they run, so any
         # callback with a Docker input must carry the container policy.
         self.container_capable = container_input is not None or bool(
@@ -345,12 +355,12 @@ class Rule(Generic[_ReturnT]):
         for output_name, output_type in outputs.specs.items():
             if not _is_nodetype(output_type):
                 raise TypeError(
-                    f"Rule {name!r}: output {output_name!r} must be a NodeType, "
+                    f"Command {name!r}: output {output_name!r} must be a NodeType, "
                     f"got {output_type!r}"
                 )
             if output_type.filename is None:
                 raise TypeError(
-                    f"Rule {name!r}: output {output_name!r} NodeType "
+                    f"Command {name!r}: output {output_name!r} NodeType "
                     f"{output_type.__name__} must define filename"
                 )
 
@@ -363,12 +373,14 @@ class Rule(Generic[_ReturnT]):
         if input_defaults is None:
             return {}, {}
         if not isinstance(input_defaults, Mapping):
-            raise TypeError(f"Rule {self.__name__!r}: input_defaults must be a mapping")
+            raise TypeError(
+                f"Command {self.__name__!r}: input_defaults must be a mapping"
+            )
         defaults = dict(input_defaults)
         unknown = [name for name in defaults if name not in contracts]
         if unknown:
             raise TypeError(
-                f"Rule {self.__name__!r}: unknown input defaults: "
+                f"Command {self.__name__!r}: unknown input defaults: "
                 f"{sorted(unknown, key=repr)!r}"
             )
         config_defaults = {}
@@ -380,12 +392,12 @@ class Rule(Generic[_ReturnT]):
                 continue
             if not contract.hybrid:
                 raise TypeError(
-                    f"Rule {self.__name__!r}: Node input {name!r} "
+                    f"Command {self.__name__!r}: Node input {name!r} "
                     "must not have a default"
                 )
             if isinstance(value, Node):
                 raise TypeError(
-                    f"Rule {self.__name__!r}: hybrid input {name!r} has a "
+                    f"Command {self.__name__!r}: hybrid input {name!r} has a "
                     "Node-valued default; managed Nodes must be supplied per Pipeline"
                 )
             if not _matches_value_type(value, contract.element_type):
@@ -393,7 +405,7 @@ class Rule(Generic[_ReturnT]):
                     sorted(_type_contract_name(item) for item in contract.value_types)
                 )
                 raise TypeError(
-                    f"Rule {self.__name__!r}: default for hybrid input {name!r} "
+                    f"Command {self.__name__!r}: default for hybrid input {name!r} "
                     f"expected {expected}, "
                     f"got {type(value).__name__!r}"
                 )
@@ -405,7 +417,7 @@ class Rule(Generic[_ReturnT]):
                 seen_default = True
             elif seen_default:
                 raise TypeError(
-                    f"Rule {self.__name__!r}: positional input {name!r} without a "
+                    f"Command {self.__name__!r}: positional input {name!r} without a "
                     "default follows a positional input with a default"
                 )
         return config_defaults, positional_defaults
@@ -432,6 +444,10 @@ class Rule(Generic[_ReturnT]):
                 default=self._input_defaults.get(name, inspect.Parameter.empty),
             )
             for name in self._kw_inputs
+        ]
+        params += [
+            inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=value)
+            for name, value in self.resource_defaults.items()
         ]
         return inspect.Signature(params)
 
@@ -479,7 +495,7 @@ class Rule(Generic[_ReturnT]):
                 f"unknown constraint placeholders: {sorted(unknown_constraints)}"
             )
         if errors:
-            raise ValueError(f"Rule {name!r}: " + "; ".join(errors))
+            raise ValueError(f"Command {name!r}: " + "; ".join(errors))
 
     @property
     def resources(self) -> dict[str, int]:
@@ -586,7 +602,11 @@ class Rule(Generic[_ReturnT]):
         return bound.arguments
 
     def _compile_outputs(
-        self, pipeline, args: tuple[Any, ...], config: dict[str, Any]
+        self,
+        pipeline,
+        args: tuple[Any, ...],
+        config: dict[str, Any],
+        resource_requests: dict,
     ) -> list[Node]:
         """Compile and intern output Nodes from validated logical inputs."""
         node_inputs = {}
@@ -604,6 +624,7 @@ class Rule(Generic[_ReturnT]):
             config,
             self.command,
             self.outputs.specs,
+            resource_requests=resource_requests,
         )
 
     def _shape_outputs(self, nodes: list[Node]) -> _ReturnT:
@@ -625,7 +646,7 @@ class Rule(Generic[_ReturnT]):
             pipeline = _active_pipeline.get()
         if pipeline is None:
             raise RuntimeError(
-                f"{self.__name__}: Rule calls require an active @workflow or "
+                f"{self.__name__}: Command calls require an active @workflow or "
                 "an explicit Pipeline as the first argument."
             )
         pipeline._assert_open()
@@ -634,140 +655,28 @@ class Rule(Generic[_ReturnT]):
         config = {name: bound[name] for name in self._kw_inputs}
         self._validate_positional_inputs(pipeline, args)
         self._validate_config_values(config)
-        nodes = self._compile_outputs(pipeline, args, config)
+        resource_requests = dict(self.constraints)
+        resource_requests.update(
+            {
+                name: normalize_resource(name, bound[name])
+                for name in self.resource_defaults
+            }
+        )
+        resource_requests = pipeline.dag.resource_requests(self, resource_requests)
+        nodes = self._compile_outputs(pipeline, args, config, resource_requests)
         return self._shape_outputs(nodes)
 
 
+# Historical import path; both names denote the same declaration class.
+Rule = Command
+
+
 def _parse_rule_fn(fn) -> tuple:
-    """Parse a typed rule signature and assignment-based output declarations."""
-    import ast
-    import builtins
-    import inspect
-    import textwrap
-
-    namespace = dict(fn.__globals__)
-    namespace.update(inspect.getclosurevars(fn).nonlocals)
-    rule_name = fn.__name__
-    info = fn.__doc__.strip() if fn.__doc__ else None
-    missing_annotations = [
-        name
-        for name, parameter in inspect.signature(fn).parameters.items()
-        if parameter.annotation is inspect.Parameter.empty
-    ]
-    if missing_annotations:
-        raise TypeError(
-            f"rule {rule_name!r}: inputs missing type annotations: "
-            f"{missing_annotations!r}"
-        )
-
-    raw_anns = fn.__annotations__
-    inputs_specs = {}
-    for pname, ann in raw_anns.items():
-        if pname == "return":
-            continue
-        if isinstance(ann, str):
-            ann = eval(ann, namespace)  # noqa: PGH001
-        inputs_specs[pname] = ann
-
-    try:
-        src = textwrap.dedent(inspect.getsource(fn))
-        func_tree = ast.parse(src)
-        func_def = next(
-            node
-            for node in ast.walk(func_tree)
-            if isinstance(node, ast.FunctionDef) and node.name == rule_name
-        )
-    except (OSError, StopIteration) as exc:
-        raise ValueError(
-            f"rule {rule_name!r}: cannot inspect declaration source"
-        ) from exc
-
-    body = list(func_def.body)
-    if (
-        body
-        and isinstance(body[0], ast.Expr)
-        and isinstance(body[0].value, ast.Constant)
-        and isinstance(body[0].value.value, str)
-    ):
-        body = body[1:]
-
-    if not body or not isinstance(body[-1], ast.Return) or body[-1].value is None:
-        raise ValueError(
-            f"rule {rule_name!r}: declaration must end with return output_name"
-        )
-
-    declarations = {}
-    for stmt in body[:-1]:
-        if not (
-            isinstance(stmt, ast.Assign)
-            and len(stmt.targets) == 1
-            and isinstance(stmt.targets[0], ast.Name)
-            and isinstance(stmt.value, ast.Call)
-            and isinstance(stmt.value.func, ast.Name)
-            and namespace.get(stmt.value.func.id) is output
-        ):
-            raise ValueError(
-                f"rule {rule_name!r}: body may contain only "
-                "name = output(NodeType) declarations before the final return"
-            )
-        if len(stmt.value.args) != 1 or stmt.value.keywords:
-            raise ValueError(
-                f"rule {rule_name!r}: output() requires exactly one positional NodeType"
-            )
-        type_expr = stmt.value.args[0]
-        if not isinstance(type_expr, ast.Name):
-            raise ValueError(
-                f"rule {rule_name!r}: output() argument must be a concrete NodeType name"
-            )
-        try:
-            output_type = namespace[type_expr.id]
-        except KeyError:
-            try:
-                output_type = getattr(builtins, type_expr.id)
-            except AttributeError as exc:
-                raise ValueError(
-                    f"rule {rule_name!r}: output() argument must be a concrete NodeType name"
-                ) from exc
-        output_name = stmt.targets[0].id
-        if not _is_nodetype(output_type):
-            raise TypeError(
-                f"rule {rule_name!r}: output {output_name!r} must be a "
-                f"NodeType, got {output_type!r}"
-            )
-        if output_name in declarations:
-            raise ValueError(
-                f"rule {rule_name!r}: duplicate output declaration {output_name!r}"
-            )
-        declarations[output_name] = output_type
-
-    body_return = body[-1].value
-    if isinstance(body_return, ast.Subscript):
-        raise ValueError(
-            f"rule {rule_name!r}: Type[name] output syntax was removed; use "
-            "name = output(Type) followed by return name"
-        )
-    items = body_return.elts if isinstance(body_return, ast.Tuple) else [body_return]
-    if not items or not all(isinstance(item, ast.Name) for item in items):
-        raise ValueError(
-            f"rule {rule_name!r}: final return must contain only declared output names"
-        )
-    returned_names = [cast(ast.Name, item).id for item in items]
-    if len(returned_names) != len(set(returned_names)):
-        raise ValueError(
-            f"rule {rule_name!r}: each output must be returned exactly once"
-        )
-    undeclared = [name for name in returned_names if name not in declarations]
-    unused = [name for name in declarations if name not in returned_names]
-    if undeclared or unused:
-        details = []
-        if undeclared:
-            details.append(f"undeclared outputs returned: {undeclared}")
-        if unused:
-            details.append(f"declared outputs not returned: {unused}")
-        raise ValueError(f"rule {rule_name!r}: " + "; ".join(details))
-
-    outputs_specs = {name: declarations[name] for name in returned_names}
-    return rule_name, inputs_specs, outputs_specs, info
+    """Keep built-in declarations restricted to output assignments."""
+    parsed = parse_declaration(fn)
+    if parsed.resources:
+        raise TypeError("built-in declarations do not accept Resource parameters")
+    return parsed.name, parsed.inputs, parsed.outputs, parsed.info
 
 
 def _decorated_input_defaults(fn: Callable, input_names: set[str]) -> dict[str, Any]:
@@ -782,14 +691,43 @@ def _decorated_input_defaults(fn: Callable, input_names: set[str]) -> dict[str, 
     }
 
 
+@overload
 def command(
     cmd: str | Callable,
+    inputs: Inputs,
+    outputs: Outputs,
+    constraints: Constraints | None = None,
+    *,
+    name: str,
+    doc: str | None = None,
+    repeat: int = 1,
+    **options,
+) -> Command[Any]: ...
+
+
+@overload
+def command(
+    cmd: str | Callable[[CommandArgs], str] | None = None,
+    *,
+    repeat: int = 1,
+    **constraints,
+) -> Callable[[Callable[..., _ReturnT]], Command[_ReturnT]]: ...
+
+
+@overload
+def command(
+    cmd: Callable[..., _ReturnT], *, repeat: int = 1, **constraints
+) -> Command[_ReturnT]: ...
+
+
+def command(
+    cmd: str | Callable | None = None,
     *declarations,
     name: str | None = None,
     doc: str | None = None,
     repeat: int = 1,
     **constraints,
-):
+) -> Any:
     """Create a factory rule or return the decorator-sugar adapter.
 
     ``repeat`` is the maximum number of command attempts, including the first.
@@ -797,12 +735,14 @@ def command(
     signature. Factory rules may declare them with
     ``input_defaults={name: value}``.
     """
+    if callable(cmd) and not declarations and is_inline_declaration(cmd):
+        return command(None, repeat=repeat, **constraints)(cmd)
     if isinstance(cmd, list):
         raise TypeError(
             "argv list commands are unsupported; use a shell "
             "string or a Python callback returning a shell string"
         )
-    if not isinstance(cmd, str) and not callable(cmd):
+    if cmd is not None and not isinstance(cmd, str) and not callable(cmd):
         raise TypeError(
             f"command requires a shell string or Python callback, got {type(cmd).__name__}"
         )
@@ -826,7 +766,7 @@ def command(
             factory_constraints, Constraints
         ):
             raise TypeError("factory command constraints must be a Constraints object")
-        return Rule[Any](
+        return Command[Any](
             name=name,
             inputs=inputs,
             outputs=outputs,
@@ -839,17 +779,25 @@ def command(
     if name is not None or doc is not None:
         raise TypeError("name= and doc= are only valid for factory commands")
 
-    def decorator(fn: Callable[..., _ReturnT]) -> Rule[_ReturnT]:
-        """Build a Rule from a decorated declaration and captured command policy."""
-        rule_name, inputs, outputs, info = _parse_rule_fn(fn)
+    def decorator(fn: Callable[..., _ReturnT]) -> Command[_ReturnT]:
+        """Build a Command from a decorated declaration and captured command policy."""
+        inline = cmd is None
+        parsed = parse_declaration(fn, inline=inline)
+        rule_name, inputs, outputs, info = (
+            parsed.name,
+            parsed.inputs,
+            parsed.outputs,
+            parsed.info,
+        )
         input_defaults = _decorated_input_defaults(fn, set(inputs))
         return cast(
-            Rule[_ReturnT],
-            Rule[Any](
+            Command[_ReturnT],
+            Command[Any](
                 name=rule_name,
                 inputs=Inputs(**inputs),
                 outputs=Outputs(**outputs),
-                command=cmd,
+                command=parsed.command if inline else cmd,
+                resource_defaults=parsed.resources,
                 constraints=Constraints(**constraints) if constraints else None,
                 info=info,
                 repeat=repeat,
@@ -897,8 +845,8 @@ def _make_text_file_rule(
     encoding: str,
     output_name: str | None,
     info: str | None,
-) -> Rule[Node]:
-    """Build the internal materializer-backed text-file Rule."""
+) -> Command[Node]:
+    """Build the internal materializer-backed text-file Command."""
     if input_name in BUILTIN_COMMAND_PLACEHOLDERS:
         raise ValueError(f"text_file input_name {input_name!r} is reserved")
     if not _is_nodetype(output):
@@ -915,7 +863,7 @@ def _make_text_file_rule(
             call.config[input_name], encoding=encoding
         )
 
-    return Rule(
+    return Command(
         name=name,
         inputs=Inputs(**{input_name: str}),
         outputs=Outputs(**{oname: output}),
@@ -933,7 +881,7 @@ def text_file_rule(
     input_name: str = "text",
     encoding: str = "utf-8",
     output_name: str | None = None,
-) -> Rule[Node]:
+) -> Command[Node]:
     """Return a built-in rule that writes a string config value to a file."""
     return _make_text_file_rule(
         name,
@@ -945,13 +893,13 @@ def text_file_rule(
     )
 
 
-def text_file(fn: Callable[..., _ReturnT], /) -> Rule[_ReturnT]:
+def text_file(fn: Callable[..., _ReturnT], /) -> Command[_ReturnT]:
     """Declare a built-in text-file rule. Use text_file_rule(...) for a non-default encoding."""
     name, input_name, output_name, output, info = _validate_builtin_declaration(
         fn, "text_file"
     )
     return cast(
-        Rule[_ReturnT],
+        Command[_ReturnT],
         _make_text_file_rule(
             name,
             output,
@@ -970,14 +918,14 @@ def _make_symlink_file_rule(
     path_arg: str,
     output_name: str | None,
     info: str | None,
-) -> Rule[Node]:
-    """Build the internal shell-backed external-file symlink Rule."""
+) -> Command[Node]:
+    """Build the internal shell-backed external-file symlink Command."""
     if path_arg in BUILTIN_COMMAND_PLACEHOLDERS:
         raise ValueError(f"symlink_file path_arg {path_arg!r} is reserved")
     if not _is_nodetype(output):
         raise TypeError(f"symlink_file output must be a NodeType, got {output!r}")
     oname = output_name or _pascal_to_snake(output.__name__)
-    return Rule(
+    return Command(
         name=name,
         inputs=Inputs(**{path_arg: str}),
         outputs=Outputs(**{oname: output}),
@@ -992,7 +940,7 @@ def symlink_file_rule(
     *,
     path_arg: str = "path",
     output_name: str | None = None,
-) -> Rule[Node]:
+) -> Command[Node]:
     """Return a rule that symlinks an external path into the output tree."""
     return _make_symlink_file_rule(
         name,
@@ -1003,13 +951,13 @@ def symlink_file_rule(
     )
 
 
-def symlink_file(fn: Callable[..., _ReturnT], /) -> Rule[_ReturnT]:
+def symlink_file(fn: Callable[..., _ReturnT], /) -> Command[_ReturnT]:
     """Declare a built-in external-file symlink rule."""
     name, path_arg, output_name, output_type, info = _validate_builtin_declaration(
         fn, "symlink_file"
     )
     return cast(
-        Rule[_ReturnT],
+        Command[_ReturnT],
         _make_symlink_file_rule(
             name,
             output_type,

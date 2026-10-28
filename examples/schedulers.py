@@ -24,27 +24,31 @@ class Merged(NodeType):
     filename = "merged.txt"
 
 
-@command("echo {word} > {text}")
+@command
 def make_text(word: str):
     text = output(Text)
+    command = "echo {word} > {text}"
     return text
 
 
-@command("tr a-z A-Z < {text} > {upper}")
+@command
 def to_upper(text: Text):
     upper = output(Upper)
+    command = "tr a-z A-Z < {text} > {upper}"
     return upper
 
 
-@command("tr A-Z a-z < {text} > {lower}")
+@command
 def to_lower(text: Text):
     lower = output(Lower)
+    command = "tr A-Z a-z < {text} > {lower}"
     return lower
 
 
-@command("paste {upper} {lower} > {merged}")
+@command
 def merge(upper: Upper, lower: Lower):
     merged = output(Merged)
+    command = "paste {upper} {lower} > {merged}"
     return merged
 
 

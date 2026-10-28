@@ -6,7 +6,7 @@ import pytest
 import necroflow.cli as cli_core
 from necroflow import DAG, Inputs, NodeType, Outputs, Pipeline
 from necroflow.cli import main
-from necroflow.rules import Rule
+from necroflow.rules import Command
 
 
 class Result(NodeType):
@@ -17,14 +17,14 @@ class Source(NodeType):
     filename = "source.txt"
 
 
-CURRENT_CONSUMER = Rule(
+CURRENT_CONSUMER = Command(
     "consume",
     Inputs(source=Source),
     Outputs(result=Result),
     "cp {source} {result}",
 )
 
-CURRENT_PRODUCER = Rule(
+CURRENT_PRODUCER = Command(
     "produce",
     Inputs(value=str),
     Outputs(result=Result),
@@ -33,7 +33,7 @@ CURRENT_PRODUCER = Rule(
 
 
 def _run_cached_rule(nodes_dir, command="printf old > {result}"):
-    rule = Rule(
+    rule = Command(
         "produce",
         Inputs(value=str),
         Outputs(result=Result),
@@ -49,7 +49,7 @@ def _run_cached_rule(nodes_dir, command="printf old > {result}"):
 
 def _run_source_and_consumer(nodes_dir):
     """Build an obsolete-capable parent rule feeding the current consumer."""
-    old_source = Rule(
+    old_source = Command(
         "source",
         Inputs(value=str),
         Outputs(source=Source),
@@ -111,8 +111,8 @@ def test_gc_recursively_deletes_descendants_of_obsolete_rules(tmp_path):
     scope.write_text(
         "from test_gc import CURRENT_CONSUMER, Source\n"
         "from necroflow import Inputs, Outputs\n"
-        "from necroflow.rules import Rule\n"
-        "CURRENT_SOURCE = Rule('source', Inputs(value=str), Outputs(source=Source), "
+        "from necroflow.rules import Command\n"
+        "CURRENT_SOURCE = Command('source', Inputs(value=str), Outputs(source=Source), "
         "'printf new > {source}')\n"
         "rules = [CURRENT_SOURCE, CURRENT_CONSUMER]\n"
     )
@@ -132,8 +132,8 @@ def test_gc_preserves_current_child_when_parent_directory_is_missing(tmp_path):
     scope.write_text(
         "from test_gc import CURRENT_CONSUMER, Source\n"
         "from necroflow import Inputs, Outputs\n"
-        "from necroflow.rules import Rule\n"
-        "CURRENT_SOURCE = Rule('source', Inputs(value=str), Outputs(source=Source), "
+        "from necroflow.rules import Command\n"
+        "CURRENT_SOURCE = Command('source', Inputs(value=str), Outputs(source=Source), "
         "'printf new > {source}')\n"
         "rules = [CURRENT_SOURCE, CURRENT_CONSUMER]\n"
     )
@@ -225,9 +225,9 @@ def test_gc_accepts_rules_held_in_a_module_level_container(tmp_path):
     scope.write_text(
         "from test_gc import Result\n"
         "from necroflow import Inputs, Outputs\n"
-        "from necroflow.rules import Rule\n"
+        "from necroflow.rules import Command\n"
         "REGISTRY = {\n"
-        "    'produce': Rule('produce', Inputs(value=str), Outputs(result=Result), "
+        "    'produce': Command('produce', Inputs(value=str), Outputs(result=Result), "
         "'printf current > {result}'),\n"
         "}\n"
         "rules = list(REGISTRY.values())\n"
@@ -257,7 +257,7 @@ def test_gc_rejects_a_script_without_a_rules_list(tmp_path, body):
     with pytest.raises(SystemExit) as excinfo:
         _gc(nodes_dir, scope, "-y")
 
-    assert "rules list of Rule objects" in str(excinfo.value)
+    assert "rules list of Command objects" in str(excinfo.value)
 
 
 def test_gc_deletes_unreadable_current_layout_in_non_current_batch(tmp_path, capsys):

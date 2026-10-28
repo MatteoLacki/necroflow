@@ -244,7 +244,16 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
     validation_specs = getattr(args, "validation", [])
     validators = _load_validators(validation_specs) if validation_specs else []
 
-    dag = DAG(nodes_dir)
+    try:
+        resource_path = getattr(args, "resources", None)
+        resources = (
+            tomlkit.parse(Path(resource_path).read_text(encoding="utf-8"))
+            if resource_path
+            else None
+        )
+        dag = DAG(nodes_dir, resources=resources)
+    except (OSError, ValueError, TypeError) as exc:
+        raise SystemExit(f"error: resources: {exc}") from exc
     combos: list[_Combo] = []
     job_origins: dict[str, tuple[Path, int]] = {}
     forced_stale_call_keys: set[Path] = set()
@@ -301,6 +310,11 @@ def _build_dag_from_jobs(args, *, nodes_dir: Path):
         except Exception as exc:
             raise SystemExit(f"error: {exc}") from exc
 
+    try:
+        dag.validate_resources()
+        dag.bind_thread_cap(_parse_resource_caps(args)["threads"])
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from exc
     return dag, combos, forced_stale_call_keys
 
 
@@ -380,7 +394,7 @@ def _node_json(node, state: str | None = None) -> dict:
         "state": state,
         "path": str(node.path) if node.path is not None else None,
         "resources": dict(node.rule_call.resources),
-        "constraints": dict(getattr(node.rule, "constraints", {})) if node.rule else {},
+        "constraints": dict(node.rule_call.resource_requests) if node.rule else {},
         "config": dict(node.config),
     }
     return data
@@ -460,6 +474,7 @@ def _provenance_payload(path: Path) -> dict:
         "rule_hash": identity.get("rule_hash", ""),
         "provenance_hash": identity.get("provenance_hash", ""),
         "config": _json_ready(provenance_config(doc)),
+        "resources": _json_ready(doc.get("resources", {})),
         "execution": _json_ready(doc.get("execution", {})),
     }
 
@@ -511,7 +526,7 @@ def _explain_payload(args) -> dict:
                 "will_run": None if verdict is None else verdict.will_run,
                 "workdir": str(call.workdir),
                 "resources": dict(call.resources),
-                "constraints": dict(call.rule.constraints),
+                "constraints": dict(call.resource_requests),
                 "config": dict(call.config),
                 "command": command,
                 "reasons": plan.reasons[call.relative_path],
@@ -1043,6 +1058,9 @@ def _materialize_results(
 
 def _add_run_options(parser) -> None:
     """Add shared job-building and execution options to a subcommand parser."""
+    parser.add_argument(
+        "--resources", type=Path, help="TOML resource overrides keyed by rule name."
+    )
     parser.add_argument(
         "jobs",
         nargs="+",

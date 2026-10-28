@@ -1,6 +1,6 @@
 import logging
 
-from necroflow.rules import Constraints, Inputs, Outputs, Rule
+from necroflow.rules import Constraints, Inputs, Outputs, Command
 import pytest
 
 from necroflow import Pipeline, DAG, NodeType
@@ -22,12 +22,12 @@ class D(NodeType):
     filename = "d"
 
 
-R_make_a = Rule("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
-R_make_b = Rule("make_b", Inputs(x=str), Outputs(b=B), "touch {b}")
-R_fail_c = Rule(
+R_make_a = Command("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
+R_make_b = Command("make_b", Inputs(x=str), Outputs(b=B), "touch {b}")
+R_fail_c = Command(
     "fail_c", Inputs(a=A), Outputs(c=C), "{{ : {c}; exit 1; }}"
 )  # always fails
-R_make_d = Rule("make_d", Inputs(c=C), Outputs(d=D), "touch {d}")
+R_make_d = Command("make_d", Inputs(c=C), Outputs(d=D), "touch {d}")
 
 
 def two_branch_dag(tmp_path):

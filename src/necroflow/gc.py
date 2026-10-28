@@ -16,7 +16,7 @@ from necroflow.fingerprints import (
     declared_rule_hash,
     hash_rule_identity,
 )
-from necroflow.rules import Rule
+from necroflow.rules import Command
 
 _HASH_COMPONENT = re.compile(r"[0-9a-f]{64}")
 
@@ -34,11 +34,11 @@ def _load_declared_rules(script: Path) -> tuple[set[str], set[str]]:
     if (
         not isinstance(rules, list)
         or not rules
-        or not all(isinstance(rule, Rule) for rule in rules)
+        or not all(isinstance(rule, Command) for rule in rules)
     ):
         raise ValueError(
             f"GC rules script {script} must define a non-empty "
-            "rules list of Rule objects"
+            "rules list of Command objects"
         )
     return (
         {declared_rule_hash(rule) for rule in rules},

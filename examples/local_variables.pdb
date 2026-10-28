@@ -1,5 +1,5 @@
 !from necroflow import DAG
-!from necroflow.rules import Rule
+!from necroflow.rules import Command
 break DAG.__init__
 commands
 silent
@@ -7,7 +7,7 @@ up
 p "=== DAG and Pipeline declaration ==="
 list
 continue
-break Rule.__call__
+break Command.__call__
 commands
 silent
 p ("rule call", self.__name__, kwargs)

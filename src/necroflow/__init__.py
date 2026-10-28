@@ -1,9 +1,11 @@
 __version__ = "0.0.8"
 
+from necroflow.resources import Resource
 from necroflow.containers import Docker
 from necroflow.dag import DAG
 from necroflow.nodes import Node, NodeType
 from necroflow.rules import (
+    Command,
     Constraints,
     Inputs,
     Many,
@@ -28,6 +30,7 @@ from necroflow.workflow import workflow
 __all__ = [
     "__version__",
     "Docker",
+    "Resource",
     "Node",
     "RuleCall",
     "RuleCallExecution",
@@ -38,6 +41,7 @@ __all__ = [
     "Many",
     "Outputs",
     "Constraints",
+    "Command",
     "command",
     "output",
     "symlink_file",

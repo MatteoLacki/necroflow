@@ -22,9 +22,9 @@ def _node_label(node: Node) -> str:
         parts[0] += f"[{suffix}]"
     # needs human review: config omitted from label because long embedded
     # config values can otherwise make the graph unreadable.
-    if node.rule.constraints:
+    if node.rule_call.resource_requests:
         resources = ", ".join(
-            f"{key}={value}" for key, value in node.rule.constraints.items()
+            f"{key}={value}" for key, value in node.rule_call.resource_requests.items()
         )
         parts.append(f"[{resources}]")
     return " ".join(parts)

@@ -143,8 +143,8 @@ Default cap is `threads = os.cpu_count()` (`rules.default_thread_cap()`). `resou
 A rule declaring `threads="all"` resolves against the run's thread cap: `run()` and
 `cli explain` call `DAG.bind_thread_cap(cap)` before scheduling or resolving commands,
 so `RuleCall.resources["threads"]` and the realized command reflect the actual cap for
-that run. `Rule.resources_for(cap)` is the one place that resolves `"all"`; an unbound
-call, and `Rule.resources`, use the default cap. See [Rules](rules.md#all-available-threads).
+that run. `Command.resources_for(cap)` is the one place that resolves `"all"`; an unbound
+call, and `Command.resources`, use the default cap. See [Rules](rules.md#all-available-threads).
 
 Scheduler order is priority, not guaranteed start order under resource pressure. Executor admits selected calls whose capped resource totals fit (`ResourcePool`). When nothing runs, one oversized call may run alone to prevent deadlock.
 

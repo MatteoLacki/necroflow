@@ -424,6 +424,7 @@ def run(
     caps = {"threads": default_thread_cap(), **(resource_caps or {})}
     dag.bind_thread_cap(caps["threads"])
 
+    dag.validate_resources()
     with _acquire_lock(dag.nodes_dir):
         # Nothing runs yet, so hashes taken while planning may use every thread.
         # Holding the lock, even for a dry run, makes refreshed hashes safe to store.

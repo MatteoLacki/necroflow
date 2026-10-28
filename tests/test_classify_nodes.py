@@ -17,7 +17,7 @@ from necroflow import (
 )
 from necroflow.hashers import load_hasher
 from necroflow.planning import plan_execution
-from necroflow.rules import Rule
+from necroflow.rules import Command
 
 
 class Source(NodeType):
@@ -36,23 +36,23 @@ class Bundle(NodeType):
     filename = "bundle"
 
 
-SOURCE = Rule("source", Inputs(), Outputs(source=Source), "printf stable > {source}")
-CONSUME = Rule(
+SOURCE = Command("source", Inputs(), Outputs(source=Source), "printf stable > {source}")
+CONSUME = Command(
     "consume", Inputs(source=Source), Outputs(result=Result), "cp {source} {result}"
 )
-PAIR = Rule(
+PAIR = Command(
     "pair",
     Inputs(),
     Outputs(result=Result, log=Log),
     "touch {result} {log}",
 )
-BUNDLE_SOURCE = Rule(
+BUNDLE_SOURCE = Command(
     "bundle_source",
     Inputs(),
     Outputs(bundle=Bundle),
     "mkdir {bundle}; printf a > {bundle}/a; printf b > {bundle}/b",
 )
-BUNDLE_CONSUME = Rule(
+BUNDLE_CONSUME = Command(
     "bundle_consume",
     Inputs(bundle=Bundle),
     Outputs(result=Result),

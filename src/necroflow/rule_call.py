@@ -128,6 +128,7 @@ class RuleCall:
     command: str | Callable | None
     shellpath: str | None = None
     output_nodes: dict[str, Node] = field(default_factory=dict)
+    resource_requests: dict[str, Any] | None = None
     parents: list[Node] = field(init=False)
     parent_calls: list[RuleCall] = field(init=False)
     rule_identity: dict[str, Any] = field(init=False)
@@ -139,6 +140,8 @@ class RuleCall:
     _thread_cap: int | None = None
 
     def __post_init__(self) -> None:
+        if self.resource_requests is None:
+            self.resource_requests = dict(self.rule.constraints)
         # Cached once: read in hot graph-traversal loops via
         # Node.parents, so this must not become a rebuild-per-access property.
         self.parents = [
@@ -228,7 +231,7 @@ class RuleCall:
 
     def _constraints(self) -> dict[str, Any]:
         """Command-facing constraints: raw declared values, threads resolved."""
-        values = dict(self.rule.constraints)
+        values = dict(self.resource_requests)
         if values.get("threads", "all") == "all":
             values["threads"] = self.resources["threads"]
         return values
@@ -272,11 +275,19 @@ class RuleCall:
     @property
     def resources(self) -> dict[str, int]:
         """Integer scheduler resources; `threads="all"` is the bound thread cap."""
-        return self.rule.resources_for(self._thread_cap)
+        from necroflow.rules import default_thread_cap, parse_resource
+
+        cap = default_thread_cap() if self._thread_cap is None else self._thread_cap
+        result = {
+            name: cap if name == "threads" and value == "all" else parse_resource(value)
+            for name, value in self.resource_requests.items()
+        }
+        result.setdefault("threads", 1)
+        return result
 
     def bind_thread_cap(self, cap: int) -> None:
         """Resolve an all-threads declaration for this execution."""
-        if self.rule.constraints.get("threads") == "all" and self._thread_cap != cap:
+        if self.resource_requests.get("threads") == "all" and self._thread_cap != cap:
             self._thread_cap = cap
             self._realized = None
 
@@ -385,6 +396,7 @@ class RuleCall:
         config, null_paths = _encode_config(self._accumulated_config())
         data = {
             "rule": self.rule.__name__,
+            "resources": self.resources,
             "config": config,
             "outputs": [
                 {

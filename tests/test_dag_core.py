@@ -1,6 +1,6 @@
 """Tests for DAG internals: paths, commands, types, and labels."""
 
-from necroflow.rules import Constraints, Inputs, Outputs, Rule
+from necroflow.rules import Constraints, Inputs, Outputs, Command
 from necroflow import command, output
 
 import pytest
@@ -32,26 +32,28 @@ class Joined(NodeType):
     filename = "joined.txt"
 
 
-R_make_txt = Rule("make_txt", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}")
-R_make_sorted_txt = Rule(
+R_make_txt = Command(
+    "make_txt", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}"
+)
+R_make_sorted_txt = Command(
     "make_sorted_txt",
     Inputs(word=str),
     Outputs(stxt=SortedTxt),
     "echo {word} | sort > {stxt}",
 )
-R_to_upper = Rule(
+R_to_upper = Command(
     "to_upper",
     Inputs(txt=Txt, n=int),
     Outputs(upper=Upper, log=Log),
     "tr a-z A-Z < {txt} | head -{n} | tee {log} > {upper}",
 )
-R_sort_txt = Rule(
+R_sort_txt = Command(
     "sort_txt",
     Inputs(txt=SortedTxt),
     Outputs(sorted_txt=SortedTxt),
     "sort {txt} > {sorted_txt}",
 )
-R_join_upper = Rule(
+R_join_upper = Command(
     "join_upper",
     Inputs(a=Upper, b=Upper),
     Outputs(joined=Joined),
@@ -89,7 +91,7 @@ def test_rule_call_rejects_component_over_name_max(tmp_path, monkeypatch):
     class LongName(NodeType):
         filename = "x" * 11
 
-    r_make_long_name = Rule(
+    r_make_long_name = Command(
         "make_long_name", Inputs(word=str), Outputs(out=LongName), "echo {word} > {out}"
     )
     monkeypatch.setattr(fs_core, "_filesystem_limits", lambda path: (10, 4096))
@@ -137,12 +139,12 @@ def test_fingerprint_changes_on_inputs_type_change():
     class FastqB(NodeType):
         filename = "fastq"
 
-    Ra_raw = Rule("raw", Inputs(path=str), Outputs(fastq=FastqA), "touch {fastq}")
-    Ra_align = Rule(
+    Ra_raw = Command("raw", Inputs(path=str), Outputs(fastq=FastqA), "touch {fastq}")
+    Ra_align = Command(
         "align", Inputs(fastq=FastqA, ref=str), Outputs(txt=Txt), "touch {txt}"
     )
-    Rb_raw = Rule("raw", Inputs(path=str), Outputs(fastq=FastqB), "touch {fastq}")
-    Rb_align = Rule(
+    Rb_raw = Command("raw", Inputs(path=str), Outputs(fastq=FastqB), "touch {fastq}")
+    Rb_align = Command(
         "align", Inputs(fastq=FastqB, ref=str), Outputs(txt=Txt), "touch {txt}"
     )
 
@@ -160,8 +162,8 @@ def test_fingerprint_changes_on_outputs_type_change():
     class BamB(NodeType):
         filename = "aligned.bam"
 
-    Ra_align = Rule("align", Inputs(path=str), Outputs(bam=BamA), "touch {bam}")
-    Rb_align = Rule("align", Inputs(path=str), Outputs(bam=BamB), "touch {bam}")
+    Ra_align = Command("align", Inputs(path=str), Outputs(bam=BamA), "touch {bam}")
+    Rb_align = Command("align", Inputs(path=str), Outputs(bam=BamB), "touch {bam}")
 
     bam_a = Ra_align(P, path="/d/s.fq")
     bam_b = Rb_align(P, path="/d/s.fq")
@@ -252,7 +254,7 @@ def test_output_filename_must_be_one_safe_relative_component(tmp_path):
     class Escaping(NodeType):
         filename = "../escape.txt"
 
-    rule = Rule("escape", Inputs(x=str), Outputs(out=Escaping), "touch {out}")
+    rule = Command("escape", Inputs(x=str), Outputs(out=Escaping), "touch {out}")
 
     with pytest.raises(ValueError, match="one relative path component"):
         rule(Pipeline(DAG(tmp_path)), x="x")
@@ -268,7 +270,7 @@ def test_rule_rejects_filename_less_output_type_at_declaration():
         TypeError,
         match="output 'dataset'.*MmappetDataset.*must define filename",
     ):
-        Rule(
+        Command(
             "emit_dataset",
             Inputs(),
             Outputs(dataset=MmappetDataset),
@@ -302,13 +304,13 @@ def test_filename_less_nodetype_remains_a_valid_input_contract(tmp_path):
     class PrecursorTable(MmappetDataset):
         filename = "precursors.mmappet"
 
-    produce = Rule(
+    produce = Command(
         "produce_precursors",
         Inputs(),
         Outputs(dataset=PrecursorTable),
         "mkdir {dataset}",
     )
-    consume = Rule(
+    consume = Command(
         "consume_mmappet",
         Inputs(dataset=MmappetDataset),
         Outputs(txt=Txt),
@@ -323,7 +325,7 @@ def test_filename_less_nodetype_remains_a_valid_input_contract(tmp_path):
 
 
 def test_rule_name_must_be_one_safe_relative_component(tmp_path):
-    rule = Rule("../escape", Inputs(x=str), Outputs(out=Txt), "touch {out}")
+    rule = Command("../escape", Inputs(x=str), Outputs(out=Txt), "touch {out}")
 
     with pytest.raises(ValueError, match="rule name"):
         rule(Pipeline(DAG(tmp_path)), x="x")
@@ -374,7 +376,7 @@ def test_rule_call_requires_pipeline_and_node_inputs(tmp_path):
 def test_runtime_uncheckable_config_annotation_remains_fingerprintable(tmp_path):
     """Typing-only config contracts may skip isinstance checks but retain identity."""
 
-    rule = Rule(
+    rule = Command(
         "literal_config",
         Inputs(mode=Literal["strict", "relaxed"]),
         Outputs(txt=Txt),
@@ -403,7 +405,7 @@ def test_resolve_command_config_substitution(tmp_path):
 
 def test_resolve_command_quotes_string_config_for_shell_commands(tmp_path):
     P = Pipeline(DAG(tmp_path))
-    r_filter_txt = Rule(
+    r_filter_txt = Command(
         "filter_txt",
         Inputs(filter=str),
         Outputs(txt=Txt),
@@ -416,7 +418,7 @@ def test_resolve_command_quotes_string_config_for_shell_commands(tmp_path):
 
 def test_resolve_command_scalar_config_stays_bare_when_shell_safe(tmp_path):
     P = Pipeline(DAG(tmp_path))
-    r_number_txt = Rule(
+    r_number_txt = Command(
         "number_txt", Inputs(n=int), Outputs(txt=Txt), "tool -n {n} > {txt}"
     )
     txt = r_number_txt(P, n=5)
@@ -426,7 +428,7 @@ def test_resolve_command_scalar_config_stays_bare_when_shell_safe(tmp_path):
 
 def test_list_commands_are_rejected():
     with pytest.raises(TypeError, match="argv list commands are unsupported"):
-        Rule(
+        Command(
             "list_filter",
             Inputs(filter=str),
             Outputs(txt=Txt),
@@ -443,7 +445,7 @@ def test_resolve_command_output_substitution(tmp_path):
     assert str(log.path) in cmd
 
 
-R_no_command = Rule("no_command", Inputs(word=str), Outputs(txt=Txt), None)
+R_no_command = Command("no_command", Inputs(word=str), Outputs(txt=Txt), None)
 
 
 def test_resolve_command_none_for_no_command(tmp_path):
@@ -454,7 +456,7 @@ def test_resolve_command_none_for_no_command(tmp_path):
 
 def test_resolve_command_direct_constraint_placeholders(tmp_path):
     P = Pipeline(DAG(tmp_path))
-    r_constrained = Rule(
+    r_constrained = Command(
         "constrained",
         Inputs(word=str),
         Outputs(txt=Txt),
@@ -471,7 +473,7 @@ def test_resolve_command_direct_constraint_placeholders(tmp_path):
 
 def test_resolve_command_threads_defaults_to_one(tmp_path):
     P = Pipeline(DAG(tmp_path))
-    r_default_threads = Rule(
+    r_default_threads = Command(
         "default_threads",
         Inputs(word=str),
         Outputs(txt=Txt),
@@ -484,7 +486,7 @@ def test_resolve_command_threads_defaults_to_one(tmp_path):
 
 def test_resolve_command_preserves_escaped_shell_braces(tmp_path):
     P = Pipeline(DAG(tmp_path))
-    r_brace = Rule(
+    r_brace = Command(
         "brace",
         Inputs(word=str),
         Outputs(txt=Txt),
@@ -522,7 +524,7 @@ def test_input_name_colliding_with_constraint_is_rejected():
     with pytest.raises(
         ValueError, match=r"collides with a resource constraint name: \['threads'\]"
     ):
-        Rule(
+        Command(
             "colliding_threads",
             Inputs(threads=int),
             Outputs(txt=Txt),
@@ -535,7 +537,7 @@ def test_output_name_colliding_with_declared_constraint_is_rejected():
     with pytest.raises(
         ValueError, match=r"collides with a resource constraint name: \['ram'\]"
     ):
-        Rule(
+        Command(
             "colliding_ram",
             Inputs(word=str),
             Outputs(ram=Txt),
@@ -549,7 +551,7 @@ def test_input_name_colliding_with_implicit_threads_default_is_rejected():
     with pytest.raises(
         ValueError, match=r"collides with a resource constraint name: \['threads'\]"
     ):
-        Rule(
+        Command(
             "implicit_threads_collision",
             Inputs(threads=int),
             Outputs(txt=Txt),
@@ -646,7 +648,7 @@ def test_missing_positional_input_raises():
 
 
 def test_missing_config_input_raises():
-    """Rule calls must reject omitted required config inputs immediately.
+    """Command calls must reject omitted required config inputs immediately.
 
     This keeps malformed DAGs from being accepted and then failing later
     during command formatting or execution.
@@ -688,7 +690,7 @@ def test_decorated_rule_rejects_unexpected_config_before_interning(tmp_path):
 
 
 def test_extra_positional_input_raises():
-    """Rule calls must reject undeclared positional node inputs.
+    """Command calls must reject undeclared positional node inputs.
 
     Extra nodes should not silently become parents, because that creates
     dependencies outside the rule's declared input contract.
@@ -745,7 +747,7 @@ def test_subtype_accepted():
 
 
 def test_nodetype_union_accepts_either_member():
-    r_use_txt_or_upper = Rule(
+    r_use_txt_or_upper = Command(
         "use_txt_or_upper", Inputs(data=Txt | Upper), Outputs(log=Log), "touch {log}"
     )
 
@@ -757,7 +759,7 @@ def test_nodetype_union_accepts_either_member():
 
 
 def test_nodetype_union_accepts_subclass_of_member():
-    r_use_txt_or_upper = Rule(
+    r_use_txt_or_upper = Command(
         "use_txt_or_upper", Inputs(data=Txt | Upper), Outputs(log=Log), "touch {log}"
     )
     stxt = R_make_sorted_txt(P, word="hi")
@@ -766,7 +768,7 @@ def test_nodetype_union_accepts_subclass_of_member():
 
 
 def test_nodetype_union_rejects_unrelated_type():
-    r_use_txt_or_upper = Rule(
+    r_use_txt_or_upper = Command(
         "use_txt_or_upper", Inputs(data=Txt | Upper), Outputs(log=Log), "touch {log}"
     )
     txt = R_make_txt(P, word="hi")
@@ -779,7 +781,7 @@ def test_nodetype_union_rejects_unrelated_type():
 def test_mixed_nodetype_union_selects_parent_or_scalar_branch(tmp_path):
     """A mixed fixed input is a dependency only when its runtime value is a Node."""
 
-    rule = Rule(
+    rule = Command(
         "consume_mixed",
         Inputs(source=Txt | str | None),
         Outputs(log=Log),
@@ -820,7 +822,7 @@ def test_mixed_nodetype_union_selects_parent_or_scalar_branch(tmp_path):
 def test_mixed_nodetype_union_supports_typing_union(tmp_path):
     """Legacy typing.Union spelling must have the same mixed-input behavior."""
 
-    rule = Rule(
+    rule = Command(
         "consume_typing_union",
         Inputs(source=Union[Txt, str]),
         Outputs(log=Log),
@@ -834,13 +836,13 @@ def test_mixed_nodetype_union_supports_typing_union(tmp_path):
 def test_mixed_plain_value_fingerprint_retains_positional_order(tmp_path):
     """Callback-visible mixed input order must remain part of call identity."""
 
-    left_first = Rule(
+    left_first = Command(
         "ordered_mixed",
         Inputs(left=Txt | str, right=Txt | str),
         Outputs(log=Log),
         "touch {log}",
     )
-    right_first = Rule(
+    right_first = Command(
         "ordered_mixed",
         Inputs(right=Txt | str, left=Txt | str),
         Outputs(log=Log),
@@ -859,7 +861,7 @@ def test_mixed_plain_value_fingerprint_retains_positional_order(tmp_path):
 def test_mixed_nodetype_union_rejects_unmatched_node_and_scalar(tmp_path):
     """Each mixed-input runtime value must match its Node or scalar union arm."""
 
-    rule = Rule(
+    rule = Command(
         "consume_mixed",
         Inputs(source=Txt | str | None),
         Outputs(log=Log),
@@ -877,7 +879,7 @@ def test_mixed_nodetype_union_rejects_unmatched_node_and_scalar(tmp_path):
 def test_mixed_nodetype_union_checks_dag_ownership_only_for_nodes(tmp_path):
     """Scalar alternatives have no DAG owner; managed alternatives still must match."""
 
-    rule = Rule(
+    rule = Command(
         "consume_mixed",
         Inputs(source=Txt | str),
         Outputs(log=Log),
@@ -893,7 +895,7 @@ def test_mixed_nodetype_union_checks_dag_ownership_only_for_nodes(tmp_path):
 
 
 def test_config_union_still_supported():
-    r_config_union = Rule(
+    r_config_union = Command(
         "config_union",
         Inputs(value=str | int),
         Outputs(txt=Txt),
@@ -907,10 +909,10 @@ def test_config_union_still_supported():
 
 
 def test_fingerprint_changes_for_nodetype_union_contract():
-    r_single_consume = Rule(
+    r_single_consume = Command(
         "consume", Inputs(data=Txt), Outputs(log=Log), "touch {log}"
     )
-    r_union_consume = Rule(
+    r_union_consume = Command(
         "consume", Inputs(data=Txt | Upper), Outputs(log=Log), "touch {log}"
     )
     txt = R_make_txt(P, word="hi")
@@ -922,10 +924,10 @@ def test_fingerprint_changes_for_nodetype_union_contract():
 
 
 def test_nodetype_union_fingerprint_order_is_stable():
-    r_ab_consume = Rule(
+    r_ab_consume = Command(
         "consume", Inputs(data=Txt | Upper), Outputs(log=Log), "touch {log}"
     )
-    r_ba_consume = Rule(
+    r_ba_consume = Command(
         "consume", Inputs(data=Upper | Txt), Outputs(log=Log), "touch {log}"
     )
     txt = R_make_txt(P, word="hi")
@@ -962,13 +964,13 @@ def test_pipeline_duplicate_raises(tmp_path):
 
 def test_command_unknown_placeholder_raises():
     with pytest.raises(ValueError, match="unknown placeholders"):
-        r_bad = Rule(
+        r_bad = Command(
             "bad", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt} {typo}"
         )
 
 
 def test_command_missing_output_is_allowed():
-    r_ok = Rule(
+    r_ok = Command(
         "bad", Inputs(word=str), Outputs(txt=Txt, log=Log), "echo {word} > {txt}"
     )
     assert r_ok.outputs.specs == {"txt": Txt, "log": Log}
@@ -985,17 +987,17 @@ def test_command_factory_rejects_list_commands():
 
 
 def test_command_unreferenced_input_is_allowed():
-    r_ok = Rule("ok", Inputs(word=str), Outputs(txt=Txt), "touch {txt}")
+    r_ok = Command("ok", Inputs(word=str), Outputs(txt=Txt), "touch {txt}")
     assert r_ok is not None
 
 
 def test_command_valid_declaration_ok():
-    r_good = Rule("good", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}")
+    r_good = Command("good", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}")
     assert r_good is not None
 
 
 def test_command_repeat_metadata():
-    r_repeat_rule = Rule(
+    r_repeat_rule = Command(
         "repeat_rule",
         Inputs(word=str),
         Outputs(txt=Txt),
@@ -1008,7 +1010,7 @@ def test_command_repeat_metadata():
 
 def test_command_repeat_must_be_positive_int():
     with pytest.raises(ValueError, match="repeat must be a positive integer"):
-        r_bad_repeat = Rule(
+        r_bad_repeat = Command(
             "bad_repeat",
             Inputs(word=str),
             Outputs(txt=Txt),
@@ -1016,7 +1018,7 @@ def test_command_repeat_must_be_positive_int():
             repeat=0,
         )
     with pytest.raises(ValueError, match="repeat must be a positive integer"):
-        r_bad_repeat_bool = Rule(
+        r_bad_repeat_bool = Command(
             "bad_repeat_bool",
             Inputs(word=str),
             Outputs(txt=Txt),
@@ -1026,10 +1028,10 @@ def test_command_repeat_must_be_positive_int():
 
 
 def test_repeat_does_not_affect_fingerprint():
-    r1_make = Rule(
+    r1_make = Command(
         "make", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=1
     )
-    r2_make = Rule(
+    r2_make = Command(
         "make", Inputs(word=str), Outputs(txt=Txt), "echo {word} > {txt}", repeat=3
     )
     assert (
@@ -1102,14 +1104,14 @@ def test_command_decorator_applies_config_defaults_before_fingerprinting(tmp_pat
 def test_declared_default_affects_only_omitted_effective_config(tmp_path):
     """Defaults affect identity through effective config, not extra metadata."""
 
-    lower_default = Rule(
+    lower_default = Command(
         "thresholded",
         Inputs(threshold=float),
         Outputs(txt=Txt),
         "printf %s {threshold} > {txt}",
         input_defaults={"threshold": 0.05},
     )
-    higher_default = Rule(
+    higher_default = Command(
         "thresholded",
         Inputs(threshold=float),
         Outputs(txt=Txt),
@@ -1159,7 +1161,7 @@ def test_mixed_nodetype_union_accepts_matching_scalar_default(tmp_path):
 
 
 def test_mixed_nodetype_union_rejects_unmatched_defaults():
-    """Hybrid defaults must match a non-Node arm when the Rule is declared."""
+    """Hybrid defaults must match a non-Node arm when the Command is declared."""
 
     with pytest.raises(TypeError, match="default for hybrid input 'source'.*expected"):
 
@@ -1177,9 +1179,9 @@ def test_mixed_nodetype_union_rejects_unmatched_defaults():
 
 
 def test_mixed_nodetype_union_accepts_factory_default(tmp_path):
-    """Explicit Rule construction exposes the same hybrid-default semantics."""
+    """Explicit Command construction exposes the same hybrid-default semantics."""
 
-    rule = Rule(
+    rule = Command(
         "hybrid_default",
         Inputs(source=Txt | str),
         Outputs(log=Log),
@@ -1195,7 +1197,7 @@ def test_hybrid_positional_defaults_must_be_trailing():
     """Omitting a positional default must not shift a later required Node input."""
 
     with pytest.raises(TypeError, match="without a default follows"):
-        Rule(
+        Command(
             "ambiguous_defaults",
             Inputs(optional=Txt | None, required=Upper),
             Outputs(log=Log),
@@ -1211,7 +1213,7 @@ def test_mixed_nodetype_union_rejects_node_valued_default(tmp_path):
     source = R_make_txt(pipeline, word="managed")
 
     with pytest.raises(TypeError, match="Node-valued default"):
-        Rule(
+        Command(
             "captured_default",
             Inputs(source=Txt | None),
             Outputs(log=Log),
@@ -1381,7 +1383,7 @@ def test_command_decorator_preserves_runtime_shape_and_fingerprint():
         txt = output(Txt)
         return txt
 
-    explicit = Rule(
+    explicit = Command(
         "make_txt",
         Inputs(word=str),
         Outputs(txt=Txt),
@@ -1432,7 +1434,7 @@ def test_command_factory_and_rule_accept_input_defaults(tmp_path):
         name="factory_default",
         input_defaults={"text": "factory", "suffix": None},
     )
-    direct = Rule(
+    direct = Command(
         "direct_default",
         Inputs(text=str),
         Outputs(txt=Txt),
@@ -1454,7 +1456,7 @@ def test_rule_rejects_defaults_for_unknown_and_node_inputs():
     """A defaults mapping may name only declared scalar/config inputs."""
 
     with pytest.raises(TypeError, match="unknown input defaults.*missing"):
-        Rule(
+        Command(
             "unknown_default",
             Inputs(text=str),
             Outputs(txt=Txt),
@@ -1463,7 +1465,7 @@ def test_rule_rejects_defaults_for_unknown_and_node_inputs():
         )
 
     with pytest.raises(TypeError, match="Node input 'source' must not have a default"):
-        Rule(
+        Command(
             "node_default",
             Inputs(source=Txt),
             Outputs(txt=Txt),
@@ -1472,7 +1474,7 @@ def test_rule_rejects_defaults_for_unknown_and_node_inputs():
         )
 
     with pytest.raises(TypeError, match="'count' expected"):
-        Rule(
+        Command(
             "wrong_type_default",
             Inputs(count=int),
             Outputs(txt=Txt),

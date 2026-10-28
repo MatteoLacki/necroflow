@@ -11,14 +11,16 @@ import pytest
 
 from necroflow import DAG, NodeType, Pipeline
 import necroflow.cli as cli
-from necroflow.rules import Inputs, Outputs, Rule
+from necroflow.rules import Inputs, Outputs, Command
 
 
 class Result(NodeType):
     filename = "result.txt"
 
 
-SOURCE = Rule("source", Inputs(value=str), Outputs(out=Result), "echo {value} > {out}")
+SOURCE = Command(
+    "source", Inputs(value=str), Outputs(out=Result), "echo {value} > {out}"
+)
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux POSIX ACL encoding")

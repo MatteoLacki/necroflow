@@ -24,7 +24,7 @@ run:
 2. It loads job TOMLs, resolves table inheritance, and expands `__grid`
    configurations.
 3. It runs configured validation callbacks.
-4. It imports and invokes each Workflow. Rule calls are fingerprinted
+4. It imports and invokes each Workflow. Command calls are fingerprinted
    and interned into the shared DAG.
 5. It resolves requested outputs and forced invalidations.
 6. It performs structural diagnostics on each compiled Pipeline.

@@ -61,7 +61,7 @@ for a runnable example.
 Fingerprint v4 computes two full SHA-256 identities but uses only the complete call identity in paths:
 
 - `rule_hash` describes the local recipe: rule name, command or built-in recipe
-  identity, declared input contracts, output contracts, filenames, and Rule mutability.
+  identity, declared input contracts, output contracts, filenames, and Command mutability.
 - `provenance_hash` describes one invocation: the `rule_hash`, effective config,
   selected shell, and ordered parent identities, including their provenance hashes and output names.
 
@@ -83,7 +83,7 @@ calls keep their payload unchanged. `dependencies.toml` records the selected
 input as `execution.container_input`; the Docker settings appear under `config`.
 Removing a local Docker image invalidates nothing.
 
-### Rule work directories
+### Command work directories
 
 Commands may use the built-in `{workdir}` placeholder to refer to the rule-call
 output directory: `nodes/{rule}/{provenance_hash}` by default.
@@ -223,3 +223,13 @@ restores those positions to JSON null. Documents without this field retain their
 existing meaning. Identity hashing and parent/identity fields are unchanged.
 Provenance serialization is validated before a runner starts or clears outputs;
 filesystem failures during the eventual metadata write can still occur.
+
+### Resources and inline recipes
+
+Resource annotations, defaults, call overrides, and resource-file contents are
+excluded from both identity hashes. Ordinary scalar settings still participate.
+Inline literal commands reuse the existing shell-template identity exactly;
+nested builders hash their canonical function AST and Python identity. Changing
+from an external callback to a nested builder may change that individual recipe.
+Executed resource quantities are recorded separately as `resources` in
+`dependencies.toml`. Cache reuse never rewrites historical execution resources.

@@ -9,7 +9,7 @@ TOML** — a self-contained file that specifies the workflow, optional
 requested outputs, and user config params. For each expanded job, the CLI
 constructs one shared `DAG(nodes_dir)`, creates each
 `Pipeline(dag, shellpath=...)`, and calls
-`build_workflow(P, config)`. Rule calls intern immediately; after the workflow returns,
+`build_workflow(P, config)`. Command calls intern immediately; after the workflow returns,
 the CLI calls `P.finish()`, then resolves requested labels or sinks with
 `dag.require(...)`. Qualified labels created by `P.subpipeline(prefix)` are
 requested with their full paths, for example `samples/A/counts`.
@@ -137,7 +137,7 @@ necroflow gc --nodes-dir nodes --gc-rules-script gc_rules.py
 necroflow gc --nodes-dir nodes --gc-rules-script gc_rules.py -y
 ```
 
-The script states the preserved scope explicitly as a non-empty list of `Rule`
+The script states the preserved scope explicitly as a non-empty list of `Command`
 objects:
 
 ```python
@@ -155,7 +155,7 @@ one failure mode that deletes live nodes.
 GC prints provenance-incompatible rule-call directories and folders that fail
 the current layout or metadata checks in separate batches, followed by their
 total size. It then asks `Delete these directories? [y/N]`; `-y` skips
-confirmation. The node-store lock is held while scanning and deleting. Rule
+confirmation. The node-store lock is held while scanning and deleting. Command
 malformed or non-current folders are not. A current local rule call is also
 deleted when its recorded provenance descends from an obsolete parent rule. GC
 has no job TOML dependency and never evaluates concrete job configurations.
@@ -189,3 +189,38 @@ necroflow explain --json job.toml
 `explain` never reads whole outputs and never writes the node store. When a parent was edited after its hash was stored, its consumer is reported as `state = "undecided"` with reason `parent_hash_unchecked`, and descendants get reason `parent_undecided`. Run `necroflow run --dry-run` to settle them: it hashes the parent and stores the digest.
 
 [Previous: Where Outputs Live and Caching](caching.md) | [README](../README.md) | [Next: Job TOML and Parameter Grids](job-toml.md)
+
+## Resource files
+
+```bash
+necroflow run --resources workstation.toml job.toml
+necroflow explain --resources workstation.toml -c 8 job.toml
+```
+
+```toml
+[align]
+threads = 8
+
+[mokapot]
+threads = "all"
+```
+
+Tables use exact rule names and may override only declared Resource parameters
+or explicitly declared legacy constraints. Precedence is file override, then
+explicit rule-call resource keyword, then declaration default. Unknown rule names,
+unknown resource keys, incompatible same-name declarations, and invalid quantities
+fail before execution. Include only rules present in the compiled jobs.
+
+This file is separate from job config: no grid expansion, metadata, or path enters
+node identity. Resource changes reuse cached outputs. `threads="all"` resolves to
+`-c`; unit strings use the existing resource parser. Global `-c`/`--constraint`
+capacities retain existing scheduler semantics: a request exceeding a capacity may
+run alone, rather than deadlocking or being silently reduced.
+
+`graph`, `outputs`, `explain`, `doctor`, and dry runs accept the same option.
+Corresponding MCP tools accept a `resources` file-path argument. Inspection shows
+effective requests; `provenance` shows resources recorded when the output was
+executed, which may differ after a cache hit under a new resource policy.
+Python users pass a mapping to `DAG(..., resources=...)`; `run()` validates that all
+override rule names matched the compiled DAG. Recompile into a new DAG to change
+file policy; thread-cap binding is refreshed on each execution.

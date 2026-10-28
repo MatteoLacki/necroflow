@@ -1,6 +1,6 @@
 """Tests for Pipeline and DAG."""
 
-from necroflow.rules import Constraints, Inputs, Outputs, Rule
+from necroflow.rules import Constraints, Inputs, Outputs, Command
 
 import pytest
 from pathlib import Path
@@ -33,12 +33,14 @@ class E(NodeType):
     filename = "e.txt"
 
 
-R_make_a = Rule("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
-R_make_b = Rule("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
-R_make_c = Rule("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
-R_make_d = Rule("make_d", Inputs(b=B, c=C), Outputs(d=D), "touch {d}")
-R_make_c_from_b = Rule("make_c_from_b", Inputs(b=B), Outputs(c=C), "touch {c}")
-R_make_e_from_ac = Rule("make_e_from_ac", Inputs(a=A, c=C), Outputs(e=E), "touch {e}")
+R_make_a = Command("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
+R_make_b = Command("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
+R_make_c = Command("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
+R_make_d = Command("make_d", Inputs(b=B, c=C), Outputs(d=D), "touch {d}")
+R_make_c_from_b = Command("make_c_from_b", Inputs(b=B), Outputs(c=C), "touch {c}")
+R_make_e_from_ac = Command(
+    "make_e_from_ac", Inputs(a=A, c=C), Outputs(e=E), "touch {e}"
+)
 TEST_NODES_DIR = "/tmp/necroflow-test-pipeline"
 
 
@@ -424,7 +426,7 @@ def test_direct_node_construction_is_rejected():
 
 
 def test_direct_nodetype_construction_is_rejected():
-    """NodeType declarations create nodes only through managed Rule calls."""
+    """NodeType declarations create nodes only through managed Command calls."""
 
     with pytest.raises(TypeError, match="NodeType declaration, not a Node constructor"):
         A()
@@ -438,7 +440,7 @@ def test_rule_rejects_cooutputs_with_the_same_realized_filename(tmp_path, same_t
         filename = "a.txt"
 
     second_type = A if same_type else AlsoA
-    rule = Rule(
+    rule = Command(
         "duplicate_outputs",
         Inputs(value=str),
         Outputs(first=A, second=second_type),
@@ -468,7 +470,7 @@ def test_rule_allows_matching_input_and_output_basenames_in_distinct_workdirs(tm
     pipeline = Pipeline(DAG(tmp_path / "nodes"))
     first = R_make_a(pipeline, x="first")
     second = R_make_a(pipeline, x="second")
-    consume = Rule(
+    consume = Command(
         "consume",
         Inputs(first=A, second=A),
         Outputs(result=A),
@@ -617,7 +619,7 @@ def test_dag_deduplicates_shared_nodes():
 
 
 def test_dag_interns_multioutput_rule_calls_atomically():
-    rule = Rule(
+    rule = Command(
         "make_ab",
         Inputs(x=str),
         Outputs(a=A, b=B),

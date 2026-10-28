@@ -1,6 +1,6 @@
 """Static-analysis fixture for rule output and dynamic pipeline shapes."""
 
-from typing import Annotated
+from typing import Annotated, assert_type
 
 from necroflow import (
     CommandArgs,
@@ -111,3 +111,52 @@ def scoped_cohort(P: Pipeline, text: str) -> None:
 
 
 scoped_cohort(Pipeline(DAG("/tmp/necroflow-workflow-typing")), "value")
+
+
+from necroflow import Resource
+
+
+@command
+def inline_source(text: str, threads: Resource[int] = 4):
+    source = output(Source)
+    command = "printf %s {text} > {source}"
+    return source
+
+
+@command(repeat=2)
+def nested_source(text: str, threads: Resource[int] = 4):
+    source = output(Source)
+
+    def command():
+        return f"echo {text} > {source}"
+
+    return source
+
+
+inline_node: Node = inline_source(pipeline, text="hello", threads=2)
+nested_node: Node = nested_source(pipeline, text="hello", threads=2)
+
+
+# Exact inference matters: assignment to bare Node would also accept Any.
+def check_output_inference() -> None:
+    assert_type(output(Source), Node[Source])
+    assert_type(output(Left), Node[Left])
+    assert_type(output(Source).node_type, type[Source])
+
+
+assert_type(make_source(pipeline, text="value"), Node[Source])
+assert_type(make_default_source(pipeline), Node[Source])
+assert_type(split_source(pipeline, source_node), tuple[Node[Left], Node[Right]])
+assert_type(callback_rule(pipeline, source_node), Node[Left])
+assert_type(inline_source(pipeline, text="hello"), Node[Source])
+assert_type(nested_source(pipeline, text="hello"), Node[Source])
+
+
+@command
+def annotated_source(text: str) -> Node[Source]:
+    source = output(Source)
+    command = "printf %s {text} > {source}"
+    return source
+
+
+assert_type(annotated_source(pipeline, text="hello"), Node[Source])

@@ -1,8 +1,8 @@
-# What Happens When a Rule Is Called in a Workflow
+# What Happens When a Command Is Called in a Workflow
 
 [Previous: Rules and Typed Outputs](rules.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)
 
-A workflow compiles one configured view of a shared DAG. Rule calls calculate
+A workflow compiles one configured view of a shared DAG. Command calls calculate
 identity, paths, and canonicalize equivalent computations immediately. Command
 realization and filesystem materialization remain deferred until execution.
 
@@ -130,7 +130,7 @@ Inside `sample_pipeline`:
 S.bam, S.align_log = align(S.fastq, reference)
 ```
 
-`Rule.__call__` resolves the active owner and logical arguments as:
+`Command.__call__` resolves the active owner and logical arguments as:
 
 ```python
 pipeline = S  # retrieved from the active workflow context
@@ -177,29 +177,29 @@ The rule validates Node inputs (positional or by name) against declared
 NodeTypes and config values against their declared Python types. A fixed mixed
 union works the same way: a Node selects its NodeType arm, while any other
 value selects a matching non-Node arm. Decorated command rules derive scalar/config and mixed
-value defaults from their Python signature; explicit Rule and factory
-construction use ``input_defaults``. Rule construction rejects unknown or
+value defaults from their Python signature; explicit Command and factory
+construction use ``input_defaults``. Command construction rejects unknown or
 wrongly typed defaults, defaults on pure fixed or variadic Node inputs, managed
 Node defaults, and non-trailing positional defaults.
 Every decorated-rule parameter must have a type annotation; an unannotated
-parameter fails while the decorator constructs the Rule, even when no command
+parameter fails while the decorator constructs the Command, even when no command
 placeholder references it. Return annotations remain optional and do not
 declare outputs.
 
-At call time, `Rule.__call__` binds `args`/`kwargs` against an `inspect.Signature`
-built once per Rule from its declared schema: Node, variadic, and mixed inputs
+At call time, `Command.__call__` binds `args`/`kwargs` against an `inspect.Signature`
+built once per Command from its declared schema: Node, variadic, and mixed inputs
 are `POSITIONAL_OR_KEYWORD`, and plain config inputs stay `KEYWORD_ONLY`. Every
 input may therefore be supplied positionally or by name — `consume(value)`
 and `consume(source=value)` inside a workflow bind identically — while `bind()`/`apply_defaults()`
 supply presence, duplicate, and defaulting checks with ordinary Python calling
-semantics. The bound values are then read back out in the Rule's fixed
+semantics. The bound values are then read back out in the Command's fixed
 declaration order (not the order the caller wrote them), so call syntax never
 affects fingerprinting: a keyword call and the equivalent positional call
 produce byte-identical `NamedValues`/provenance input. Keywords outside the
 declared schema fail before fingerprinting or DAG interning. The caller's
 ``args`` and ``kwargs`` are not mutated.
 
-`Rule.__call__` coordinates the phases through focused methods:
+`Command.__call__` coordinates the phases through focused methods:
 
 ```python
 # After resolving the explicit or scoped Pipeline:
@@ -264,7 +264,7 @@ config or DAG.
 
 It then hashes one configured invocation into `provenance_hash` from the local
 `rule_hash`, effective config, selected shell, ordered parent identities, and
-any named mixed plain values. Container-capable rules (`Rule.container_capable`:
+any named mixed plain values. Container-capable rules (`Command.container_capable`:
 a `{name}:` template prefix naming a `Docker` input, or a callback with a `Docker`
 input) also add `container_policy` to the execution context; `Docker` values
 themselves are ordinary config.
@@ -304,7 +304,7 @@ call.relative_path = Path(rule.__name__) / provenance_hash
 call.workdir = S.dag.nodes_dir / call.relative_path
 ```
 
-Each output receives its declared `NodeType.filename`. Rule construction has
+Each output receives its declared `NodeType.filename`. Command construction has
 already rejected output NodeTypes whose `filename` is `None`; filename-less
 NodeTypes remain valid as input contracts, but there is no output-name fallback:
 
@@ -325,7 +325,7 @@ align/<64-hex-provenance-hash>/aligned.bam
 align/<64-hex-provenance-hash>/align.log
 ```
 
-Rule names and output filenames must each be one safe relative path component.
+Command names and output filenames must each be one safe relative path component.
 The actual filesystem's component and total path limits are checked before the
 rule returns.
 
@@ -511,3 +511,25 @@ include the failure events.
 Identity, paths, interning, and RuleCall order are eager. Cache classification, command realization, materialization, and result copying happen after construction.
 
 [Previous: Rules and Typed Outputs](rules.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)
+
+## Inline command and resource compilation
+
+`declarations.parse_declaration` separates ordinary inputs, Resource parameters,
+outputs, and command definition before constructing a Command. Inline bodies contain
+output declarations, one literal command or nested builder, and the output return.
+The body never executes to discover outputs. Nested builders are source-backed
+adapters that bind runtime paths/settings/resources at command realization.
+
+Resource parameters are omitted from rule-hash input contracts and invocation
+config/input values. Defaults are expanded into a separate call resource request;
+DAG resource-file policy overrides it before `DAG.intern`. Neither policy contents
+nor effective resource values enter identity. New Resource calls with conflicting
+requests fail at interning; legacy-only constraint interning stays compatible.
+The complete resource-file rule set is validated after all jobs compile and before
+execution. Thread caps bind before inspection/planning; changing an all-threads
+cap clears the realized command so the scheduler and command see the same value.
+
+`Node` is generic in its declared NodeType. `output(T)` has static return type
+`Node[T]`; decorator return inference preserves that type (and tuples of typed
+Nodes). These typing parameters do not enter runtime recipe or provenance identity,
+and return annotations still do not replace output declarations.

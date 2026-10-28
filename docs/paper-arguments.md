@@ -15,9 +15,9 @@ This document condenses the manuscript arguments into a review-oriented outline.
 - Pipeline authors can use the normal Python ecosystem for parsing, validation, testing, debugging, IDE support, and library reuse. (`sec:intro`, `sec:discussion`)
 - Dynamic graph edits are first-class authoring operations rather than exceptional escape hatches. (`sec:intro`, `sec:design:abstractions`)
 
-## 3. Typed Rule Boundaries
+## 3. Typed Command Boundaries
 
-- A `Rule` declares the accepted input artifact types, output artifact types, parameters, resources, and implementation. (`sec:design:abstractions`)
+- A `Command` declares the accepted input artifact types, output artifact types, parameters, resources, and implementation. (`sec:design:abstractions`)
 - Calling a rule yields typed nodes rather than immediately running a function; the nodes form a dependency graph. (`sec:design:abstractions`)
 - Typed boundaries make invalid compositions visible early, before expensive execution, and make individual pipeline stages easier to understand. (`sec:design:abstractions`, `sec:related`)
 - The framework treats files as meaningful artifacts rather than untyped strings passed between generic tasks. (`sec:design:abstractions`, `sec:prefect-side-by-side`)

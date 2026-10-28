@@ -6,12 +6,14 @@ from necroflow.tgf import _node_label, render_dot, render_tgf
 from necroflow.nodes import Node
 from necroflow.rule_call import RuleCall, ancestor_call_keys
 from necroflow.rules import parse_resource
+from necroflow.resources import ResourcePolicy
 
 
 class DAG:
     """Shared registry and executor for canonical content-addressed rule calls."""
 
-    def __init__(self, outdir):
+    def __init__(self, outdir, *, resources=None):
+        self.resource_policy = ResourcePolicy(resources)
         self._calls: dict[Path, RuleCall] = {}
         self._nodes: dict[Path, Node] = {}
         self._node_positions: dict[Path, int] = {}
@@ -28,10 +30,26 @@ class DAG:
     def calls(self) -> dict[Path, RuleCall]:
         return self._calls
 
+    def resource_requests(self, rule, requests: dict) -> dict:
+        """Apply invocation policy before identity-based interning."""
+        return self.resource_policy.apply(rule, requests)
+
+    def validate_resources(self) -> None:
+        """Reject unmatched override rules after all workflows are compiled."""
+        self.resource_policy.validate()
+
     def intern(self, call: RuleCall) -> RuleCall:
         """Return the canonical RuleCall for this relative call path."""
         existing = self._calls.get(call.relative_path)
         if existing is not None:
+            if (
+                existing.rule.resource_defaults or call.rule.resource_defaults
+            ) and existing.resource_requests != call.resource_requests:
+                raise ValueError(
+                    f"conflicting resource requests for {call.relative_path}: "
+                    f"{existing.resource_requests} versus {call.resource_requests}; "
+                    "use a resource-file override to select one request"
+                )
             expected = {
                 name: (node.node_type, node.relative_path)
                 for name, node in existing.output_nodes.items()

@@ -6,7 +6,7 @@ featureCounts, or bcftools. Commands run only when a DAG is executed.
 
 from types import SimpleNamespace
 
-from necroflow import DAG, NodeType, Pipeline, command, output, workflow
+from necroflow import Resource, DAG, NodeType, Pipeline, command, output, workflow
 
 
 class Fastq(NodeType):
@@ -37,51 +37,54 @@ class AnnotatedVcf(NodeType):
     filename = "annotated.vcf.gz"
 
 
-@command("ln -s {path} {fastq}")
+@command
 def raw_fastq(path: str):
     """Expose a source FASTQ as a typed artifact."""
     fastq = output(Fastq)
+    command = "ln -s {path} {fastq}"
     return fastq
 
 
-@command(
-    "bwa mem {reference} {fastq} 2> {log} | samtools view -b -o {bam}",
-    threads=4,
-)
-def align(fastq: Fastq, reference: str):
+@command
+def align(fastq: Fastq, reference: str, threads: Resource[int] = 4):
     """Align reads and write a BAM plus the BWA log."""
     bam = output(Bam)
     log = output(Log)
+    command = "bwa mem {reference} {fastq} 2> {log} | samtools view -b -o {bam}"
     return bam, log
 
 
-@command("samtools sort {bam} -o {sorted_bam}")
+@command
 def sort_bam(bam: Bam):
     """Sort a BAM by coordinate."""
     sorted_bam = output(SortedBam)
+    command = "samtools sort {bam} -o {sorted_bam}"
     return sorted_bam
 
 
-@command("featureCounts -a {gene_model} {bam} -o {counts}")
+@command
 def quantify(bam: SortedBam, gene_model: str):
     """Count reads per gene."""
     counts = output(Counts)
+    command = "featureCounts -a {gene_model} {bam} -o {counts}"
     return counts
 
 
-@command(
-    "bcftools mpileup -f {reference} -Ou {bam} | " "bcftools call -mv -Oz -o {vcf}"
-)
+@command
 def call_variants(bam: SortedBam, reference: str):
     """Call variants from a sorted BAM."""
     vcf = output(Vcf)
+    command = (
+        "bcftools mpileup -f {reference} -Ou {bam} | bcftools call -mv -Oz -o " "{vcf}"
+    )
     return vcf
 
 
-@command("bcftools annotate -a {database} {vcf} -Oz -o {annotated_vcf}")
+@command
 def annotate(vcf: Vcf, database: str):
     """Annotate a VCF against a supplied database."""
     annotated_vcf = output(AnnotatedVcf)
+    command = "bcftools annotate -a {database} {vcf} -Oz -o {annotated_vcf}"
     return annotated_vcf
 
 
@@ -149,4 +152,4 @@ def shared_dag(outdir="results"):
 if __name__ == "__main__":
     pipeline, commands = inspect_example()
     print(pipeline)
-    print("\n".join(commands))
+    print("\n".join(command for command in commands if command is not None))

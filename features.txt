@@ -126,7 +126,7 @@ necroflow
 │   ├── provenance subcommand
 │   │   └── --json metadata payload
 │   ├── gc subcommand
-│   │   ├── --gc-rules-script declares the preserved Rule collection
+│   │   ├── --gc-rules-script declares the preserved Command collection
 │   │   └── undeclared rule names preserved unless --prune-unknown-rules is set
 │   ├── doctor subcommand
 │   │   └── stable NF_* preflight issue codes
@@ -217,3 +217,7 @@ necroflow
 │
 └── Not implemented
     └── cluster / cloud backends
+
+Inline commands: bare @command; outputs -> command string/nested def -> return.
+Resource[int]: keyword scheduling quantities outside both hashes.
+--resources FILE: per-rule overrides, file > call > default, strict name checking.

@@ -3,7 +3,7 @@ import tomlkit
 from necroflow import DAG, Inputs, NodeType, Outputs, Pipeline
 from necroflow.config import load_module
 from necroflow.fingerprints import declared_rule_hash, hash_rule_identity
-from necroflow.rules import Rule
+from necroflow.rules import Command
 
 
 class Result(NodeType):
@@ -13,7 +13,7 @@ class Result(NodeType):
 def test_config_variants_share_rule_hash_and_have_distinct_provenance_paths(tmp_path):
     """Configuration selects an invocation below one stable local recipe identity."""
 
-    rule = Rule(
+    rule = Command(
         "produce",
         Inputs(value=str),
         Outputs(result=Result),
@@ -38,10 +38,10 @@ def test_config_variants_share_rule_hash_and_have_distinct_provenance_paths(tmp_
 
 def test_command_change_changes_rule_hash(tmp_path):
     pipeline = Pipeline(DAG(tmp_path))
-    first = Rule(
+    first = Command(
         "produce", Inputs(value=str), Outputs(result=Result), "touch {result}"
     )(pipeline, value="same")
-    second = Rule(
+    second = Command(
         "produce",
         Inputs(value=str),
         Outputs(result=Result),
@@ -55,13 +55,13 @@ def test_success_metadata_records_outputs_and_exact_parent_keys(tmp_path):
     class State(NodeType):
         filename = "state.sqlite3"
 
-    source_rule = Rule(
+    source_rule = Command(
         "state",
         Inputs(value=str),
         Outputs(state=State),
         "touch {state}",
     )
-    consume_rule = Rule(
+    consume_rule = Command(
         "consume", Inputs(state=State), Outputs(result=Result), "touch {result}"
     )
     dag = DAG(tmp_path)
@@ -94,10 +94,10 @@ def test_rule_hash_is_stable_across_loader_purposes(tmp_path):
     pipeline_file = tmp_path / "pipeline.py"
     pipeline_file.write_text(
         "from necroflow import Inputs, NodeType, Outputs\n"
-        "from necroflow.rules import Rule\n"
+        "from necroflow.rules import Command\n"
         "class Result(NodeType):\n"
         "    filename = 'result.txt'\n"
-        "produce = Rule('produce', Inputs(value=str), Outputs(result=Result), "
+        "produce = Command('produce', Inputs(value=str), Outputs(result=Result), "
         "'touch {result}')\n"
     )
 

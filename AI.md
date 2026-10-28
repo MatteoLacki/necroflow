@@ -35,9 +35,9 @@ requires finished construction. The CLI calls `finish()` automatically after
 each successful workflow return; direct Python callers call it before selecting
 sinks. Pipeline sections were removed.
 
-## Rule command placeholders
+## Command command placeholders
 
-Rule commands are validated when a `Rule` is registered. Placeholders are limited to declared input names, declared output names, and built-in command placeholders.
+Command commands are validated when a `Command` is registered. Placeholders are limited to declared input names, declared output names, and built-in command placeholders.
 
 Built-in placeholders:
 
@@ -49,8 +49,8 @@ Built-in placeholders:
 
 Decorated `@command` rules honor Python defaults on scalar/config parameters;
 fixed mixed Node/value inputs may also default to one of their non-Node arms.
-Explicit factory and direct `Rule` construction use `input_defaults`. Defaults
-are type-checked when the `Rule` is declared and expanded before call validation.
+Explicit factory and direct `Command` construction use `input_defaults`. Defaults
+are type-checked when the `Command` is declared and expanded before call validation.
 Omitted and explicitly equal values intern to the same Node. Pure fixed and
 variadic Node inputs, plus managed Node values themselves, must not be defaults.
 Built-in `text_file` and `symlink_file` inputs remain explicit.
@@ -100,14 +100,14 @@ and `Many` bounds affect the default fingerprint.
 
 A `NodeType` with `filename = None` is an input-only format contract. Rules may
 accept it and receive Nodes of concrete subclasses, but every declared output
-NodeType must resolve to a non-`None` filename. `Rule` construction rejects
+NodeType must resolve to a non-`None` filename. `Command` construction rejects
 filename-less outputs immediately; output names are not filename fallbacks.
 
 ## RuleCall cache
 
 RuleCall is atomic cache, state, scheduling, execution, report, and cleanup unit. Requesting one co-output activates all declared outputs; only CLI result copying remains Node-selective. Consumer `dependencies.toml` records `consumed_hash` (tagged `<hasher>:<hex>`, BLAKE3 by default) for every parent Node. By default, rebuilding a call reruns every active descendant, even with identical bytes. `--reuse-unchanged` / `reuse_unchanged=True` opts into delayed child classification that preserves valid caches for identical rebuilt bytes. Autoclean handles executed and cached consumers alike. Output hashes use mtime only to invalidate the stored-hash fast path.
 
-Persistent state that changes outside the DAG does not belong in a node workdir: a workdir is a function of its declared inputs, so any identity change gives a fresh empty one. Such state belongs outside the node store, passed in as a path. A `mutable=True` Rule flag existed for this until 2026-09-16 and was removed -- it stopped external byte changes from staling consumers, but could do nothing about the workdir itself being discarded whenever identity moved, which is the failure that actually costs work.
+Persistent state that changes outside the DAG does not belong in a node workdir: a workdir is a function of its declared inputs, so any identity change gives a fresh empty one. Such state belongs outside the node store, passed in as a path. A `mutable=True` Command flag existed for this until 2026-09-16 and was removed -- it stopped external byte changes from staling consumers, but could do nothing about the workdir itself being discarded whenever identity moved, which is the failure that actually costs work.
 
 ## NodeType invalidators
 
@@ -137,7 +137,7 @@ the check defensively. Doctor reports failures as `NF_RESULT_PATH_INVALID`.
 
 FIFO RuleCall scheduling is built-in and default. Active calls preserve canonical `DAG.calls` insertion order. Custom three-argument schedulers receive ready calls, remaining calls, and available capped resources.
 
-## Rule retries
+## Command retries
 
 `@command(..., repeat=N)` sets the maximum number of command attempts,
 including the first; the default `repeat=1` does not retry. A failed subprocess
@@ -203,7 +203,7 @@ Package version is exposed as `necroflow.__version__`; `pyproject.toml` reads it
 
 ## Constraint command placeholders
 
-Rule constraints can be interpolated into command templates. `{threads}` always resolves: it uses the declared `threads` constraint or defaults to `1`. Other direct placeholders, such as `{ram}` or `{gpu}`, are allowed only when that constraint is declared. `{constraint:name}` forces a constraint lookup and is useful when a normal config input has the same name, e.g. `{threads}` can remain the config value while `{constraint:threads}` is the scheduler thread requirement. Command-facing values are raw declared constraint values (`"32Gi"` stays `"32Gi"`); executor resource accounting uses parsed integer values via `RuleCall.resources`, i.e. `Rule.resources_for(thread_cap)`, the one place that resolves `threads="all"`.
+Command constraints can be interpolated into command templates. `{threads}` always resolves: it uses the declared `threads` constraint or defaults to `1`. Other direct placeholders, such as `{ram}` or `{gpu}`, are allowed only when that constraint is declared. `{constraint:name}` forces a constraint lookup and is useful when a normal config input has the same name, e.g. `{threads}` can remain the config value while `{constraint:threads}` is the scheduler thread requirement. Command-facing values are raw declared constraint values (`"32Gi"` stays `"32Gi"`); executor resource accounting uses parsed integer values via `RuleCall.resources`, i.e. `Command.resources_for(thread_cap)`, the one place that resolves `threads="all"`.
 
 ## Docker execution
 
@@ -250,3 +250,19 @@ The official Python SDK renamed its high-level API between major versions:
 `mcp.server.fastmcp.FastMCP` (v1) became `mcp.server.mcpserver.MCPServer` (v2).
 The `mcp` extra pins `mcp>=2`; if a future contributor's local install still
 resolves the old `fastmcp` module path, they're on v1 and need to upgrade.
+
+## Inline commands and Resource parameters
+
+Bare `@command` and option-only `@command(repeat=...)` accept output declarations,
+then one literal `command` assignment or zero-argument nested `def command()`, then
+return outputs. `declarations.py` parses this without executing the outer body;
+`command_builders.py` binds nested builder inputs/outputs/settings/resources.
+`Resource[int]` is an Annotated integer alias handled separately from config and
+excluded from both hashes. `--resources FILE` / `DAG(..., resources=mapping)` applies
+file > call keyword > default precedence before interning; unknown entries fail.
+Legacy syntax/hashes remain supported. New Resource requests conflict explicitly
+when deduplicating; legacy-only constraints retain prior interning behavior.
+
+`Node[T]` retains its NodeType for static analysis. `output(T)` returns `Node[T]`
+in annotations; runtime behavior stays declaration-only. Input annotations remain
+NodeType contracts and all existing hashes remain unchanged.

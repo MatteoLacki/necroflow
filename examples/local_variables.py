@@ -14,17 +14,19 @@ def write_text(text: str):
     return result
 
 
-@command("tr '[:lower:]' '[:upper:]' < {source} > {result}")
+@command
 def uppercase(source: Text):
     """Convert the source text to uppercase."""
     result = output(Text)
+    command = "tr '[:lower:]' '[:upper:]' < {source} > {result}"
     return result
 
 
-@command("sed 's/^/RESULT: /' {source} > {result}")
+@command
 def add_prefix(source: Text):
     """Prefix every line of the source text."""
     result = output(Text)
+    command = "sed 's/^/RESULT: /' {source} > {result}"
     return result
 
 

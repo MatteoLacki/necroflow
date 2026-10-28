@@ -1,7 +1,7 @@
 """Tests for dependency graph serialization."""
 
 from necroflow import DAG, NodeType, Pipeline
-from necroflow.rules import Inputs, Outputs, Rule
+from necroflow.rules import Inputs, Outputs, Command
 
 
 class A(NodeType):
@@ -20,10 +20,10 @@ class D(NodeType):
     filename = "d.txt"
 
 
-MAKE_A = Rule("make_a", Inputs(value=str), Outputs(a=A), "touch {a}")
-MAKE_B = Rule("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
-MAKE_C = Rule("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
-MAKE_D = Rule("make_d", Inputs(b=B, c=C), Outputs(d=D), "touch {d}")
+MAKE_A = Command("make_a", Inputs(value=str), Outputs(a=A), "touch {a}")
+MAKE_B = Command("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
+MAKE_C = Command("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
+MAKE_D = Command("make_d", Inputs(b=B, c=C), Outputs(d=D), "touch {d}")
 
 
 def _diamond(nodes_dir):
@@ -66,7 +66,7 @@ def test_success_writes_ancestor_tgf_only(tmp_path):
     assert not (rip / "graph.txt").exists()
 
 
-MAKE_PAIR = Rule("make_pair", Inputs(a=A), Outputs(b=B, c=C), "touch {b} {c}")
+MAKE_PAIR = Command("make_pair", Inputs(a=A), Outputs(b=B, c=C), "touch {b} {c}")
 
 
 def test_ancestor_tgf_lists_every_co_output(tmp_path):
@@ -87,3 +87,18 @@ def test_ancestor_tgf_lists_every_co_output(tmp_path):
     assert graph.read_text() == (
         "1 make_a[A:a]\n2 make_pair[B:b]\n3 make_pair[C:c]\n#\n1 2\n1 3\n"
     )
+
+
+def test_graph_labels_show_resource_overrides(tmp_path):
+    """Text and DOT graphs must show requests selected by the resource file."""
+    from necroflow import Constraints
+    from necroflow.tgf import render_dot
+
+    rule = Command(
+        "override", Inputs(), Outputs(a=A), "touch {a}", Constraints(threads=1)
+    )
+    pipeline = Pipeline(DAG(tmp_path, resources={"override": {"threads": 7}}))
+    pipeline.a = rule(pipeline)
+    assert "threads=7" in str(pipeline)
+    assert "threads=1" not in str(pipeline)
+    assert "threads=7" in render_dot(pipeline.nodes)

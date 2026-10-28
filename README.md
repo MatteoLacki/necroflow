@@ -323,7 +323,7 @@ text = '{\n  "mode": "uppercase"\n}\n'
 - [Job TOML and parameter grids](docs/job-toml.md)
 - [Config validation](docs/config-validation.md)
 - [Rules and typed outputs](docs/rules.md)
-- [Rule-call lifecycle and pipeline internals](docs/rule-call-lifecycle.md)
+- [Command-call lifecycle and pipeline internals](docs/rule-call-lifecycle.md)
 - [Generated config files](docs/generated-config-files.md)
 - [Executor, classification, scheduling, and cleanup](docs/executor.md)
 - [Scheduler internals](docs/schedulers.md)
@@ -335,3 +335,9 @@ text = '{\n  "mode": "uppercase"\n}\n'
 ## What is not yet implemented
 
 - Cluster / cloud backends
+
+Inline commands and machine-specific resource files are supported:
+`necroflow run --resources workstation.toml job.toml`. See
+[inline declarations](docs/rules.md#inline-commands-and-resources) and
+[resource files](docs/cli.md#resource-files). Resource parameters stay outside
+node identity; legacy command declarations remain supported.

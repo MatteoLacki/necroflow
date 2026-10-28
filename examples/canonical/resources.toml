@@ -1,0 +1,3 @@
+# Optional machine-specific scheduling requirements; not part of job identity.
+[process_text]
+threads = 1

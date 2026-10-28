@@ -4,7 +4,7 @@ import pytest
 
 from necroflow import DAG, NodeType, Pipeline, Verdict
 from necroflow.planning import plan_execution
-from necroflow.rules import Inputs, Outputs, Rule
+from necroflow.rules import Inputs, Outputs, Command
 
 
 class A(NodeType):
@@ -15,8 +15,8 @@ class B(NodeType):
     filename = "b.txt"
 
 
-MAKE_A = Rule("planning_make_a", Inputs(value=str), Outputs(a=A), "touch {a}")
-MAKE_B = Rule("planning_make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
+MAKE_A = Command("planning_make_a", Inputs(value=str), Outputs(a=A), "touch {a}")
+MAKE_B = Command("planning_make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
 
 
 def _pipeline(nodes_dir):
@@ -81,7 +81,7 @@ def test_plan_records_invalidator_reason_from_one_observation(tmp_path):
         filename = "tracked.txt"
         invalidator = staticmethod(generation)
 
-    make_tracked = Rule(
+    make_tracked = Command(
         "planning_make_tracked",
         Inputs(value=str),
         Outputs(output=Tracked),
@@ -114,7 +114,7 @@ def test_plan_settles_a_cached_chain_in_one_pass(tmp_path):
     class C(NodeType):
         filename = "c.txt"
 
-    make_c = Rule("planning_make_c", Inputs(b=B), Outputs(c=C), "touch {c}")
+    make_c = Command("planning_make_c", Inputs(b=B), Outputs(c=C), "touch {c}")
 
     def chain(nodes_dir):
         pipeline = Pipeline(DAG(nodes_dir))

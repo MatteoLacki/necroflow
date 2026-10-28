@@ -1,6 +1,6 @@
 """Tests for CLI internals: _materialize_results, manifest keys, main()."""
 
-from necroflow.rules import Constraints, Inputs, Outputs, Rule
+from necroflow.rules import Constraints, Inputs, Outputs, Command
 
 import logging
 import os
@@ -33,8 +33,8 @@ class Log(NodeType):
     filename = "run.log"
 
 
-R_step1 = Rule("step1", Inputs(v=str), Outputs(out=Out), "echo {v} > {out}")
-R_step2 = Rule("step2", Inputs(out=Out), Outputs(log=Log), "cat {out} > {log}")
+R_step1 = Command("step1", Inputs(v=str), Outputs(out=Out), "echo {v} > {out}")
+R_step2 = Command("step2", Inputs(out=Out), Outputs(log=Log), "cat {out} > {log}")
 
 
 def _make_pipeline_with_outputs(tmp_path) -> tuple[Pipeline, Path]:
@@ -1616,10 +1616,10 @@ def test_main_execution_summary_counts_cooutput_rule_once(tmp_path):
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
         from necroflow import NodeType
-        from necroflow.rules import Inputs, Outputs, Rule
+        from necroflow.rules import Inputs, Outputs, Command
         class A(NodeType): filename = "a.txt"
         class B(NodeType): filename = "b.txt"
-        make_pair = Rule(
+        make_pair = Command(
             "make_pair", Inputs(v=str), Outputs(a=A, b=B), "touch {a} {b}"
         )
         def factory(P, cfg):
@@ -2064,13 +2064,13 @@ def test_graph_output_writes_rendered_dag(tmp_path, factory_file):
 
 
 _COOUTPUT_FACTORY_SRC = textwrap.dedent("""\
-    from necroflow.rules import Inputs, Outputs, Rule
+    from necroflow.rules import Inputs, Outputs, Command
     from necroflow import NodeType
     class A(NodeType): filename = "a.txt"
     class B(NodeType): filename = "b.txt"
     class C(NodeType): filename = "c.txt"
-    make_pair = Rule("make_pair", Inputs(v=str), Outputs(a=A, b=B), "touch {a} {b}")
-    use_a = Rule("use_a", Inputs(a=A), Outputs(c=C), "cp {a} {c}")
+    make_pair = Command("make_pair", Inputs(v=str), Outputs(a=A, b=B), "touch {a} {b}")
+    use_a = Command("use_a", Inputs(a=A), Outputs(c=C), "cp {a} {c}")
     def factory(P, cfg):
         P.a, P.b = make_pair(P, v=cfg["v"])
         P.c = use_a(P, P.a)
@@ -2541,7 +2541,7 @@ def test_node_json_resources_follow_the_bound_thread_cap(tmp_path):
     """Node entries must report the same thread count as their owning call.
 
     `threads="all"` means the run's thread cap. Node entries used to read the
-    Rule's CPU-count default while call entries used the bound cap, so
+    Command's CPU-count default while call entries used the bound cap, so
     `explain -c N` could show two thread counts for one call.
     """
 

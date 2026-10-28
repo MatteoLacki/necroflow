@@ -21,7 +21,7 @@ from necroflow import (
     output,
 )
 from necroflow.planning import plan_execution
-from necroflow.rules import Rule
+from necroflow.rules import Command
 from necroflow.fingerprints import (
     FingerprintValueError,
     canonical_bytes,
@@ -88,8 +88,8 @@ def decorated_dynamic(source: Source, force: bool):
     return result
 
 
-def _source_rule(name: str = "source") -> Rule:
-    return Rule(name, Inputs(text=str), Outputs(source=Source), "touch {source}")
+def _source_rule(name: str = "source") -> Command:
+    return Command(name, Inputs(text=str), Outputs(source=Source), "touch {source}")
 
 
 def test_named_values_support_mapping_attribute_and_diagnostic_views():
@@ -112,7 +112,7 @@ def test_command_args_are_resolved_named_immutable_views(tmp_path):
     LAST_ARGS = None
     pipeline = Pipeline(DAG(tmp_path))
     source = _source_rule()(pipeline, text="x")
-    rule = Rule(
+    rule = Command(
         "dynamic",
         Inputs(source=Source, force=bool),
         Outputs(result=Result),
@@ -143,7 +143,7 @@ def test_command_callback_receives_hybrid_scalar_in_inputs(tmp_path):
     CALL_COUNT = 0
     LAST_ARGS = None
     pipeline = Pipeline(DAG(tmp_path))
-    rule = Rule(
+    rule = Command(
         "dynamic_hybrid",
         Inputs(source=Source | str),
         Outputs(result=Result),
@@ -161,7 +161,7 @@ def test_command_callback_receives_hybrid_scalar_in_inputs(tmp_path):
 def test_callable_command_is_realized_once_per_rule_call(tmp_path):
     global CALL_COUNT
     CALL_COUNT = 0
-    rule = Rule(
+    rule = Command(
         "multi",
         Inputs(label=str),
         Outputs(result=Result, log=Log),
@@ -179,7 +179,7 @@ def test_callable_stays_lazy_through_dedup_and_cached_execution(tmp_path):
     global CALL_COUNT
     CALL_COUNT = 0
     source_rule = _source_rule()
-    dynamic_rule = Rule(
+    dynamic_rule = Command(
         "dynamic",
         Inputs(source=Source),
         Outputs(result=Result),
@@ -213,7 +213,7 @@ def test_callable_stays_lazy_through_dedup_and_cached_execution(tmp_path):
 
 
 def test_callable_command_must_return_nonempty_string(tmp_path):
-    rule = Rule(
+    rule = Command(
         "invalid_result",
         Inputs(label=str),
         Outputs(result=Result),
@@ -226,7 +226,7 @@ def test_callable_command_must_return_nonempty_string(tmp_path):
 
 
 def test_lambda_command_with_unique_source_is_supported(tmp_path):
-    rule = Rule(
+    rule = Command(
         "lambda_command",
         Inputs(label=str),
         Outputs(result=Result),
@@ -255,7 +255,7 @@ def test_closures_and_nested_callbacks_are_rejected():
         return f"{captured} {args.outputs.result}"
 
     with pytest.raises(TypeError, match="must not close over values"):
-        Rule(
+        Command(
             "closed",
             Inputs(label=str),
             Outputs(result=Result),
@@ -265,13 +265,13 @@ def test_closures_and_nested_callbacks_are_rejected():
 
 def test_semantic_ast_change_and_python_version_change_fingerprint(monkeypatch):
     pipeline = Pipeline(DAG("/tmp/necroflow-fingerprint-semantic"))
-    first = Rule(
+    first = Command(
         "same",
         Inputs(label=str),
         Outputs(result=Result),
         semantic_command_a,
     )(pipeline, label="x")
-    second = Rule(
+    second = Command(
         "same",
         Inputs(label=str),
         Outputs(result=Result),
@@ -288,7 +288,7 @@ def test_semantic_ast_change_and_python_version_change_fingerprint(monkeypatch):
     monkeypatch.setattr(
         "necroflow.fingerprints.python_identity", lambda: python_identity() + "-other"
     )
-    changed = Rule(
+    changed = Command(
         "same",
         Inputs(label=str),
         Outputs(result=Result),
@@ -343,7 +343,7 @@ def test_command_callback_must_be_a_source_inspectable_function():
             return f"touch {args.outputs.result}"
 
     with pytest.raises(TypeError, match="source-inspectable functions or lambdas"):
-        Rule(
+        Command(
             "stateful",
             Inputs(label=str),
             Outputs(result=Result),
@@ -358,7 +358,7 @@ def test_nested_command_without_captured_values_is_rejected():
         return f"touch {args.outputs.result}"
 
     with pytest.raises(TypeError, match="must be defined at module scope"):
-        Rule("nested", Inputs(label=str), Outputs(result=Result), nested)
+        Command("nested", Inputs(label=str), Outputs(result=Result), nested)
 
 
 @pytest.mark.parametrize(
@@ -373,7 +373,7 @@ def test_command_callback_requires_one_positional_argument(callback):
     """Command callbacks must accept exactly one positional CommandArgs value."""
 
     with pytest.raises(TypeError, match="exactly one positional CommandArgs argument"):
-        Rule("wrong_arity", Inputs(label=str), Outputs(result=Result), callback)
+        Command("wrong_arity", Inputs(label=str), Outputs(result=Result), callback)
 
 
 def test_generated_command_callback_without_source_is_rejected():
@@ -386,7 +386,7 @@ def test_generated_command_callback_without_source_is_rejected():
     )
 
     with pytest.raises(TypeError, match="has no inspectable source"):
-        Rule(
+        Command(
             "generated",
             Inputs(label=str),
             Outputs(result=Result),
@@ -406,7 +406,7 @@ def test_multiple_lambdas_on_one_source_line_are_rejected(tmp_path):
     callback = load_callable(f"{callbacks}:first", kind="test-command")
 
     with pytest.raises(TypeError, match="is ambiguous"):
-        Rule("ambiguous", Inputs(label=str), Outputs(result=Result), callback)
+        Command("ambiguous", Inputs(label=str), Outputs(result=Result), callback)
 
 
 def test_ast_formatting_and_comments_do_not_change_identity(tmp_path):
@@ -426,13 +426,13 @@ def test_ast_formatting_and_comments_do_not_change_identity(tmp_path):
     )
     first_callback = load_callable(f"{compact}:build", kind="test-command")
     second_callback = load_callable(f"{commented}:build", kind="test-command")
-    first = Rule(
+    first = Command(
         "same",
         Inputs(label=str),
         Outputs(result=Result),
         first_callback,
     )(pipeline, label="x")
-    second = Rule(
+    second = Command(
         "same",
         Inputs(label=str),
         Outputs(result=Result),
@@ -447,7 +447,7 @@ def test_framework_hashing_rejects_custom_config_values(tmp_path):
         pass
 
     with pytest.raises(FingerprintValueError, match="config.options"):
-        Rule(
+        Command(
             "custom_config",
             Inputs(options=Options),
             Outputs(result=Result),
@@ -472,7 +472,7 @@ def test_v3_split_hash_cache_is_not_reused(tmp_path):
 
 def test_constraints_and_repeat_remain_outside_framework_hashes(tmp_path):
     pipeline = Pipeline(DAG(tmp_path))
-    first = Rule(
+    first = Command(
         "same",
         Inputs(label=str),
         Outputs(result=Result),
@@ -480,7 +480,7 @@ def test_constraints_and_repeat_remain_outside_framework_hashes(tmp_path):
         Constraints(threads=1),
         repeat=1,
     )(pipeline, label="x")
-    second = Rule(
+    second = Command(
         "same",
         Inputs(label=str),
         Outputs(result=Result),
@@ -493,7 +493,7 @@ def test_constraints_and_repeat_remain_outside_framework_hashes(tmp_path):
 
 
 def test_explicit_shellpath_changes_callable_fingerprint(tmp_path):
-    rule = Rule(
+    rule = Command(
         "shellpath",
         Inputs(label=str),
         Outputs(result=Result),
@@ -537,7 +537,7 @@ def test_callable_provenance_separates_command_and_fingerprint(tmp_path):
     pipeline = Pipeline(DAG(tmp_path))
     source = _source_rule()(pipeline, text="x")
     pipeline.source = source
-    pipeline.result = Rule(
+    pipeline.result = Command(
         "dynamic",
         Inputs(source=Source, force=bool),
         Outputs(result=Result),

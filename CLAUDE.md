@@ -21,7 +21,7 @@ disagrees with the code, the code wins (and this file should be fixed).
 | Job TOML format and `__grid` parameter grids | `docs/job-toml.md` |
 | Config validation callbacks | `docs/config-validation.md` |
 | Generated config files (`text_file` rules) | `docs/generated-config-files.md` |
-| Rule-call compilation, interning, paths, labels, requests, execution handoff | `docs/rule-call-lifecycle.md` |
+| Command-call compilation, interning, paths, labels, requests, execution handoff | `docs/rule-call-lifecycle.md` |
 | Dev workflow, release | `docs/development.md`, `docs/release.md` |
 | Coding style and anti-patterns | `.claude/skills/necroflow-style/SKILL.md` |
 | Adding/editing a rule (placeholders, typed outputs, mistakes) | `.claude/skills/add-a-rule/SKILL.md` |
@@ -148,8 +148,8 @@ These have been true since the June refactors and are load-bearing design decisi
   without preserving source ACLs, ownership, or extended attributes.
   `manifest.toml` records each visible path, canonical origin node key, and content hash.
 - **Filename-less NodeTypes are input-only.** A `NodeType` with `filename = None` may be
-  used as a fixed, union, or variadic input contract, but every Rule output must resolve to an
-  explicit filename. Rule declaration rejects filename-less outputs; output names are not fallbacks.
+  used as a fixed, union, or variadic input contract, but every Command output must resolve to an
+  explicit filename. Command declaration rejects filename-less outputs; output names are not fallbacks.
 - **Mixed fixed inputs select their branch per call.** A union containing NodeType and plain-value
   arms remains positional. A matching Node creates a parent edge; a matching plain value creates no
   edge and enters provenance as a named canonical value along with positional input order. Only
@@ -157,7 +157,7 @@ These have been true since the June refactors and are load-bearing design decisi
   element unions remain unsupported.
 - **Persistent external state does not belong in a workdir.** A workdir is a function of its
   declared inputs, so any identity change gives a fresh empty one; state that must outlive that
-  lives outside the node store and is passed in as a path. A `mutable=True` Rule flag existed for
+  lives outside the node store and is passed in as a path. A `mutable=True` Command flag existed for
   this until 2026-09-16 and was removed: it stopped external byte edits from staling consumers but
   could not stop the workdir itself being discarded whenever identity moved.
 - **Variadic Node inputs retain groups.** `tuple[NodeType, ...]` accepts an ordered
@@ -209,7 +209,7 @@ src/necroflow/
   contexts.py        — immutable NamedValues and CommandArgs public views
   containers.py      — Docker config value, `{env}:` command prefix, docker run argv
   fingerprints.py    — canonical v4 rule/provenance hashes and callable AST identity
-  rules.py           — Rule internals plus command, text-file, and symlink-file declarations,
+  rules.py           — Command internals plus command, text-file, and symlink-file declarations,
                        parse_resource with SI/binary suffixes, threads="all" resolution
   schedulers.py      — RuleCall Scheduler protocol and fifo_scheduler
   fs.py              — node-store locking, path/shell validation, and output mtimes
@@ -249,3 +249,24 @@ Tests live in `tests/` (one file per concern); runnable examples in `examples/`.
 ## What is NOT yet implemented
 
 - Cluster/cloud backends (long-term goal, not currently prioritised)
+
+## Inline commands and execution resource policy
+
+`declarations.py` parses output declarations, inline commands, and Resource annotations.
+`command_builders.py` binds nested command builders without executing declarations.
+`resources.py` defines `Resource[int]` and invocation-scoped ResourcePolicy.
+
+Bare `@command` and option-only `@command(repeat=...)` accept outputs followed by
+one literal `command = "..."` or zero-argument nested `def command()`, then the
+output return. Existing decorator/factory syntax remains supported. Resource
+parameters are keyword-only at invocation and excluded from both identity hashes.
+`DAG(..., resources={rule_name: {resource: value}})` and CLI `--resources FILE`
+apply file overrides before interning: file > call keyword > declaration default.
+New Resource calls with conflicting requests fail; legacy-only constraint
+interning retains its existing first-declaration behavior. Unknown file rule or
+resource names fail before execution. Stored provenance records executed resources
+outside config; resource-only changes reuse caches without rewriting old metadata.
+
+`Node[T]` retains its NodeType for static analysis. `output(T)` returns `Node[T]`
+in annotations; runtime behavior stays declaration-only. Input annotations remain
+NodeType contracts and all existing hashes remain unchanged.

@@ -1,4 +1,4 @@
-from necroflow.rules import Constraints, Inputs, Outputs, Rule
+from necroflow.rules import Constraints, Inputs, Outputs, Command
 import hashlib
 import time
 from pathlib import Path
@@ -20,10 +20,10 @@ class C(NodeType):
     filename = "c"
 
 
-R_make_a = Rule("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
-R_make_b = Rule("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
-R_fail_c = Rule("fail_c", Inputs(x=str), Outputs(c=C), "{{ : {c}; exit 1; }}")
-R_signal_c = Rule(
+R_make_a = Command("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
+R_make_b = Command("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
+R_fail_c = Command("fail_c", Inputs(x=str), Outputs(c=C), "{{ : {c}; exit 1; }}")
+R_signal_c = Command(
     "signal_c", Inputs(x=str), Outputs(c=C), "{{ : {c}; kill -TERM $$; }}"
 )
 
@@ -178,9 +178,11 @@ class Y(NodeType):
     filename = "y"
 
 
-R2_make_x = Rule("make_x", Inputs(v=str), Outputs(x=X), "touch {x}")
-R2_make_y_fail = Rule("make_y_fail", Inputs(x=X), Outputs(y=Y), "touch {y} && exit 1")
-R2_make_y_signal = Rule(
+R2_make_x = Command("make_x", Inputs(v=str), Outputs(x=X), "touch {x}")
+R2_make_y_fail = Command(
+    "make_y_fail", Inputs(x=X), Outputs(y=Y), "touch {y} && exit 1"
+)
+R2_make_y_signal = Command(
     "make_y_signal", Inputs(x=X), Outputs(y=Y), "touch {y}; kill -TERM $$"
 )
 
@@ -250,13 +252,13 @@ def test_directory_output_content_change_invalidates_children(tmp_path):
     class Copied(NodeType):
         filename = "copied.txt"
 
-    make_directory = Rule(
+    make_directory = Command(
         "make_directory",
         Inputs(value=str),
         Outputs(directory=Directory),
         "mkdir -p {directory}; printf original > {directory}/item.txt",
     )
-    copy_item = Rule(
+    copy_item = Command(
         "copy_item",
         Inputs(directory=Directory),
         Outputs(copied=Copied),
@@ -301,7 +303,7 @@ def test_nodetype_invalidator_external_file_change_reruns_call(tmp_path):
         filename = "external.txt"
         invalidator = external_hash
 
-    r_make_external = Rule(
+    r_make_external = Command(
         "make_external",
         Inputs(text=str, dependency=str),
         Outputs(out=ExternalInvalidated),
@@ -331,7 +333,7 @@ def test_nodetype_invalidator_output_file_change_reruns_call(tmp_path):
         filename = "output-hash.txt"
         invalidator = output_hash
 
-    r_make_output_hash = Rule(
+    r_make_output_hash = Command(
         "make_output_hash",
         Inputs(text=str),
         Outputs(out=OutputHashInvalidated),
@@ -360,7 +362,7 @@ def test_nodetype_invalidator_missing_metadata_reruns_call(tmp_path):
         filename = "output.txt"
         invalidator = output_hash
 
-    r_make_output = Rule(
+    r_make_output = Command(
         "make_output",
         Inputs(text=str),
         Outputs(out=OutputInvalidated),
@@ -390,7 +392,7 @@ def test_nodetype_invalidator_must_return_string_token(tmp_path):
         filename = "result"
         invalidator = lambda node: 42
 
-    rule = Rule(
+    rule = Command(
         "invalid_token",
         Inputs(value=str),
         Outputs(result=InvalidToken),
@@ -418,7 +420,7 @@ def test_nodetype_invalidator_exception_fails_fast(tmp_path):
         filename = "raising.txt"
         invalidator = maybe_raise
 
-    r_make_raising = Rule(
+    r_make_raising = Command(
         "make_raising",
         Inputs(text=str),
         Outputs(out=RaisingInvalidator),
@@ -452,7 +454,7 @@ def test_multi_output_invalidator_reruns_shared_command_once(tmp_path):
     class PlainB(NodeType):
         filename = "b.txt"
 
-    r_make_pair = Rule(
+    r_make_pair = Command(
         "make_pair",
         Inputs(dependency=str, count=str),
         Outputs(a=InvalidatedA, b=PlainB),

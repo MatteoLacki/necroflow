@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Generic, TypeVar
 
 from necroflow.contexts import NamedValues
 from necroflow.fs import _check_path_limits
@@ -16,7 +16,7 @@ class NodeType:
     class Fastq(NodeType): ...
     class SortedBam(Bam): filename = "sorted.bam"
 
-    Filename-less subclasses are input-only type contracts. Every Rule output
+    Filename-less subclasses are input-only type contracts. Every Command output
     must use a NodeType whose filename resolves to a string.
     """
 
@@ -26,16 +26,19 @@ class NodeType:
     def __new__(cls, *args, **kwargs):
         raise TypeError(
             f"{cls.__name__} is a NodeType declaration, not a Node constructor; "
-            "create managed Nodes by calling a Rule with a Pipeline"
+            "create managed Nodes by calling a Command with a Pipeline"
         )
 
 
+_NodeT = TypeVar("_NodeT", bound=NodeType)
+
+
 @dataclass(eq=False)
-class Node:
+class Node(Generic[_NodeT]):
     """Typed output identified by its final, node-store-relative path."""
 
     output_name: str
-    node_type: type[NodeType]
+    node_type: type[_NodeT]
     relative_path: Path
     path: Path
     rule_call: RuleCall
@@ -116,6 +119,7 @@ class Node:
         config: dict,
         command,
         outputs_specs: dict,
+        resource_requests: dict | None = None,
     ) -> list[Node]:
         shellpath = pipeline.shellpath if command is not None else None
         call = RuleCall(
@@ -126,6 +130,7 @@ class Node:
             config=config,
             command=command,
             shellpath=shellpath,
+            resource_requests=resource_requests,
         )
         workdir = call.workdir
         nodes: list[Node] = []

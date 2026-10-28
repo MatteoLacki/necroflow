@@ -33,9 +33,10 @@ class PreparedText(NodeType):
     invalidator = sha256_of_dependency
 
 
-@command("cat {dependency} > {prepared_text}")
+@command
 def prepare_text(dependency: str):
     prepared_text = output(PreparedText)
+    command = "cat {dependency} > {prepared_text}"
     return prepared_text
 
 

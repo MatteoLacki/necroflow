@@ -1,6 +1,6 @@
 # Rules and Typed Outputs
 
-[Previous: Config Validation](config-validation.md) | [README](../README.md) | [Next: Rule-Call Lifecycle](rule-call-lifecycle.md)
+[Previous: Config Validation](config-validation.md) | [README](../README.md) | [Next: Command-Call Lifecycle](rule-call-lifecycle.md)
 
 The primary API is the explicit factory form. Factory rules require a stable `name=` and may include `doc=`; `Inputs` and `Outputs` preserve declaration order.
 
@@ -22,16 +22,83 @@ Every parameter must have a type annotation: Node dependencies use a
 `NodeType` contract, scalar/config inputs use ordinary Python types, and a
 fixed mixed union may select either kind at call time.
 Necroflow rejects an unannotated parameter when the decorator constructs the
-Rule, even if the command does not reference that parameter. Calls likewise
+Command, even if the command does not reference that parameter. Calls likewise
 reject keyword inputs absent from the declared schema before fingerprinting or
 DAG interning. The function's return annotation is optional and ignored;
 outputs are declared only with `output(ConcreteNodeType)`.
 
+## Inline commands and resources
+
+A rule can keep its command inside its declaration:
+
+```python
+from necroflow import Resource, command, output
+
+@command
+def align(reads: Fastq, threads: Resource[int] = 4):
+    bam = output(Bam)
+    command = "align -t {threads} {reads} > {bam}"
+    return bam
+```
+
+Declare all outputs first, then exactly one command, then return the outputs.
+A string command must be a literal (adjacent literals are allowed); placeholders
+use the existing shell-quoting rules, not Python expressions. Equivalent templates
+moved from the decorator into the body retain their existing hashes. Use
+`@command(repeat=2)` when declaration options are needed.
+
+For computed commands, define a zero-argument nested function in the same slot:
+
+```python
+import shlex
+
+@command
+def align(reads: Fastq, threads: Resource[int] = 4):
+    bam = output(Bam)
+
+    def command():
+        return (
+            f"align -t {threads} "
+            f"{shlex.quote(str(reads))} > {shlex.quote(str(bam))}"
+        )
+
+    return bam
+```
+
+The outer declaration is parsed, never executed. Nested builders run during command
+realization, before the external command starts. Inputs and outputs are resolved
+Paths, variadic inputs are tuples of Paths, mixed values and scalar settings retain
+their values, and resources are resolved integers. Builders own shell quoting.
+They may use module imports/helpers, but cannot capture unrelated outer closure
+values. They must be synchronous, non-generator, undecorated functions returning
+a nonempty shell string. Their canonical source AST and Python version participate
+in recipe identity; rendered paths and captured resource values do not.
+Existing external `CommandArgs` callbacks retain their closure restrictions.
+
+`Resource[int]` marks a scheduler quantity, not a scalar setting. It requires a
+positive default and can be overridden by keyword, e.g. `align(P, reads, threads=8)`.
+Resources are excluded from both rule and provenance hashes. Ordinary settings
+remain hashed. The annotation is an `Annotated` alias, so static analyzers see an
+integer rather than a wrapper. Runtime resource parsing also accepts unit strings
+and `threads="all"`; use a resource file for those spellings in typed Python code.
+
+Resource requests are attached to each call. New Resource declarations with
+conflicting requests for the same canonical call raise a compilation error;
+a common resource-file override can resolve the conflict. Legacy-only constraints
+retain their previous first-declaration deduplication behavior.
+
+Use `--resources workstation.toml` to override declared resources automatically;
+see [resource files](cli.md#resource-files). Python callers can supply the same
+mapping as `DAG(nodes_dir, resources={"align": {"threads": 8}})`. This policy is
+scoped to that DAG and never mutates module-level rule defaults. It applies to
+existing explicitly declared constraints as well as Resource parameters.
+
 ## Reserved names
 
-An input or output name may not collide with the built-in placeholders `workdir` and `constraint`, with a constraint the rule
+`threads: Resource[int]` is a resource declaration and is allowed.
+An ordinary input or output name may not collide with the built-in placeholders `workdir` and `constraint`, with a constraint the rule
 declares, or with the implicit `threads` default every rule carries even without
-`Constraints(...)`. `Rule`/`@command` raises `ValueError` at declaration time, not
+`Constraints(...)`. `Command`/`@command` raises `ValueError` at declaration time, not
 at call time, naming the colliding names. `{constraint:name}` is an explicit,
 self-documenting alternative to the plain placeholder form — not a way to
 disambiguate a shadowed name, since shadowing is rejected outright.
@@ -92,7 +159,7 @@ run_sage = command(
 )
 ```
 
-Defaults are validated when the Rule is declared. A config default must satisfy
+Defaults are validated when the Command is declared. A config default must satisfy
 its runtime-checkable annotation. A mixed-input default must satisfy one of its
 non-Node arms; a managed Node cannot be captured as a default because it belongs
 to one concrete DAG. Defaults on pure fixed or variadic Node inputs raise
@@ -227,7 +294,7 @@ does not attempt to infer or repair quoting; use `shlex.quote` or `shlex.join`
 when interpolated values require shell escaping. Argv-list commands are not
 supported in fingerprint v4.
 
-Command callbacks must be module-level, closure-free functions or unambiguous
+External command callbacks must be module-level, closure-free functions or unambiguous
 source-file lambdas accepting exactly one argument. Their canonical AST and
 the running Python implementation/version participate in the default
 fingerprint.
@@ -347,7 +414,7 @@ inspection, or `P.current` therefore always identifies the same Node. Allowing
 reassignment would make earlier Nodes inaccessible under that label and make a
 request for `current` dependent on when it was resolved.
 
-Rule results do not need labels immediately. Ordinary Python variables can hold
+Command results do not need labels immediately. Ordinary Python variables can hold
 and rebind intermediate Nodes:
 
 ```python
@@ -465,7 +532,7 @@ The same pattern is useful for format families. Define a base `NodeType` for the
 format contract, then make every concrete output subclass it. Downstream rules
 can accept the base class when they only care that the input is a valid member
 of that family. A `NodeType` whose `filename` is `None` is input-only:
-using it in `output(...)` or `Outputs(...)` raises `TypeError` when the Rule is
+using it in `output(...)` or `Outputs(...)` raises `TypeError` when the Command is
 declared. Every concrete output type must resolve to a non-`None` filename;
 necroflow does not infer one from the output variable or mapping key.
 
@@ -568,4 +635,32 @@ P.finish()
 dag.require(P.sinks())
 ```
 
-[Previous: Config Validation](config-validation.md) | [README](../README.md) | [Next: Rule-Call Lifecycle](rule-call-lifecycle.md)
+[Previous: Config Validation](config-validation.md) | [README](../README.md) | [Next: Command-Call Lifecycle](rule-call-lifecycle.md)
+
+## Command declaration class
+
+`Command` is the declaration class returned by `@command`, `command(...)`,
+`@text_file`, and `@symlink_file`. It is available as `from necroflow import Command`.
+Calling a Command compiles output Nodes; `RuleCall` remains the invocation/execution
+object. Existing `from necroflow.rules import Rule` imports remain supported:
+`Rule` is an alias of `Command`, not a separate type. The rename does not alter
+recipe or provenance identity.
+
+## Generic output typing
+
+`output(ProcessedText)` is inferred as `Node[ProcessedText]`, retaining the output
+contract for LSP completion and static checks. Existing declarations need no changes.
+An explicit return annotation is optional:
+
+```python
+@command
+def process_text(raw_text: RawText) -> Node[ProcessedText]:
+    processed_text = output(ProcessedText)
+    command = "tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}"
+    return processed_text
+```
+
+Multiple outputs infer `tuple[Node[Bam], Node[Log]]`. The declaration's input
+annotations remain NodeType contracts (`RawText`, not `Node[RawText]`); this change
+only preserves output type information. Bare `Node` annotations remain supported.
+Runtime construction, output parsing, and fingerprints are unchanged.

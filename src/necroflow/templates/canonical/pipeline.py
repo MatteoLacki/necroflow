@@ -28,21 +28,24 @@ def write_tool_config(text: str):
     return tool_config
 
 
-@command("cp {path} {raw_text}")
+@command
 def import_text(path: str):
     raw_text = output(RawText)
+    command = "cp {path} {raw_text}"
     return raw_text
 
 
-@command("tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}")
+@command
 def process_text(raw_text: RawText, tool_config: ToolConfig):
     processed_text = output(ProcessedText)
+    command = "tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}"
     return processed_text
 
 
-@command("wc -c {processed_text} > {summary}")
+@command
 def summarize(processed_text: ProcessedText):
     summary = output(Summary)
+    command = "wc -c {processed_text} > {summary}"
     return summary
 
 

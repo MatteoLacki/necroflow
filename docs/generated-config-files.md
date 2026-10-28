@@ -1,6 +1,6 @@
 # Generated Config Files
 
-[Previous: Rule-Call Lifecycle](rule-call-lifecycle.md) | [README](../README.md) | [Next: Executor, Classification, Scheduling, and Cleanup](executor.md)
+[Previous: Command-Call Lifecycle](rule-call-lifecycle.md) | [README](../README.md) | [Next: Executor, Classification, Scheduling, and Cleanup](executor.md)
 
 Tool-specific config can live in necroflow in two useful ways.
 
@@ -147,4 +147,4 @@ tables are created; missing source fields are errors. This keeps dynamic values
 inside ordinary rule inputs and outputs instead of interleaving Python DAG
 construction with execution.
 
-[Previous: Rule-Call Lifecycle](rule-call-lifecycle.md) | [README](../README.md) | [Next: Executor, Classification, Scheduling, and Cleanup](executor.md)
+[Previous: Command-Call Lifecycle](rule-call-lifecycle.md) | [README](../README.md) | [Next: Executor, Classification, Scheduling, and Cleanup](executor.md)

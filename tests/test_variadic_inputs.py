@@ -18,7 +18,7 @@ from necroflow import (
     Pipeline,
 )
 from necroflow.planning import plan_execution
-from necroflow.rules import Rule
+from necroflow.rules import Command
 
 
 class Bam(NodeType):
@@ -58,7 +58,7 @@ def _source(
     label: str,
     node_type: type[NodeType] = Bam,
 ):
-    return Rule(
+    return Command(
         "source",
         Inputs(label=str),
         Outputs(source=node_type),
@@ -70,7 +70,7 @@ def test_plain_variadic_tuple_accepts_zero_or_more_nodes(tmp_path):
     pipeline = Pipeline(DAG(tmp_path))
     first = _source(pipeline, "first")
     second = _source(pipeline, "second")
-    merge = Rule(
+    merge = Command(
         "merge",
         Inputs(bams=tuple[Bam, ...]),
         Outputs(merged=Merged),
@@ -114,7 +114,7 @@ def test_variadic_static_command_quotes_each_path_independently(tmp_path):
     pipeline = Pipeline(DAG(tmp_path / "root with spaces"))
     first = _source(pipeline, "first")
     second = _source(pipeline, "second")
-    merge = Rule(
+    merge = Command(
         "merge",
         Inputs(bams=tuple[Bam, ...]),
         Outputs(merged=Merged),
@@ -135,7 +135,7 @@ def test_callable_command_receives_tuple_of_resolved_paths(tmp_path):
     pipeline = Pipeline(DAG(tmp_path))
     first = _source(pipeline, "first")
     second = _source(pipeline, "second")
-    merge = Rule(
+    merge = Command(
         "merge_callback",
         Inputs(bams=tuple[Bam, ...]),
         Outputs(merged=Merged),
@@ -153,13 +153,13 @@ def test_callable_command_receives_tuple_of_resolved_paths(tmp_path):
 def test_many_default_and_inclusive_bounds(tmp_path):
     pipeline = Pipeline(DAG(tmp_path))
     nodes = tuple(_source(pipeline, str(index)) for index in range(3))
-    at_least_one = Rule(
+    at_least_one = Command(
         "at_least_one",
         Inputs(bams=Annotated[tuple[Bam, ...], Many()]),
         Outputs(merged=Merged),
         "merge {bams} > {merged}",
     )
-    bounded = Rule(
+    bounded = Command(
         "bounded",
         Inputs(bams=Annotated[tuple[Bam, ...], Many(min=2, max=3)]),
         Outputs(merged=Merged),
@@ -198,7 +198,7 @@ def test_variadic_input_rejects_non_tuple_wrong_elements_and_foreign_dag(tmp_pat
     bam = _source(pipeline, "bam")
     reference = _source(pipeline, "reference", Reference)
     foreign = _source(foreign_pipeline, "foreign")
-    merge = Rule(
+    merge = Command(
         "merge",
         Inputs(bams=tuple[Bam, ...]),
         Outputs(merged=Merged),
@@ -214,7 +214,7 @@ def test_variadic_input_rejects_non_tuple_wrong_elements_and_foreign_dag(tmp_pat
 
 
 def test_invalid_variadic_annotations_are_rejected():
-    accepted_union = Rule(
+    accepted_union = Command(
         "accepted_union",
         Inputs(bams=tuple[Union[Bam, OtherBam], ...]),
         Outputs(merged=Merged),
@@ -222,35 +222,35 @@ def test_invalid_variadic_annotations_are_rejected():
     )
     assert accepted_union is not None
     with pytest.raises(TypeError, match="tuple element union"):
-        Rule(
+        Command(
             "mixed",
             Inputs(bams=tuple[Bam | str, ...]),
             Outputs(merged=Merged),
             "touch {merged}",
         )
     with pytest.raises(TypeError, match="fixed-length Node tuple"):
-        Rule(
+        Command(
             "fixed",
             Inputs(bams=tuple[Bam, Bam]),
             Outputs(merged=Merged),
             "touch {merged}",
         )
     with pytest.raises(TypeError, match="element type is not a NodeType"):
-        Rule(
+        Command(
             "strings",
             Inputs(values=Annotated[tuple[str, ...], Many()]),
             Outputs(merged=Merged),
             "touch {merged}",
         )
     with pytest.raises(TypeError, match="non-variadic Node tuple"):
-        Rule(
+        Command(
             "scalar",
             Inputs(bam=Annotated[Bam, Many()]),
             Outputs(merged=Merged),
             "touch {merged}",
         )
     with pytest.raises(TypeError, match="more than one Many"):
-        Rule(
+        Command(
             "duplicate",
             Inputs(bams=Annotated[tuple[Bam, ...], Many(), Many()]),
             Outputs(merged=Merged),
@@ -263,7 +263,7 @@ def test_multiple_groups_and_fixed_inputs_keep_logical_and_flat_order(tmp_path):
     left = tuple(_source(pipeline, f"left-{index}") for index in range(2))
     reference = _source(pipeline, "reference", Reference)
     right = tuple(_source(pipeline, f"right-{index}") for index in range(2))
-    rule = Rule(
+    rule = Command(
         "compare",
         Inputs(
             left=tuple[Bam, ...],
@@ -286,7 +286,7 @@ def test_variadic_union_accepts_each_declared_node_type(tmp_path):
     pipeline = Pipeline(DAG(tmp_path))
     bam = _source(pipeline, "bam")
     other = _source(pipeline, "other", OtherBam)
-    merge = Rule(
+    merge = Command(
         "union_merge",
         Inputs(bams=tuple[Bam | OtherBam, ...]),
         Outputs(merged=Merged),
@@ -305,25 +305,25 @@ def test_variadic_fingerprint_tracks_order_grouping_and_many_bounds(tmp_path):
         _source(pipeline, "second"),
         _source(pipeline, "third"),
     )
-    plain = Rule(
+    plain = Command(
         "merge",
         Inputs(bams=tuple[Bam, ...]),
         Outputs(merged=Merged),
         "merge {bams} > {merged}",
     )
-    at_least_one = Rule(
+    at_least_one = Command(
         "merge",
         Inputs(bams=Annotated[tuple[Bam, ...], Many()]),
         Outputs(merged=Merged),
         "merge {bams} > {merged}",
     )
-    at_least_two = Rule(
+    at_least_two = Command(
         "merge",
         Inputs(bams=Annotated[tuple[Bam, ...], Many(min=2)]),
         Outputs(merged=Merged),
         "merge {bams} > {merged}",
     )
-    grouped = Rule(
+    grouped = Command(
         "grouped",
         Inputs(left=tuple[Bam, ...], right=tuple[Bam, ...]),
         Outputs(merged=Merged),
@@ -351,10 +351,10 @@ def test_variadic_fingerprint_tracks_order_grouping_and_many_bounds(tmp_path):
 
 
 def test_fixed_input_v4_hashes_are_deterministic(tmp_path):
-    source_rule = Rule(
+    source_rule = Command(
         "source", Inputs(text=str), Outputs(source=Bam), "touch {source}"
     )
-    consume_rule = Rule(
+    consume_rule = Command(
         "consume", Inputs(source=Bam), Outputs(result=Merged), "cp {source} {result}"
     )
 

@@ -44,7 +44,7 @@ Three deliberate deviations from Snakemake, all forced by necroflow's model:
 from pathlib import Path
 
 from necroflow import DAG, NodeType, Pipeline, command, output
-from necroflow.rules import Constraints, Inputs, Outputs, Rule
+from necroflow.rules import Constraints, Inputs, Outputs, Command
 
 
 def _output_size(node) -> int:
@@ -134,21 +134,22 @@ class Big(NodeType):
     filename = "big.txt"
 
 
-@command("head -c 200000 /dev/zero | tr '\\0' 'a' > {raw}")
+@command
 def make_raw(tag: str):
     raw = output(Raw)
+    command = "head -c 200000 /dev/zero | tr '\\0' 'a' > {raw}"
     return raw
 
 
 # Two consumers of the same parent, distinguished only by declared priority.
-r_low = Rule(
+r_low = Command(
     "consume_low",
     Inputs(raw=Raw),
     Outputs(small=Small),
     "wc -c < {raw} > {small}",
     Constraints(threads=2, priority=1),
 )
-r_high = Rule(
+r_high = Command(
     "consume_high",
     Inputs(raw=Raw),
     Outputs(big=Big),

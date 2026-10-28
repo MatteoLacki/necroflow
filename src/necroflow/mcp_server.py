@@ -51,6 +51,7 @@ def _root_args(
     nodes_dir: str | None = None,
     results_dir: str | None = None,
     outdir: str | None = None,
+    resources: str | None = None,
     extra: list[str] | None = None,
 ):
     """Parse CLI args for one subcommand, mirroring `necroflow COMMAND ...`."""
@@ -61,6 +62,8 @@ def _root_args(
         argv += ["--results-dir", results_dir]
     if outdir is not None:
         argv += ["--outdir", outdir]
+    if resources is not None:
+        argv += ["--resources", resources]
     argv += extra or []
     argv += list(jobs)
     return _build_parser().parse_args(argv)
@@ -78,11 +81,17 @@ def graph(
     nodes_dir: str | None = None,
     results_dir: str | None = None,
     outdir: str | None = None,
+    resources: str | None = None,
 ) -> dict:
     """Return DAG nodes, edges, and per-job requests for the given job TOML files."""
     try:
         args = _root_args(
-            "graph", jobs, nodes_dir=nodes_dir, results_dir=results_dir, outdir=outdir
+            "graph",
+            jobs,
+            nodes_dir=nodes_dir,
+            results_dir=results_dir,
+            outdir=outdir,
+            resources=resources,
         )
         roots_nodes_dir, _results_dir = _resolve_roots(args)
         dag, combos, _forced = _build_dag_from_jobs(args, nodes_dir=roots_nodes_dir)
@@ -97,11 +106,17 @@ def outputs(
     nodes_dir: str | None = None,
     results_dir: str | None = None,
     outdir: str | None = None,
+    resources: str | None = None,
 ) -> dict:
     """List requested node-store and result paths for the given job TOML files."""
     try:
         args = _root_args(
-            "outputs", jobs, nodes_dir=nodes_dir, results_dir=results_dir, outdir=outdir
+            "outputs",
+            jobs,
+            nodes_dir=nodes_dir,
+            results_dir=results_dir,
+            outdir=outdir,
+            resources=resources,
         )
         roots_nodes_dir, roots_results_dir = _resolve_roots(args)
         dag, combos, _forced = _build_dag_from_jobs(args, nodes_dir=roots_nodes_dir)
@@ -118,6 +133,7 @@ def explain(
     nodes_dir: str | None = None,
     results_dir: str | None = None,
     outdir: str | None = None,
+    resources: str | None = None,
     reuse_unchanged: bool = False,
 ) -> dict:
     """Explain which RuleCalls would run and why, without executing them."""
@@ -131,6 +147,7 @@ def explain(
             nodes_dir=nodes_dir,
             results_dir=results_dir,
             outdir=outdir,
+            resources=resources,
             extra=extra,
         )
         return _explain_payload(args)
@@ -144,11 +161,17 @@ def doctor(
     nodes_dir: str | None = None,
     results_dir: str | None = None,
     outdir: str | None = None,
+    resources: str | None = None,
 ) -> dict:
     """Run preflight checks for the given job TOML files and report NF_* issues."""
     try:
         args = _root_args(
-            "doctor", jobs, nodes_dir=nodes_dir, results_dir=results_dir, outdir=outdir
+            "doctor",
+            jobs,
+            nodes_dir=nodes_dir,
+            results_dir=results_dir,
+            outdir=outdir,
+            resources=resources,
         )
         return _doctor_payload(args)
     except SystemExit as exc:

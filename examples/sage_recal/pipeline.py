@@ -150,34 +150,33 @@ def write_sage_config(text: str):
 
 
 # --- compute rules ---
-@command(
-    "python scripts/select_top_precursors.py {spectra} --top-k {top_k} -o {subset}"
-)
+@command
 def select_recalibration_spectra(spectra: SpectraFile, top_k: int):
     """Subset a spectra file to its top-K most intense precursors, for mass-error
     estimation on a fast first pass."""
     subset = output(RecalibrationSpectraSubset)
+    command = (
+        "python scripts/select_top_precursors.py {spectra} --top-k {top_k} -o "
+        "{subset}"
+    )
     return subset
 
 
-@command(
-    "sage {config} -f {fasta} --write-pin --annotate-matches -o {workdir} {spectra}"
-    " && test -f {results_json} && test -f {results_pin}"
-    " && test -f {results_tsv} && test -f {matched_fragments}"
-)
+@command
 def run_sage(spectra: SpectraFile, fasta: Fasta, config: SageConfig):
     results_json = output(SageResultsJson)
     results_pin = output(SageResultsPin)
     results_tsv = output(SageResultsTsv)
     matched_fragments = output(SageMatchedFragments)
+    command = (
+        "sage {config} -f {fasta} --write-pin --annotate-matches -o {workdir} "
+        "{spectra} && test -f {results_json} && test -f {results_pin} && test "
+        "-f {results_tsv} && test -f {matched_fragments}"
+    )
     return results_json, results_pin, results_tsv, matched_fragments
 
 
-@command(
-    "python scripts/fit_recalibration.py {results_tsv}"
-    " --fdr {fdr} --q-column {q_column} -o {tolerance}"
-    " && python scripts/recalibrate_spectra.py {spectra} {tolerance} -o {recalibrated_spectra}"
-)
+@command
 def recalibrate_spectra(
     results_tsv: SageResultsTsv,
     spectra: SpectraFile,
@@ -205,19 +204,26 @@ def recalibrate_spectra(
     dataset may need `spectrum_q` instead."""
     tolerance = output(RecalibrationTolerance)
     recalibrated_spectra = output(RecalibratedSpectra)
+    command = (
+        "python scripts/fit_recalibration.py {results_tsv} --fdr {fdr} "
+        "--q-column {q_column} -o {tolerance} && python "
+        "scripts/recalibrate_spectra.py {spectra} {tolerance} -o "
+        "{recalibrated_spectra}"
+    )
     return tolerance, recalibrated_spectra
 
 
-@command(
-    "python -m necroflow.tools.config_set"
-    " {sage_config} {workdir}/precursor_tol_updated.json"
-    " --target precursor_tol --source {tolerance} --source-field precursor_tol"
-    " && python -m necroflow.tools.config_set"
-    " {workdir}/precursor_tol_updated.json {recalibrated_sage_config}"
-    " --target fragment_tol --source {tolerance} --source-field fragment_tol"
-)
+@command
 def update_sage_config(sage_config: SageConfig, tolerance: RecalibrationTolerance):
     recalibrated_sage_config = output(SageConfig)
+    command = (
+        "python -m necroflow.tools.config_set {sage_config} "
+        "{workdir}/precursor_tol_updated.json --target precursor_tol --source "
+        "{tolerance} --source-field precursor_tol && python -m "
+        "necroflow.tools.config_set {workdir}/precursor_tol_updated.json "
+        "{recalibrated_sage_config} --target fragment_tol --source {tolerance} "
+        "--source-field fragment_tol"
+    )
     return recalibrated_sage_config
 
 
