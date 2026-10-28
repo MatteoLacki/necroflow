@@ -13,7 +13,7 @@ from necroflow import (
     Inputs,
     Many,
     Node,
-    output,
+    outputs,
     Outputs,
     Pipeline,
 )
@@ -39,7 +39,7 @@ class Merged(Node):
 
 @command("merge {bams} > {merged}")
 def decorated_merge(bams: Annotated[tuple[Bam, ...], Many()]):
-    merged = output(Merged)
+    merged = outputs(Merged)
     return merged
 
 

@@ -94,7 +94,7 @@ class NestedCommand:
             **dict(call.inputs),
             **dict(call.input_values),
             **call.config,
-            **call.resources,
+            **call._constraints(),
             **call.output_nodes,
         }
         return self.factory(**{name: values[name] for name in self.names})

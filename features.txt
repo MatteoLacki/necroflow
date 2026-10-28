@@ -14,7 +14,7 @@ necroflow
 │   │   ├── decorator sugar: @command(...)
 │   │   ├── built-in decorators: @text_file / @symlink_file
 │   │   ├── explicit built-in factories: text_file_rule / symlink_file_rule
-│   │   ├── lint-clean name = output(Node) declarations
+│   │   ├── lint-clean name = outputs(Node) declarations
 │   │   ├── typed Inputs / Outputs
 │   │   ├── filename-less abstract input contracts; explicit output filenames
 │   │   ├── scalar/config and mixed-value defaults with explicit Node dependencies

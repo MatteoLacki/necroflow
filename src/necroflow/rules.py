@@ -28,7 +28,7 @@ from necroflow.nodes import Node, _is_nodetype
 from necroflow.fingerprints import validate_command_callback
 from necroflow.workflow import _active_pipeline
 from necroflow.declarations import parse_declaration, is_inline_declaration
-from necroflow.resources import normalize_resource
+from necroflow.resources import resource_value
 
 BUILTIN_COMMAND_PLACEHOLDERS = {"workdir", "constraint"}
 
@@ -48,14 +48,14 @@ def default_thread_cap() -> int:
     return os.cpu_count() or 1
 
 
-def parse_resource(s: str | int) -> int:
+def parse_resource(s: str | int | float) -> int | float:
     """Parse a resource value with optional unit suffix.
 
     SI (1000-based):     K  M  G  T  P
     Binary (1024-based): Ki Mi Gi Ti Pi
-    Plain integer string or int passed through as-is.
+    Plain numeric strings are parsed; int and float quantities pass through.
     """
-    if isinstance(s, int):
+    if isinstance(s, (int, float)):
         return s
     s = s.strip()
     for suffix, mult in _BIN_SUFFIXES.items():  # binary first — longer suffixes
@@ -64,7 +64,10 @@ def parse_resource(s: str | int) -> int:
     for suffix, mult in _SI_SUFFIXES.items():
         if s.endswith(suffix):
             return int(s[: -len(suffix)]) * mult
-    return int(s)
+    try:
+        return int(s)
+    except ValueError:
+        return float(s)
 
 
 class Inputs:
@@ -249,16 +252,74 @@ def _matches_value_type(value: Any, expected: Any) -> bool:
     return False
 
 
-def output(node_type: type[_OutputT]) -> _OutputT:
-    """Declare an output in a decorated rule body.
+_OutputT2 = TypeVar("_OutputT2", bound=Node)
+_OutputT3 = TypeVar("_OutputT3", bound=Node)
+_OutputT4 = TypeVar("_OutputT4", bound=Node)
+_OutputT5 = TypeVar("_OutputT5", bound=Node)
+_OutputT6 = TypeVar("_OutputT6", bound=Node)
 
-    The decorator parses ``name = output(Node)`` assignments without
-    executing them. The generic return annotation retains the declared Node:
-    ``output(Bam)`` infers ``Bam`` in static analyzers.
+
+@overload
+def outputs(type1: type[_OutputT], /) -> _OutputT: ...
+
+
+@overload
+def outputs(
+    type1: type[_OutputT], type2: type[_OutputT2], /
+) -> tuple[_OutputT, _OutputT2]: ...
+
+
+@overload
+def outputs(
+    type1: type[_OutputT], type2: type[_OutputT2], type3: type[_OutputT3], /
+) -> tuple[_OutputT, _OutputT2, _OutputT3]: ...
+
+
+@overload
+def outputs(
+    type1: type[_OutputT],
+    type2: type[_OutputT2],
+    type3: type[_OutputT3],
+    type4: type[_OutputT4],
+    /,
+) -> tuple[_OutputT, _OutputT2, _OutputT3, _OutputT4]: ...
+
+
+@overload
+def outputs(
+    type1: type[_OutputT],
+    type2: type[_OutputT2],
+    type3: type[_OutputT3],
+    type4: type[_OutputT4],
+    type5: type[_OutputT5],
+    /,
+) -> tuple[_OutputT, _OutputT2, _OutputT3, _OutputT4, _OutputT5]: ...
+
+
+@overload
+def outputs(
+    type1: type[_OutputT],
+    type2: type[_OutputT2],
+    type3: type[_OutputT3],
+    type4: type[_OutputT4],
+    type5: type[_OutputT5],
+    type6: type[_OutputT6],
+    /,
+) -> tuple[_OutputT, _OutputT2, _OutputT3, _OutputT4, _OutputT5, _OutputT6]: ...
+
+
+@overload
+def outputs(*node_types: type[Node]) -> tuple[Node, ...]: ...
+
+
+def outputs(*node_types: type[Node]) -> Node | tuple[Node, ...]:
+    """Declare one artifact or unpack several artifacts in a command body.
+
+    The decorator parses these calls without executing them. A single type
+    returns that artifact type; multiple types return a tuple in the same order.
     """
     raise RuntimeError(
-        "output() is declaration-only; use it as name = output(Node) "
-        "inside a decorated rule declaration"
+        "outputs() is declaration-only; use it inside a decorated rule declaration"
     )
 
 
@@ -278,6 +339,7 @@ class Command(Generic[_Params, _ReturnT]):
         materializer: Callable | None = None,
         input_defaults: Mapping[str, Any] | None = None,
         resource_defaults: Mapping[str, Any] | None = None,
+        resource_types: Mapping[str, type] | None = None,
         signature: inspect.Signature | None = None,
     ):
         """Validate and store a rule declaration and derive its call schema."""
@@ -289,6 +351,7 @@ class Command(Generic[_Params, _ReturnT]):
         self.recipe_identity = recipe_identity
         self.materializer = materializer
         self.resource_defaults = dict(resource_defaults or {})
+        self.resource_types = dict(resource_types or {})
         self.constraints = dict(constraints.specs) if constraints else {}
         overlap = self.constraints.keys() & self.resource_defaults.keys()
         if overlap:
@@ -508,12 +571,12 @@ class Command(Generic[_Params, _ReturnT]):
             raise ValueError(f"Command {name!r}: " + "; ".join(errors))
 
     @property
-    def resources(self) -> dict[str, int]:
-        """Return integer scheduler resources, `threads="all"` as the CPU count."""
+    def resources(self) -> dict[str, int | float]:
+        """Return numeric scheduler resources, `threads="all"` as the CPU count."""
         return self.resources_for(None)
 
-    def resources_for(self, thread_cap: int | None) -> dict[str, int]:
-        """Return integer scheduler resources with one thread by default.
+    def resources_for(self, thread_cap: int | None) -> dict[str, int | float]:
+        """Return numeric scheduler resources with one thread by default.
 
         `threads="all"` resolves to `thread_cap`, or to the default thread cap
         (the CPU count) when no run has bound one.
@@ -676,7 +739,7 @@ class Command(Generic[_Params, _ReturnT]):
         resource_requests = dict(self.constraints)
         resource_requests.update(
             {
-                name: normalize_resource(name, bound[name])
+                name: resource_value(name, bound[name], self.resource_types.get(name))
                 for name in self.resource_defaults
             }
         )
@@ -816,6 +879,7 @@ def command(
                 outputs=Outputs(**outputs),
                 command=parsed.command if inline else cmd,
                 resource_defaults=parsed.resources,
+                resource_types=parsed.resource_types,
                 constraints=Constraints(**constraints) if constraints else None,
                 info=info,
                 repeat=repeat,

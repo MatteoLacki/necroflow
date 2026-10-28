@@ -66,12 +66,12 @@ def _run_source_and_consumer(nodes_dir):
 
 def _write_gc_scope(path, command="printf new > {result}"):
     path.write_text(
-        "from necroflow import Node, command, output\n"
+        "from necroflow import Node, command, outputs\n"
         "class Result(Node):\n"
         "    filename = 'result.txt'\n"
         f"@command({command!r})\n"
         "def produce(value: str):\n"
-        "    result = output(Result)\n"
+        "    result = outputs(Result)\n"
         "    return result\n"
         "rules = [produce]\n"
     )

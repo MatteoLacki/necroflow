@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from necroflow import DAG, Docker, Node, Pipeline, command, output
+from necroflow import DAG, Docker, Node, Pipeline, command, outputs
 
 from compare import main as compare_results
 from pipeline import ROOT, build, load_job, main as run_pipeline
@@ -20,19 +20,19 @@ class Probe(Node):
 
 @command("{env}:printf hello > {probe}", threads=1)
 def success(env: Docker):
-    probe = output(Probe)
+    probe = outputs(Probe)
     return probe
 
 
 @command("{env}:exit 7", threads=1)
 def failure(env: Docker):
-    probe = output(Probe)
+    probe = outputs(Probe)
     return probe
 
 
 @command("{env}:true", threads=1)
 def missing(env: Docker):
-    probe = output(Probe)
+    probe = outputs(Probe)
     return probe
 
 

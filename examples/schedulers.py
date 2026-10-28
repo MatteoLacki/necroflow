@@ -5,7 +5,7 @@ Run:
 """
 
 from pathlib import Path
-from necroflow import DAG, Node, Pipeline, command, output, workflow
+from necroflow import DAG, Node, Pipeline, command, outputs, workflow
 
 
 class Text(Node):
@@ -26,28 +26,28 @@ class Merged(Node):
 
 @command
 def make_text(word: str):
-    text = output(Text)
+    text = outputs(Text)
     command = "echo {word} > {text}"
     return text
 
 
 @command
 def to_upper(text: Text):
-    upper = output(Upper)
+    upper = outputs(Upper)
     command = "tr a-z A-Z < {text} > {upper}"
     return upper
 
 
 @command
 def to_lower(text: Text):
-    lower = output(Lower)
+    lower = outputs(Lower)
     command = "tr A-Z a-z < {text} > {lower}"
     return lower
 
 
 @command
 def merge(upper: Upper, lower: Lower):
-    merged = output(Merged)
+    merged = outputs(Merged)
     command = "paste {upper} {lower} > {merged}"
     return merged
 

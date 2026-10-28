@@ -1,6 +1,6 @@
 """Negative typing fixture: each ERROR line must produce a diagnostic."""
 
-from necroflow import Node, Pipeline, Resource, command, output
+from necroflow import Node, Pipeline, Resource, command, outputs
 
 
 class Raw(Node):
@@ -13,7 +13,7 @@ class Other(Node):
 
 @command
 def copy(raw: Raw, /, *, count: int, threads: Resource[int] = 1) -> Raw:
-    result = output(Raw)
+    result = outputs(Raw)
     command = "cp {raw} {result}"
     return result
 

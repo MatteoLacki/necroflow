@@ -25,7 +25,7 @@ from necroflow import workflow
 
 @command("sage --config {sage_config_path} --mzml {spectra} --out {sage_out}")
 def run_sage(spectra: Mzml, sage_config_path: str):
-    sage_out = output(SageOut)
+    sage_out = outputs(SageOut)
     return sage_out
 @workflow
 def pipeline(P: Pipeline, config: dict) -> None:
@@ -47,7 +47,7 @@ When the external config should be a typed artifact in the DAG, add an import or
 copy rule and pass the resulting node downstream:
 
 ```python
-from necroflow import Node, Pipeline, command, output, workflow
+from necroflow import Node, Pipeline, command, outputs, workflow
 
 class SageConfig(Node):
     filename = "sage.json"
@@ -56,11 +56,11 @@ class SageOut(Node):
     filename = "results.sage.tsv"
 @command("cp {path} {sage_config}")
 def import_sage_config(path: str):
-    sage_config = output(SageConfig)
+    sage_config = outputs(SageConfig)
     return sage_config
 @command("sage --config {sage_config} --mzml {spectra} --out {sage_out}")
 def run_sage(spectra: Mzml, sage_config: SageConfig):
-    sage_out = output(SageOut)
+    sage_out = outputs(SageOut)
     return sage_out
 @workflow
 def pipeline(P: Pipeline, config: dict) -> None:
@@ -83,18 +83,18 @@ as `printf {config}`.
 
 ```python
 import json
-from necroflow import Node, command, text_file, output
+from necroflow import Node, command, text_file, outputs
 
 class SageConfig(Node):
     filename = "sage.json"
 @text_file
 def write_sage_config(text: str):
-    sage_config = output(SageConfig)
+    sage_config = outputs(SageConfig)
     return sage_config
 @command("necromerge2-run-sage {spectra} {fasta} {outdir} {run_info} --config {sage_config}")
 def run_sage(spectra: SageInputStaged, fasta: Fasta, sage_config: SageConfig):
-    outdir = output(SageRawOutdir)
-    run_info = output(SageRunInfo)
+    outdir = outputs(SageRawOutdir)
+    run_info = outputs(SageRunInfo)
     return outdir, run_info
 ```
 

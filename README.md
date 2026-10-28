@@ -26,7 +26,7 @@ A command-line run points at a Python workflow. Rules describe typed outputs and
 
 ```python
 # pipeline.py
-from necroflow import DAG, Node, Pipeline, command, symlink_file, output, workflow
+from necroflow import DAG, Node, Pipeline, command, symlink_file, outputs, workflow
 
 class Fastq(Node):
     filename = "reads.fastq.gz"
@@ -39,17 +39,17 @@ class Counts(Node):
 
 @symlink_file
 def raw_fastq(path: str):
-    fastq = output(Fastq)
+    fastq = outputs(Fastq)
     return fastq
 
 @command("bwa mem {ref} {fastq} > {bam}", threads=4)
 def align(fastq: Fastq, ref: str):
-    bam = output(Bam)
+    bam = outputs(Bam)
     return bam
 
 @command("featureCounts -a {gene_model} {bam} -o {counts}")
 def count(bam: Bam, gene_model: str):
-    counts = output(Counts)
+    counts = outputs(Counts)
     return counts
 
 @workflow
@@ -119,7 +119,7 @@ The resulting labels include `samples/A/bam` and `samples/A/counts`. Prefixes ar
 
 ## Core ideas
 
-- **Rules** describe how to produce outputs from inputs — shell command templates with typed I/O and lint-clean `name = output(Node)` declarations.
+- **Rules** describe how to produce outputs from inputs — shell command templates with typed I/O and lint-clean `name = outputs(Node)` declarations.
 - **Workflows** wire rule calls together for a single config using a `Pipeline` for labels; prefixed subpipeline views make reusable loop-generated outputs requestable.
 - **DAG** runs many pipelines at once, deduplicating shared upstream work across samples automatically.
 - **Paths** are derived from a lineage-derived fingerprint of the full input chain — same inputs always produce the same path, different inputs produce different paths. The filesystem is the cache.

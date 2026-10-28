@@ -7,14 +7,14 @@ if TYPE_CHECKING:
     from necroflow.rule_call import RuleCall
 
 Scheduler = Callable[
-    [list["RuleCall"], list["RuleCall"], dict[str, int]], list["RuleCall"]
+    [list["RuleCall"], list["RuleCall"], dict[str, int | float]], list["RuleCall"]
 ]
 
 
 def fifo_scheduler(
     ready: list[RuleCall],
     remaining: list[RuleCall],
-    available_resources: dict[str, int],
+    available_resources: dict[str, int | float],
 ) -> list[RuleCall]:
     """Return ready RuleCalls in DAG registration order."""
     return ready

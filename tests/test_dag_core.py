@@ -1,7 +1,7 @@
 """Tests for DAG internals: paths, commands, types, and labels."""
 
 from necroflow.rules import Constraints, Inputs, Outputs, Command
-from necroflow import command, output
+from necroflow import command, outputs
 
 import pytest
 from typing import Literal, Union
@@ -291,7 +291,7 @@ def test_command_decorator_rejects_filename_less_output_type():
 
         @command("mkdir {dataset}")
         def emit_dataset():
-            dataset = output(MmappetDataset)
+            dataset = outputs(MmappetDataset)
             return dataset
 
 
@@ -510,7 +510,7 @@ def test_resolve_command_substitutes_union_typed_input(tmp_path):
     # command template raised a bare KeyError at execution time.
     @command("cat {doc} > {txt}")
     def read_either(doc: Txt | Upper):
-        txt = output(Txt)
+        txt = outputs(Txt)
         return txt
 
     src = R_make_txt(P, word="hi")
@@ -564,14 +564,14 @@ def test_unknown_constraint_placeholder_is_rejected():
 
         @command("tool --ram {ram} > {txt}")
         def bad_ram(word: str):
-            txt = output(Txt)
+            txt = outputs(Txt)
             return txt
 
     with pytest.raises(ValueError, match=r"unknown constraint placeholders: \['gpu'\]"):
 
         @command("tool --gpu {constraint:gpu} > {txt}")
         def bad_gpu(word: str):
-            txt = output(Txt)
+            txt = outputs(Txt)
             return txt
 
 
@@ -676,7 +676,7 @@ def test_decorated_rule_rejects_unexpected_config_before_interning(tmp_path):
 
     @command("echo {word} > {txt}")
     def make_txt(word: str):
-        txt = output(Txt)
+        txt = outputs(Txt)
         return txt
 
     dag = DAG(tmp_path)
@@ -724,7 +724,7 @@ def test_mixed_input_accepted_by_keyword(tmp_path):
 
     @command("printf %s {source} > {txt}")
     def consume(source: Txt | str | None = None):
-        txt = output(Txt)
+        txt = outputs(Txt)
         return txt
 
     pipeline = Pipeline(DAG(tmp_path))
@@ -1045,7 +1045,7 @@ def test_repeat_does_not_affect_fingerprint():
 def test_command_decorator_body_return_single():
     @command("echo {word} > {txt}")
     def make_txt(word: str):
-        txt = output(Txt)
+        txt = outputs(Txt)
         return txt
 
     assert make_txt.outputs.specs == {"txt": Txt}
@@ -1054,7 +1054,7 @@ def test_command_decorator_body_return_single():
 def test_command_decorator_accepts_repeat_and_constraints():
     @command("echo {word} > {txt}", threads=2, repeat=4)
     def make_txt(word: str):
-        txt = output(Txt)
+        txt = outputs(Txt)
         return txt
 
     assert make_txt.repeat == 4
@@ -1074,7 +1074,7 @@ def test_command_decorator_applies_config_defaults_before_fingerprinting(tmp_pat
         threshold: float = 0.05,
         plugin: str | None = None,
     ):
-        txt = output(Txt)
+        txt = outputs(Txt)
         return txt
 
     pipeline = Pipeline(DAG(tmp_path))
@@ -1138,7 +1138,7 @@ def test_command_decorator_rejects_wrongly_typed_config_default():
 
         @command("printf %s {count} > {txt}")
         def make_txt(count: int = "invalid"):
-            txt = output(Txt)
+            txt = outputs(Txt)
             return txt
 
 
@@ -1147,7 +1147,7 @@ def test_mixed_nodetype_union_accepts_matching_scalar_default(tmp_path):
 
     @command("printf %s {source} > {txt}")
     def consume(source: Txt | None = None):
-        txt = output(Txt)
+        txt = outputs(Txt)
         return txt
 
     pipeline = Pipeline(DAG(tmp_path))
@@ -1167,14 +1167,14 @@ def test_mixed_nodetype_union_rejects_unmatched_defaults():
 
         @command("touch {txt}")
         def wrong_scalar(source: Txt | str = 42):
-            txt = output(Txt)
+            txt = outputs(Txt)
             return txt
 
     with pytest.raises(TypeError, match="default for hybrid input 'source'.*expected"):
 
         @command("touch {txt}")
         def missing_none_arm(source: Txt | str = None):
-            txt = output(Txt)
+            txt = outputs(Txt)
             return txt
 
 
@@ -1229,22 +1229,22 @@ def test_command_decorator_rejects_node_input_defaults():
 
         @command("cat {source} > {txt}")
         def consume(source: Txt = None):
-            txt = output(Txt)
+            txt = outputs(Txt)
             return txt
 
     with pytest.raises(TypeError, match="Node input 'sources' must not have a default"):
 
         @command("cat {sources} > {txt}")
         def merge(sources: tuple[Txt, ...] = ()):
-            txt = output(Txt)
+            txt = outputs(Txt)
             return txt
 
 
 def test_command_decorator_body_return_multi():
     @command("tr a-z A-Z < {txt} | tee {log} > {upper}")
     def to_upper(txt: Txt):
-        upper = output(Upper)
-        log = output(Log)
+        upper = outputs(Upper)
+        log = outputs(Log)
         return upper, log
 
     assert to_upper.outputs.specs == {"upper": Upper, "log": Log}
@@ -1253,7 +1253,7 @@ def test_command_decorator_body_return_multi():
 def test_command_decorator_output_assignments_ignore_arrow_annotation():
     @command("echo {word} > {txt}")
     def make_txt2(word: str) -> Upper:  # -> annotation should be ignored
-        txt = output(Txt)
+        txt = outputs(Txt)
         return txt
 
     assert make_txt2.outputs.specs == {"txt": Txt}
@@ -1271,7 +1271,7 @@ def test_command_decorator_rejects_removed_annotation_fallback():
 
 def test_command_decorator_accepts_imported_output_alias():
     """The parser recognizes output declarations by identity, not spelling."""
-    declare_output = output
+    declare_output = outputs
 
     @command("echo {word} > {txt}")
     def make_txt(word: str):
@@ -1287,14 +1287,14 @@ def test_command_decorator_rejects_invalid_output_declarations():
 
         @command("touch {txt}")
         def chained(word: str):
-            txt = alias = output(Txt)
+            txt = alias = outputs(Txt)
             return txt
 
-    with pytest.raises(ValueError, match="body may contain only"):
+    with pytest.raises(ValueError, match="one name per positional Node"):
 
         @command("touch {txt}")
         def destructured(word: str):
-            txt, alias = output(Txt)
+            txt, alias = outputs(Txt)
             return txt
 
     with pytest.raises(ValueError, match="body may contain only"):
@@ -1302,64 +1302,64 @@ def test_command_decorator_rejects_invalid_output_declarations():
         @command("touch {txt}")
         def nested(word: str):
             if word:
-                txt = output(Txt)
+                txt = outputs(Txt)
             return txt
 
     with pytest.raises(ValueError, match="final return must contain only"):
 
         @command("touch {txt}")
         def direct_return(word: str):
-            return output(Txt)
+            return outputs(Txt)
 
     with pytest.raises(ValueError, match="each output must be returned exactly once"):
 
         @command("touch {txt}")
         def duplicate_return(word: str):
-            txt = output(Txt)
+            txt = outputs(Txt)
             return txt, txt
 
     with pytest.raises(ValueError, match="declared outputs not returned"):
 
         @command("touch {txt}")
         def unused(word: str):
-            txt = output(Txt)
-            log = output(Log)
+            txt = outputs(Txt)
+            log = outputs(Log)
             return txt
 
     with pytest.raises(ValueError, match="undeclared outputs returned"):
 
         @command("touch {txt}")
         def undeclared(word: str):
-            txt = output(Txt)
+            txt = outputs(Txt)
             return other
 
-    with pytest.raises(ValueError, match="exactly one positional Node"):
+    with pytest.raises(ValueError, match="one name per positional Node"):
 
         @command("touch {txt}")
         def wrong_arity(word: str):
-            txt = output()
+            txt = outputs()
             return txt
 
     with pytest.raises(ValueError, match="concrete Node name"):
 
         @command("touch {txt}")
         def expression_type(word: str):
-            txt = output(Txt())
+            txt = outputs(Txt())
             return txt
 
     with pytest.raises(TypeError, match="must be a Node"):
 
         @command("touch {txt}")
         def non_node_type(word: str):
-            txt = output(str)
+            txt = outputs(str)
             return txt
 
     with pytest.raises(ValueError, match="duplicate output declaration"):
 
         @command("touch {txt}")
         def duplicate_declaration(word: str):
-            txt = output(Txt)
-            txt = output(Txt)
+            txt = outputs(Txt)
+            txt = outputs(Txt)
             return txt
 
     with pytest.raises(ValueError, match=r"Type\[name\] output syntax was removed"):
@@ -1372,7 +1372,7 @@ def test_command_decorator_rejects_invalid_output_declarations():
 def test_output_is_declaration_only():
     """Calling output at runtime explains that it only belongs in declarations."""
     with pytest.raises(RuntimeError, match="declaration-only"):
-        output(Txt)
+        outputs(Txt)
 
 
 def test_command_decorator_preserves_runtime_shape_and_fingerprint():
@@ -1380,7 +1380,7 @@ def test_command_decorator_preserves_runtime_shape_and_fingerprint():
 
     @command("echo {word} > {txt}")
     def make_txt(word: str):
-        txt = output(Txt)
+        txt = outputs(Txt)
         return txt
 
     explicit = Command(
@@ -1396,8 +1396,8 @@ def test_command_decorator_preserves_runtime_shape_and_fingerprint():
 
     @command("tr a-z A-Z < {txt} | tee {log} > {upper}")
     def to_upper(txt: Txt):
-        upper = output(Upper)
-        log = output(Log)
+        upper = outputs(Upper)
+        log = outputs(Log)
         return upper, log
 
     result = to_upper(P, make_txt(P, word="same"))
@@ -1488,7 +1488,7 @@ def test_decorator_input_defaults_constraint_remains_a_resource():
 
     @command("printf %s {text} > {txt}", input_defaults=2)
     def make_txt(text: str):
-        txt = output(Txt)
+        txt = outputs(Txt)
         return txt
 
     assert make_txt.resources["input_defaults"] == 2
@@ -1509,7 +1509,7 @@ def test_command_decorator_rejects_unannotated_input_without_placeholder():
 
         @command("touch {txt}")
         def make_txt(word):
-            txt = output(Txt)
+            txt = outputs(Txt)
             return txt
 
 
@@ -1519,7 +1519,7 @@ def test_command_decorator_rejects_unannotated_default():
 
         @command("touch {txt}")
         def make_txt(mode="fast"):
-            txt = output(Txt)
+            txt = outputs(Txt)
             return txt
 
 
@@ -1531,5 +1531,5 @@ def test_command_decorator_reports_all_unannotated_inputs():
 
         @command("touch {txt}")
         def make_txt(word, mode="fast"):
-            txt = output(Txt)
+            txt = outputs(Txt)
             return txt

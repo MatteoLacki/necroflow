@@ -17,7 +17,7 @@ import hashlib
 import time
 from pathlib import Path
 
-from necroflow import DAG, Node, Pipeline, command, output
+from necroflow import DAG, Node, Pipeline, command, outputs
 
 WORK = Path("/tmp/necroflow_custom_invalidation")
 OUTDIR = WORK / "results"
@@ -35,7 +35,7 @@ class PreparedText(Node):
 
 @command
 def prepare_text(dependency: str):
-    prepared_text = output(PreparedText)
+    prepared_text = outputs(PreparedText)
     command = "cat {dependency} > {prepared_text}"
     return prepared_text
 

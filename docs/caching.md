@@ -91,7 +91,7 @@ output directory: `nodes/{rule}/{provenance_hash}` by default.
 ```python
 @command("dosomething --tmp {workdir}/scratch -o {result}")
 def compute(input: Input):
-    result = output(Result)
+    result = outputs(Result)
     return result
 ```
 
@@ -167,7 +167,7 @@ built-in `@symlink_file` decorator instead of hand-writing the same
 ```python
 @symlink_file
 def raw_spectra(path: str):
-    spectra = output(Mzml)
+    spectra = outputs(Mzml)
     return spectra
 P.spectra = raw_spectra(P, path=config["spectra"])
 ```

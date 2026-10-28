@@ -12,7 +12,7 @@ from necroflow import (
     Outputs,
     Pipeline,
     command,
-    output,
+    outputs,
     workflow,
 )
 
@@ -31,20 +31,19 @@ class Right(Node):
 
 @command("printf %s {text} > {source}")
 def make_source(text: str):
-    source = output(Source)
+    source = outputs(Source)
     return source
 
 
 @command("printf %s {text} > {source}")
 def make_default_source(text: str = "default"):
-    source = output(Source)
+    source = outputs(Source)
     return source
 
 
 @command("cp {source} {left} && cp {source} {right}")
 def split_source(source: Source):
-    left = output(Left)
-    right = output(Right)
+    left, right = outputs(Left, Right)
     return left, right
 
 
@@ -64,13 +63,13 @@ def callback_command(args: CommandArgs) -> str:
 
 @command(callback_command)
 def callback_rule(source: Source):
-    callback_left = output(Left)
+    callback_left = outputs(Left)
     return callback_left
 
 
 @command("cat {sources} > {left}")
 def merge_sources(sources: Annotated[tuple[Source, ...], Many()]):
-    left = output(Left)
+    left = outputs(Left)
     return left
 
 
@@ -117,14 +116,14 @@ from necroflow import Resource
 
 @command
 def inline_source(text: str, threads: Resource[int] = 4):
-    source = output(Source)
+    source = outputs(Source)
     command = "printf %s {text} > {source}"
     return source
 
 
 @command(repeat=2)
 def nested_source(text: str, threads: Resource[int] = 4):
-    source = output(Source)
+    source = outputs(Source)
 
     def command():
         return f"echo {text} > {source.path}"
@@ -138,9 +137,10 @@ nested_node: Node = nested_source(pipeline, text="hello", threads=2)
 
 # Exact inference matters: assignment to bare Node would also accept Any.
 def check_output_inference() -> None:
-    assert_type(output(Source), Source)
-    assert_type(output(Left), Left)
-    assert_type(type(output(Source)), type[Source])
+    assert_type(outputs(Source), Source)
+    assert_type(outputs(Left), Left)
+    assert_type(outputs(Left, Right), tuple[Left, Right])
+    assert_type(type(outputs(Source)), type[Source])
 
 
 assert_type(make_source(pipeline, text="value"), Source)
@@ -153,7 +153,7 @@ assert_type(nested_source(pipeline, text="hello"), Source)
 
 @command
 def annotated_source(text: str) -> Source:
-    source = output(Source)
+    source = outputs(Source)
     command = "printf %s {text} > {source}"
     return source
 
@@ -171,19 +171,19 @@ class SubSource(Source):
 
 @text_file
 def text_source(text: str) -> Source:
-    source = output(Source)
+    source = outputs(Source)
     return source
 
 
 @symlink_file
 def external_source(path: str) -> Source:
-    source = output(Source)
+    source = outputs(Source)
     return source
 
 
 @command
 def precise(source: Source, /, *, count: int = 1, threads: Resource[int] = 1) -> Left:
-    left = output(Left)
+    left = outputs(Left)
 
     def command():
         return f"cat {source.path} > {left.path}"
@@ -197,3 +197,18 @@ def check_precise_calls(source: Source, sub: SubSource) -> None:
     assert_type(precise(pipeline, sub, threads=2), Left)
     assert_type(text_source("hello"), Source)
     assert_type(external_source(pipeline, "/tmp/input"), Source)
+
+
+@command
+def fractional(gpu: Resource[float] = 0.5, scratch: Resource[str] = "2Gi"):
+    source = outputs(Source)
+
+    def command():
+        assert_type(gpu, float)
+        assert_type(scratch, str)
+        return f"echo {gpu} {scratch} > {source.path}"
+
+    return source
+
+
+assert_type(fractional(pipeline, gpu=0.25), Source)

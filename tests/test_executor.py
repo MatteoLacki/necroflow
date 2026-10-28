@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 import tomlkit
-from necroflow import Node, Pipeline, DAG, Verdict, run, output
-from necroflow import fifo_scheduler, output
+from necroflow import Node, Pipeline, DAG, Verdict, run, outputs
+from necroflow import fifo_scheduler, outputs
 from necroflow.executor import ResourcePool
 from necroflow.planning import plan_execution
 
@@ -1039,7 +1039,7 @@ def test_text_file_decorator_matches_factory_fingerprint():
     @text_file
     def write_config(text: str):
         """Write the configuration."""
-        config_file = output(ConfigFile)
+        config_file = outputs(ConfigFile)
         return config_file
 
     explicit = text_file_rule(
@@ -1081,7 +1081,7 @@ def test_text_file_decorator_rejects_invalid_declaration():
 
         @text_file
         def bad_text_file(first: str, second: str):
-            config_file = output(ConfigFile)
+            config_file = outputs(ConfigFile)
             return config_file
 
 
@@ -1140,7 +1140,7 @@ def test_symlink_file_decorator_matches_factory_and_links(tmp_path):
     @symlink_file
     def ingest_raw(path: str):
         """Ingest raw data."""
-        raw = output(RawData)
+        raw = outputs(RawData)
         return raw
 
     explicit = symlink_file_rule(
@@ -1310,7 +1310,7 @@ def test_run_report_marks_cached_nodes_and_measures_size(tmp_path):
 def test_all_threads_tracks_execution_cap_and_rebinds_command(tmp_path):
     @command("printf '%s' {threads} > {result}", threads="all")
     def use_all():
-        result = output(A)
+        result = outputs(A)
         return result
 
     pipeline = Pipeline(DAG(tmp_path))

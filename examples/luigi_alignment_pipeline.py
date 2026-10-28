@@ -22,12 +22,12 @@ import luigi
 class RawFastq(luigi.Task):
     path = luigi.Parameter()
 
-    def output(self):
+    def outputs(self):
         return luigi.LocalTarget(f"nodes/raw_fastq/{self.task_id}/reads.fastq.gz")
 
     def run(self):
-        self.output().makedirs()
-        subprocess.run(["ln", "-s", self.path, self.output().path], check=True)
+        self.outputs().makedirs()
+        subprocess.run(["ln", "-s", self.path, self.outputs().path], check=True)
 
 
 class Align(luigi.Task):
@@ -38,7 +38,7 @@ class Align(luigi.Task):
     def requires(self):
         return RawFastq(path=self.path)
 
-    def output(self):
+    def outputs(self):
         base = f"nodes/align/{self.task_id}"
         return {
             "bam": luigi.LocalTarget(f"{base}/aligned.bam"),
@@ -46,7 +46,7 @@ class Align(luigi.Task):
         }
 
     def run(self):
-        out = self.output()
+        out = self.outputs()
         Path(out["bam"].path).parent.mkdir(parents=True, exist_ok=True)
         cmd = (
             f"bwa mem -t {self.threads} {self.reference} {self.input().path} "
@@ -64,15 +64,15 @@ class SortBam(luigi.Task):
     def requires(self):
         return Align(path=self.path, reference=self.reference)
 
-    def output(self):
+    def outputs(self):
         return luigi.LocalTarget(f"nodes/sort_bam/{self.task_id}/sorted.bam")
 
     def run(self):
-        self.output().makedirs()
+        self.outputs().makedirs()
         bam = self.input()["bam"].path
         cmd = (
             f"samtools sort -@ {self.threads} {bam} "
-            f"-o {self.output().path} -m {self.ram}"
+            f"-o {self.outputs().path} -m {self.ram}"
         )
         subprocess.run(cmd, shell=True, check=True)
 

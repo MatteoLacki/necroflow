@@ -10,20 +10,20 @@ Full reference: `docs/rules.md`, `docs/generated-config-files.md`, `src/necroflo
 ## Shell command rules
 
 ```python
-from necroflow import command, output
+from necroflow import command, outputs
 
 @command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4, ram="8Gi")
 def align(fastq: Fastq, ref: str):
     """Align reads to a reference genome with BWA-MEM."""
-    bam = output(Bam)
-    log = output(Log)
+    bam = outputs(Bam)
+    log = outputs(Log)
     return bam, log
 ```
 
 - First decorator argument = command template; remaining keywords = resource constraints.
 - Function parameters: Node annotations are positional node inputs; plain types
   (`str`, `int`, unions) are config keywords.
-- Outputs use real local assignments: `name = output(Node)`. Return every
+- Outputs use real local assignments: `name = outputs(Node)`. Return every
   declared name exactly once, using a tuple for multiple outputs. The docstring becomes
   `node.info`.
 - Call the decorated name directly: `bam, log = align(fastq_node, ref="hg38")`.
@@ -68,15 +68,15 @@ input/output, or the constraint.
 Use decorator sugar for the common case:
 
 ```python
-from necroflow import symlink_file, text_file, output
+from necroflow import symlink_file, text_file, outputs
 
 @symlink_file
 def raw_fastq(path: str):
-    fastq = output(Fastq)
+    fastq = outputs(Fastq)
     return fastq
 @text_file
 def sage_config(text: str):
-    sage_config = output(SageConfig)
+    sage_config = outputs(SageConfig)
     return sage_config
 ```
 

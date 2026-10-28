@@ -25,18 +25,18 @@ Necroflow rejects an unannotated parameter when the decorator constructs the
 Command, even if the command does not reference that parameter. Calls likewise
 reject keyword inputs absent from the declared schema before fingerprinting or
 DAG interning. The function's return annotation is optional and ignored;
-outputs are declared only with `output(ConcreteNode)`.
+outputs are declared only with `outputs(ConcreteNode)`.
 
 ## Inline commands and resources
 
 A rule can keep its command inside its declaration:
 
 ```python
-from necroflow import Resource, command, output
+from necroflow import Resource, command, outputs
 
 @command
 def align(reads: Fastq, threads: Resource[int] = 4):
-    bam = output(Bam)
+    bam = outputs(Bam)
     command = "align -t {threads} {reads} > {bam}"
     return bam
 ```
@@ -50,17 +50,13 @@ moved from the decorator into the body retain their existing hashes. Use
 For computed commands, define a zero-argument nested function in the same slot:
 
 ```python
-import shlex
-
 @command
 def align(reads: Fastq, threads: Resource[int] = 4):
-    bam = output(Bam)
+    bam = outputs(Bam)
 
     def command():
-        return (
-            f"align -t {threads} "
-            f"{shlex.quote(str(reads.path))} > {shlex.quote(str(bam.path))}"
-        )
+        options = "-t {threads}" if threads > 1 else ""
+        return f"align {options} {{reads}} > {{bam}}"
 
     return bam
 ```
@@ -68,18 +64,41 @@ def align(reads: Fastq, threads: Resource[int] = 4):
 The outer declaration is parsed, never executed. Nested builders run during command
 realization, before the external command starts. Inputs and outputs are instances of their declared Node subclasses; use
 `.path` for filesystem access. Variadic inputs are tuples of artifacts. Mixed values and scalar settings retain
-their values, and resources are resolved integers. Builders own shell quoting.
+their values, and resources retain their declared types (except the resolved all-threads policy). Returned strings are templates: the same renderer substitutes and shell-quotes
+placeholders for both literal and callable commands.
 They may use module imports/helpers, but cannot capture unrelated outer closure
 values. They must be synchronous, non-generator, undecorated functions returning
-a nonempty shell string. Their canonical source AST and Python version participate
+a nonempty template string. Their canonical source AST and Python version participate
 in recipe identity; rendered paths and captured resource values do not.
 Existing external `CommandArgs` callbacks retain their closure restrictions.
+Their returned strings also pass through the template renderer.
 
-`Resource[int]` marks a scheduler quantity, not a scalar setting. It requires a
+Python evaluates f-strings first. Write `f"tool {options} {{reads}}"` to
+interpolate the local `options` value while preserving `{reads}` for necroflow.
+Ordinary strings need only single braces: `"tool {reads}"`.
+Literal shell braces must be doubled in the returned template; for example,
+`"awk '{{print $1}}' {reads} > {bam}"`. Inside an f-string those literal braces
+need four braces in source. Shell variables such as `$HOME` need no escaping;
+write `${{HOME}}` when using shell's braced form in an ordinary template.
+
+Keep dynamic arguments as placeholders so necroflow can quote them. Values
+already interpolated by Python cannot be automatically quoted afterward, and
+any literal braces they contain must be escaped before template rendering.
+Expansion happens once: braces inside substituted paths or config values stay
+literal. Templates retain their hashes; callable recipes carry a new identity
+marker for this rendering behavior, so old callback results are not reused.
+
+
+`Resource[T]` marks a scheduler quantity, not a scalar setting. It requires a
 positive default and can be overridden by keyword, e.g. `align(P, reads, threads=8)`.
 Resources are excluded from both rule and provenance hashes. Ordinary settings
 remain hashed. The annotation is an `Annotated` alias, so static analyzers see an
-integer rather than a wrapper. Runtime resource parsing also accepts unit strings
+declared type rather than a wrapper. Supported types are `int`, `float`, and
+`str` (numeric/unit strings). Quantities must be finite and positive; threads
+require integers. Float resources support fractional scheduler caps.
+Use `from necroflow import memory_bytes` and
+`ram: Resource[int] = memory_bytes("16G")` for integer byte counts
+(`G` is decimal, `Gi` is binary). Runtime resource parsing also accepts unit strings
 and `threads="all"`; use a resource file for those spellings in typed Python code.
 
 Resource requests are attached to each call. New Resource declarations with
@@ -114,7 +133,7 @@ eight threads; with `-c all` it uses the machine's detected core count.
 ```python
 @command("samtools sort -@ {threads} {bam} -o {sorted_bam}", threads="all")
 def sort_bam(bam: Bam):
-    sorted_bam = output(SortedBam)
+    sorted_bam = outputs(SortedBam)
     return sorted_bam
 ```
 
@@ -132,7 +151,7 @@ def run_sage(
     test_fdr: float = 0.01,
     plugin: str | None = None,
 ):
-    results = output(SageResults)
+    results = outputs(SageResults)
     return results
 
 P.results = run_sage(P, P.spectra)
@@ -181,7 +200,7 @@ types. It remains one positional logical input:
 ```python
 @command(select_command)
 def consume(source: Bam | str | None = None):
-    result = output(Result)
+    result = outputs(Result)
     return result
 
 P.managed = consume(P, P.bam)   # P.bam is a parent dependency
@@ -260,19 +279,10 @@ When a command must be assembled from resolved values, pass a module-level
 Python function instead of a static template:
 
 ```python
-import shlex
 from necroflow import CommandArgs
 
 def merge_command(args: CommandArgs) -> str:
-    parts = [
-        "samtools",
-        "merge",
-        "--threads",
-        str(args.constraints.threads),
-        str(args.outputs.merged),
-        *(str(path) for path in args.inputs.values()),
-    ]
-    return shlex.join(parts)
+    return "samtools merge --threads {threads} {merged} {first} {second}"
 
 merge = command(
     merge_command,
@@ -289,8 +299,8 @@ mapping access, such as `args.outputs.merged` and `args.outputs["merged"]`.
 `inputs` contains resolved Node paths, Node-path tuples, and selected plain
 values from mixed inputs; `config` contains keyword scalar/config inputs.
 
-Callbacks return a complete shell string. Necroflow executes it unchanged and
-does not attempt to infer or repair quoting; use `shlex.quote` or `shlex.join`
+Callbacks return templates. Necroflow substitutes and shell-quotes placeholders,
+just as for literal commands. Keep dynamic arguments as placeholders
 when interpolated values require shell escaping. Argv-list commands are not
 supported in fingerprint v4.
 
@@ -313,11 +323,11 @@ platform = "linux/amd64"
 ```
 
 ```python
-from necroflow import Docker, command, output
+from necroflow import Docker, command, outputs
 
 @command("{env}:salmon index --threads {threads} -t {fasta} -i {index}", threads=1)
 def index(fasta: Reference, env: Docker):
-    index = output(Index)
+    index = outputs(Index)
     return index
 
 def pipeline(p, cfg):
@@ -356,7 +366,7 @@ containing `,`, `"`, or newlines are rejected.
 Import `output` with the decorator and bind every output to a real local name:
 
 ```python
-from necroflow import Node, command, output
+from necroflow import Node, command, outputs
 
 class Bam(Node):
     filename = "aligned.bam"
@@ -366,14 +376,13 @@ class Log(Node):
 
 @command("aligner {reads} > {bam} 2> {log}")
 def align(reads: str):
-    bam = output(Bam)
-    log = output(Log)
+    bam, log = outputs(Bam, Log)
     return bam, log
 ```
 
 The decorated body is a declaration, not executable rule code. After an optional
-docstring it contains one or more top-level `name = output(ConcreteNode)`
-assignments and a final return of each declared name exactly once. The return order
+docstring it contains one or more top-level `name = outputs(ConcreteNode)`
+assignments (or `a, b = outputs(A, B)` for multiple artifacts) and a final return of each declared name exactly once. The return order
 defines the rule call's single-node or tuple shape. This is ordinary valid Python, so
 linters understand that the names are bound and type checkers can preserve the return
 shape through pipeline assignments.
@@ -519,12 +528,12 @@ class SortedBam(Bam):
 @command("samtools sort {bam} -o {sorted_bam}")
 def sort(bam: Bam):
     """Sort BAM by coordinate with samtools."""
-    sorted_bam = output(SortedBam)
+    sorted_bam = outputs(SortedBam)
     return sorted_bam
 @command("featureCounts -a {gene_model} {bam} -o {counts}")
 def quantify(bam: SortedBam, gene_model: str):  # only accepts sorted bam
     """Count reads per gene using featureCounts."""
-    counts = output(Counts)
+    counts = outputs(Counts)
     return counts
 ```
 
@@ -532,7 +541,7 @@ The same pattern is useful for format families. Define a base `Node` for the
 format contract, then make every concrete output subclass it. Downstream rules
 can accept the base class when they only care that the input is a valid member
 of that family. A `Node` whose `filename` is `None` is input-only:
-using it in `output(...)` or `Outputs(...)` raises `TypeError` when the Command is
+using it in `outputs(...)` or `Outputs(...)` raises `TypeError` when the Command is
 declared. Every concrete output type must resolve to a non-`None` filename;
 necroflow does not infer one from the output variable or mapping key.
 
@@ -562,23 +571,23 @@ class IndexedFilteredPrecursors(FilteredPrecursors, IndexedDataset):
 
 @command("filter-mmappet {precursors} > {filtered_precursors}")
 def filter_precursors(precursors: PrecursorTable):
-    filtered_precursors = output(FilteredPrecursors)
+    filtered_precursors = outputs(FilteredPrecursors)
     return filtered_precursors
 @command("index-mmappet {dataset} > {indexed_filtered_precursors}")
 def index(dataset: FilteredPrecursors):
-    indexed_filtered_precursors = output(IndexedFilteredPrecursors)
+    indexed_filtered_precursors = outputs(IndexedFilteredPrecursors)
     return indexed_filtered_precursors
 @command("score-mmappet {dataset} > {scores}")
 def score(dataset: MmappetDataset):
-    scores = output(Scores)
+    scores = outputs(Scores)
     return scores
 @command("query-index {dataset} > {report}")
 def query(dataset: IndexedDataset):
-    report = output(Report)
+    report = outputs(Report)
     return report
 @command("import-mmappet {dataset} > {precursor_table}")
 def import_any_mmappet(dataset: PrecursorTable | FilteredPrecursors):
-    precursor_table = output(PrecursorTable)
+    precursor_table = outputs(PrecursorTable)
     return precursor_table
 ```
 
@@ -619,13 +628,12 @@ A rule with multiple declared outputs is one atomic RuleCall. Requesting either 
 ```python
 @symlink_file
 def raw_fastq(path: str):
-    fastq = output(Fastq)
+    fastq = outputs(Fastq)
     return fastq
 @command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
 def align(fastq: Fastq, ref: str):
     """Align reads with BWA-MEM, capturing the log."""
-    bam = output(Bam)
-    log = output(Log)
+    bam, log = outputs(Bam, Log)
     return bam, log
 dag = DAG("nodes")
 P = Pipeline(dag)
@@ -648,14 +656,14 @@ recipe or provenance identity.
 
 ## Generic output typing
 
-`output(ProcessedText)` is inferred as `ProcessedText`, retaining the output
+`outputs(ProcessedText)` is inferred as `ProcessedText`, retaining the output
 contract for LSP completion and static checks. Existing declarations need no changes.
 An explicit return annotation is optional:
 
 ```python
 @command
 def process_text(raw_text: RawText) -> ProcessedText:
-    processed_text = output(ProcessedText)
+    processed_text = outputs(ProcessedText)
     command = "tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}"
     return processed_text
 ```
@@ -669,4 +677,4 @@ command result when precise typing matters.
 
 Outputs are instances of their declared subclasses. Templates keep existing
 fingerprints; nested builders carry a new binding identity marker. Return
-annotations do not replace explicit `output(...)` declarations.
+annotations do not replace explicit `outputs(...)` declarations.

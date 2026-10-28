@@ -1,6 +1,6 @@
 """The declaration name changes without breaking old imports or identities."""
 
-from necroflow import Command, DAG, Pipeline, Node, command, output
+from necroflow import Command, DAG, Pipeline, Node, command, outputs
 from necroflow.rules import Rule, Inputs, Outputs
 
 
@@ -10,7 +10,7 @@ class Result(Node):
 
 @command
 def make():
-    result = output(Result)
+    result = outputs(Result)
     command = "touch {result}"
     return result
 

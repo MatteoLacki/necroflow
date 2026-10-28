@@ -9,7 +9,7 @@ import tomllib
 from dataclasses import asdict
 from pathlib import Path
 
-from necroflow import DAG, Docker, Node, Pipeline, command, output, workflow
+from necroflow import DAG, Docker, Node, Pipeline, command, outputs, workflow
 
 ROOT = Path(__file__).resolve().parent
 
@@ -57,25 +57,25 @@ class ReportConfig(Node):
 
 @command("ln -s -- {path} {reads}")
 def read1(path: str):
-    reads = output(Read1)
+    reads = outputs(Read1)
     return reads
 
 
 @command("ln -s -- {path} {reads}")
 def read2(path: str):
-    reads = output(Read2)
+    reads = outputs(Read2)
     return reads
 
 
 @command("ln -s -- {path} {fasta}")
 def reference(path: str):
-    fasta = output(Reference)
+    fasta = outputs(Reference)
     return fasta
 
 
 @command("ln -s -- {path} {config}")
 def report_config(path: str):
-    config = output(ReportConfig)
+    config = outputs(ReportConfig)
     return config
 
 
@@ -85,7 +85,7 @@ def report_config(path: str):
     ram="2Gi",
 )
 def index(fasta: Reference, env: Docker):
-    index = output(Index)
+    index = outputs(Index)
     return index
 
 
@@ -105,7 +105,7 @@ def fastqc_command(args):
 
 @command(fastqc_command, threads=1, ram="2Gi")
 def fastqc(r1: Read1, r2: Read2, sample: str, env: Docker):
-    qc = output(FastQC)
+    qc = outputs(FastQC)
     return qc
 
 
@@ -116,7 +116,7 @@ def fastqc(r1: Read1, r2: Read2, sample: str, env: Docker):
     ram="2Gi",
 )
 def quantify(index: Index, r1: Read1, r2: Read2, sample: str, env: Docker):
-    quant = output(Quant)
+    quant = outputs(Quant)
     return quant
 
 
@@ -147,7 +147,7 @@ def multiqc(
     samples: tuple[str, ...],
     env: Docker,
 ):
-    report = output(Report)
+    report = outputs(Report)
     return report
 
 

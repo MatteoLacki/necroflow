@@ -1,6 +1,6 @@
 """Build a rule chain with a rebound local variable and one public label."""
 
-from necroflow import DAG, Node, Pipeline, command, output, text_file, workflow
+from necroflow import DAG, Node, Pipeline, command, outputs, text_file, workflow
 
 
 class Text(Node):
@@ -10,14 +10,14 @@ class Text(Node):
 @text_file
 def write_text(text: str):
     """Write the configured source text."""
-    result = output(Text)
+    result = outputs(Text)
     return result
 
 
 @command
 def uppercase(source: Text):
     """Convert the source text to uppercase."""
-    result = output(Text)
+    result = outputs(Text)
     command = "tr '[:lower:]' '[:upper:]' < {source} > {result}"
     return result
 
@@ -25,7 +25,7 @@ def uppercase(source: Text):
 @command
 def add_prefix(source: Text):
     """Prefix every line of the source text."""
-    result = output(Text)
+    result = outputs(Text)
     command = "sed 's/^/RESULT: /' {source} > {result}"
     return result
 

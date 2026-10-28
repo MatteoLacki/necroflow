@@ -15,7 +15,7 @@ from necroflow import (
     Outputs,
     Pipeline,
     command,
-    output,
+    outputs,
     symlink_file,
     text_file,
     workflow,
@@ -36,26 +36,26 @@ class Right(Node):
 
 @text_file
 def write_text(text: str):
-    result = output(Text)
+    result = outputs(Text)
     return result
 
 
 @symlink_file
 def link_text(path: str):
-    result = output(Text)
+    result = outputs(Text)
     return result
 
 
 @command("cp {source} {left} && cp {source} {right}")
 def split(source: Text):
-    left = output(Left)
-    right = output(Right)
+    left = outputs(Left)
+    right = outputs(Right)
     return left, right
 
 
 @command("cat {sources} > {result}")
 def merge(sources: Annotated[tuple[Left | Right, ...], Many(min=2)]):
-    result = output(Text)
+    result = outputs(Text)
     return result
 
 

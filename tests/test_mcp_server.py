@@ -10,16 +10,16 @@ import necroflow.cli as cli_core
 import necroflow.mcp_server as mcp_server
 
 FACTORY_SRC = textwrap.dedent("""\
-    from necroflow import Pipeline, Node, command, output
+    from necroflow import Pipeline, Node, command, outputs
     class A(Node): filename = "a.txt"
     class B(Node): filename = "b.txt"
     @command("echo {v} > {a}")
     def make_a(v: str):
-        a = output(A)
+        a = outputs(A)
         return a
     @command("cat {a} > {b}")
     def make_b(a: A):
-        b = output(B)
+        b = outputs(B)
         return b
     def factory(P, cfg):
         P.a = make_a(P, v=cfg["v"])

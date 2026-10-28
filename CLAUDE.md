@@ -254,7 +254,7 @@ Tests live in `tests/` (one file per concern); runnable examples in `examples/`.
 
 `declarations.py` parses output declarations, inline commands, and Resource annotations.
 `command_builders.py` binds nested command builders without executing declarations.
-`resources.py` defines `Resource[int]` and invocation-scoped ResourcePolicy.
+`resources.py` defines `Resource[T]` and invocation-scoped ResourcePolicy.
 
 Bare `@command` and option-only `@command(repeat=...)` accept outputs followed by
 one literal `command = "..."` or zero-argument nested `def command()`, then the
@@ -268,8 +268,13 @@ resource names fail before execution. Stored provenance records executed resourc
 outside config; resource-only changes reuse caches without rewriting old metadata.
 
 Artifact classes subclass `Node`; outputs are instances of those classes.
-`output(T)` has static return type `T` and remains declaration-only. Decorated
+`outputs(T)` has static return type `T` and remains declaration-only. Decorated
 commands preserve parameter and return types, including tuple outputs. Nested
 builders receive artifact objects and use `.path` for filesystem access.
 Templates and external CommandArgs callbacks retain path rendering. Template
 hashes remain unchanged; nested builders use a new binding identity marker.
+
+Callable commands return templates, rendered once through the same shell-quoting
+path as literal commands. In f-strings, double braces preserve necroflow
+placeholders. Literal shell braces must be doubled in the returned template.
+Callable recipe identities mark these semantics; literal-template hashes stay stable.

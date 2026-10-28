@@ -16,14 +16,14 @@ PAYLOADS = {"durable": b"necroflow durable\n", "completed": b"necroflow complete
 
 
 def pipeline(P, config):
-    from necroflow import Node, command, output
+    from necroflow import Node, command, outputs
 
     class Text(Node):
         filename = "text.txt"
 
     @command("printf 'necroflow {phase}\\n' > {text}")
     def write_text(phase: str):
-        text = output(Text)
+        text = outputs(Text)
         return text
 
     P.result = write_text(P, phase=config["phase"])

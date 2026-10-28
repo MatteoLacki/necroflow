@@ -18,7 +18,7 @@ from necroflow import (
     Pipeline,
     command,
     run,
-    output,
+    outputs,
 )
 from necroflow.planning import plan_execution
 from necroflow.rules import Command
@@ -84,7 +84,7 @@ LAMBDA_COMMAND = lambda args: f"touch {args.outputs.result}"
 
 @command(dynamic_command, threads=2)
 def decorated_dynamic(source: Source, force: bool):
-    result = output(Result)
+    result = outputs(Result)
     return result
 
 

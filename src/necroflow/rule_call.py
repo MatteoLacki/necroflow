@@ -273,8 +273,8 @@ class RuleCall:
         )
 
     @property
-    def resources(self) -> dict[str, int]:
-        """Integer scheduler resources; `threads="all"` is the bound thread cap."""
+    def resources(self) -> dict[str, int | float]:
+        """Numeric scheduler resources; `threads="all"` is the bound thread cap."""
         from necroflow.rules import default_thread_cap, parse_resource
 
         cap = default_thread_cap() if self._thread_cap is None else self._thread_cap
@@ -489,17 +489,32 @@ class RuleCall:
         a Python callback's prefix is split off the string it returns.
         """
         if self._realized is None:
-            if callable(self.command):
-                self._realized = self._call_command_callback()
-            else:
-                container_input, template = split_prefix(
-                    self.command, self.rule.docker_inputs
+            template = (
+                self._call_command_callback()
+                if callable(self.command)
+                else self.command
+            )
+            container_input, body = split_prefix(template, self.rule.docker_inputs)
+            if callable(self.command) and not body.strip():
+                raise TypeError(
+                    f"Python command callback {self.command.__qualname__!r} returned "
+                    "an empty container command body"
                 )
-                body = template.format(**self._template_substitutions())
-                self._realized = (container_input, body)
+            self.rule._validate_command(
+                self.rule.__name__,
+                self.rule.inputs,
+                self.rule.outputs,
+                body,
+                self.resource_requests,
+            )
+            self._realized = (
+                container_input,
+                body.format(**self._template_substitutions()),
+            )
         return self._realized
 
-    def _call_command_callback(self) -> tuple[str | None, str]:
+    def _call_command_callback(self) -> str:
+        """Invoke a builder and validate its returned, still-unrendered template."""
         from necroflow.command_builders import NestedCommand
 
         result = (
@@ -512,13 +527,7 @@ class RuleCall:
                 f"Python command callback {self.command.__qualname__!r} must return "
                 f"a non-empty shell string, got {result!r}"
             )
-        container_input, body = split_prefix(result, self.rule.docker_inputs)
-        if not body.strip():
-            raise TypeError(
-                f"Python command callback {self.command.__qualname__!r} returned "
-                "an empty container command body"
-            )
-        return container_input, body
+        return result
 
     def _template_substitutions(self) -> dict[str, Any]:
         """Return shell-quoted values for every string-template placeholder."""

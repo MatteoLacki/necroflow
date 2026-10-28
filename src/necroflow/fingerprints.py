@@ -252,9 +252,9 @@ def _command_identity(command: Any, recipe_identity: str | None) -> Any:
         tree, _source_path = command_ast(command)
         return {
             "kind": (
-                "python-nested-artifacts-v1"
+                "python-nested-template-v1"
                 if isinstance(command, NestedCommand)
-                else "python"
+                else "python-template-v1"
             ),
             "python": python_identity(),
             "ast": tree,

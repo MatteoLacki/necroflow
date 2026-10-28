@@ -12,7 +12,7 @@ from necroflow import (
     Pipeline,
     Resource,
     command,
-    output,
+    outputs,
     run,
     workflow,
 )
@@ -39,14 +39,14 @@ class SpecializedRaw(Raw):
 
 @command
 def make(text: str = "hello") -> Raw:
-    raw = output(Raw)
+    raw = outputs(Raw)
     command = "echo {text} > {raw}"
     return raw
 
 
 @command
 def process(raw: Raw, /, count: int = 1, *, threads: Resource[int] = 1) -> Done:
-    done = output(Done)
+    done = outputs(Done)
 
     def command():
         assert isinstance(raw, Raw)
@@ -80,13 +80,13 @@ def test_scoped_subtype_and_keyword_only_input(tmp_path):
 
     @command
     def special() -> SpecializedRaw:
-        raw = output(SpecializedRaw)
+        raw = outputs(SpecializedRaw)
         command = "touch {raw}"
         return raw
 
     @command
     def keyword_input(*, raw: Raw) -> Done:
-        done = output(Done)
+        done = outputs(Done)
         command = "cp {raw} {done}"
         return done
 
@@ -134,14 +134,67 @@ def external_builder(args):
 
 
 def test_builder_binding_identity_is_local_to_nested_commands(tmp_path):
-    """Only nested recipes change binding identity; external callbacks keep Paths."""
+    """Both callback forms identify template semantics; external args keep Paths."""
     external = Command(
         "external", Inputs(raw=Raw), Outputs(done=Done), external_builder
     )
     pipeline = Pipeline(DAG(tmp_path))
     raw = make(pipeline)
     assert external(pipeline, raw).rule_call.resolve().startswith("cp ")
-    assert _command_identity(external_builder, None)["kind"] == "python"
+    assert _command_identity(external_builder, None)["kind"] == "python-template-v1"
     assert (
-        _command_identity(process.command, None)["kind"] == "python-nested-artifacts-v1"
+        _command_identity(process.command, None)["kind"] == "python-nested-template-v1"
     )
+
+
+def test_unpack_outputs_in_nested_builder(tmp_path):
+    """Tuple declarations bind typed artifacts and retain return order."""
+
+    @command
+    def pair():
+        raw, done = outputs(Raw, Done)
+
+        def command():
+            assert type(raw) is Raw
+            assert type(done) is Done
+            return f"echo raw > {raw.quoted_path()}; echo done > {shlex.quote(str(done.path))}"
+
+        return done, raw
+
+    pipeline = Pipeline(DAG(tmp_path))
+    done, raw = pair(pipeline)
+    assert type(done) is Done
+    assert type(raw) is Raw
+    pipeline.done = done
+    pipeline.finish()
+    pipeline.dag.require(pipeline.sinks())
+    run(pipeline.dag)
+    assert done.path.read_text() == "done\n"
+    assert raw.path.read_text() == "raw\n"
+
+
+def test_unpack_outputs_rejects_mismatches():
+    """Reject unpacking whose names cannot correspond to declared types."""
+    with pytest.raises(ValueError, match="one name per positional Node"):
+
+        @command
+        def mismatched():
+            raw, done = outputs(Raw)
+            command = "touch {raw} {done}"
+            return raw, done
+
+    with pytest.raises(ValueError, match="duplicate output declaration"):
+
+        @command
+        def duplicate():
+            raw, raw = outputs(Raw, Done)
+            command = "touch {raw}"
+            return raw
+
+    with pytest.raises(ValueError, match="one name per positional Node"):
+
+        @command
+        def packed():
+            raw = outputs(Raw, Done)
+            command = "touch {raw}"
+            return raw

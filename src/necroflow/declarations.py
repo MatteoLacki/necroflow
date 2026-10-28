@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any, cast, get_args
 
 from necroflow.command_builders import NestedCommand
-from necroflow.resources import is_resource, normalize_resource
+from necroflow.resources import is_resource, resource_value
 
 
 @dataclass(frozen=True)
@@ -18,6 +18,7 @@ class Declaration:
     inputs: dict
     outputs: dict
     resources: dict
+    resource_types: dict
     info: str | None
     command: Any = None
 
@@ -33,13 +34,13 @@ def is_inline_declaration(fn) -> bool:
         return False
     # A callback may itself use a local variable called command. Only an
     # actual output declaration distinguishes bare @command from that callback.
-    from necroflow.rules import output
+    from necroflow.rules import outputs
 
     namespace = {**fn.__globals__, **inspect.getclosurevars(fn).nonlocals}
     return any(
         isinstance(n, ast.Call)
         and isinstance(n.func, ast.Name)
-        and namespace.get(n.func.id) is output
+        and namespace.get(n.func.id) is outputs
         for statement in body
         for n in ast.walk(statement)
     )
@@ -49,7 +50,7 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
     """Parse a typed rule signature and assignment-based output declarations."""
     import builtins
 
-    from necroflow.rules import output
+    from necroflow.rules import outputs
     from necroflow.nodes import _is_nodetype
 
     namespace = dict(fn.__globals__)
@@ -79,20 +80,27 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
     raw_anns = fn.__annotations__
     inputs_specs = {}
     resources = {}
+    resource_types = {}
     for pname, ann in raw_anns.items():
         if pname == "return":
             continue
         if isinstance(ann, str):
             ann = eval(ann, namespace)  # noqa: PGH001
         if is_resource(ann):
-            if get_args(ann)[0] is not int:
-                raise TypeError(f"rule {rule_name!r}: only Resource[int] is supported")
+            kind = get_args(ann)[0]
+            if kind not in (int, float, str):
+                raise TypeError(
+                    f"rule {rule_name!r}: Resource supports int, float, or str quantities"
+                )
+            if pname == "threads" and kind is not int:
+                raise TypeError("threads must use Resource[int]")
+            resource_types[pname] = kind
             default = inspect.signature(fn).parameters[pname].default
             if default is inspect.Parameter.empty:
                 raise TypeError(
                     f"rule {rule_name!r}: resource {pname!r} needs a default"
                 )
-            resources[pname] = normalize_resource(pname, default)
+            resources[pname] = resource_value(pname, default, kind)
         else:
             inputs_specs[pname] = ann
 
@@ -136,50 +144,59 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
         if not (
             isinstance(stmt, ast.Assign)
             and len(stmt.targets) == 1
-            and isinstance(stmt.targets[0], ast.Name)
+            and isinstance(stmt.targets[0], (ast.Name, ast.Tuple))
             and isinstance(stmt.value, ast.Call)
             and isinstance(stmt.value.func, ast.Name)
-            and namespace.get(stmt.value.func.id) is output
+            and namespace.get(stmt.value.func.id) is outputs
         ):
             raise ValueError(
                 f"rule {rule_name!r}: body may contain only "
-                "name = output(Node) declarations before the final return"
+                "name = outputs(Node) declarations before the final return"
             )
-        if len(stmt.value.args) != 1 or stmt.value.keywords:
+        target = stmt.targets[0]
+        targets = target.elts if isinstance(target, ast.Tuple) else [target]
+        if (
+            not stmt.value.args
+            or stmt.value.keywords
+            or len(targets) != len(stmt.value.args)
+            or not all(isinstance(item, ast.Name) for item in targets)
+            or (isinstance(target, ast.Tuple) and len(targets) == 1)
+        ):
             raise ValueError(
-                f"rule {rule_name!r}: output() requires exactly one positional Node"
+                f"rule {rule_name!r}: outputs() requires one name per positional Node; "
+                "use name = outputs(Type) or a, b = outputs(A, B)"
             )
-        type_expr = stmt.value.args[0]
-        if not isinstance(type_expr, ast.Name):
-            raise ValueError(
-                f"rule {rule_name!r}: output() argument must be a concrete Node name"
-            )
-        try:
-            output_type = namespace[type_expr.id]
-        except KeyError:
-            try:
-                output_type = getattr(builtins, type_expr.id)
-            except AttributeError as exc:
+        for target_name, type_expr in zip(targets, stmt.value.args):
+            if not isinstance(type_expr, ast.Name):
                 raise ValueError(
-                    f"rule {rule_name!r}: output() argument must be a concrete Node name"
-                ) from exc
-        output_name = stmt.targets[0].id
-        if not _is_nodetype(output_type):
-            raise TypeError(
-                f"rule {rule_name!r}: output {output_name!r} must be a "
-                f"Node, got {output_type!r}"
-            )
-        if output_name in declarations:
-            raise ValueError(
-                f"rule {rule_name!r}: duplicate output declaration {output_name!r}"
-            )
-        declarations[output_name] = output_type
+                    f"rule {rule_name!r}: outputs() argument must be a concrete Node name"
+                )
+            try:
+                output_type = namespace[type_expr.id]
+            except KeyError:
+                try:
+                    output_type = getattr(builtins, type_expr.id)
+                except AttributeError as exc:
+                    raise ValueError(
+                        f"rule {rule_name!r}: outputs() argument must be a concrete Node name"
+                    ) from exc
+            output_name = target_name.id
+            if not _is_nodetype(output_type):
+                raise TypeError(
+                    f"rule {rule_name!r}: output {output_name!r} must be a "
+                    f"Node, got {output_type!r}"
+                )
+            if output_name in declarations:
+                raise ValueError(
+                    f"rule {rule_name!r}: duplicate output declaration {output_name!r}"
+                )
+            declarations[output_name] = output_type
 
     body_return = body[-1].value
     if isinstance(body_return, ast.Subscript):
         raise ValueError(
             f"rule {rule_name!r}: Type[name] output syntax was removed; use "
-            "name = output(Type) followed by return name"
+            "name = outputs(Type) followed by return name"
         )
     items = body_return.elts if isinstance(body_return, ast.Tuple) else [body_return]
     if not items or not all(isinstance(item, ast.Name) for item in items):
@@ -231,4 +248,6 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
             raise ValueError(
                 f"rule {rule_name!r}: command must be a literal string or zero-argument def command() after outputs"
             )
-    return Declaration(rule_name, inputs_specs, outputs_specs, resources, info, cmd)
+    return Declaration(
+        rule_name, inputs_specs, outputs_specs, resources, resource_types, info, cmd
+    )

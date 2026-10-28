@@ -326,7 +326,7 @@ def _normalize_arg_shellpath(args) -> str | None:
         raise SystemExit(f"error: {exc}") from exc
 
 
-def _parse_resource_caps(args) -> dict[str, int]:
+def _parse_resource_caps(args) -> dict[str, int | float]:
     """Parse core and named constraint options into scheduler capacities."""
     cores = args.cores.strip()
     resource_caps = {

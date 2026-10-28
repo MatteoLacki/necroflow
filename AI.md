@@ -69,8 +69,8 @@ value branch. Mixed variadic element unions remain unsupported.
 `command()` accepts a static shell string or a module-level, closure-free,
 source-inspectable Python function/lambda with one `CommandArgs` argument.
 Callbacks receive resolved named input paths or mixed values, output paths,
-config, constraints, and `workdir`; they return one complete valid shell string.
-The string is executed unchanged, so callback authors own shell quoting. List
+config, constraints, and `workdir`; they return a shell template.
+Returned templates use the same placeholder expansion and shell quoting as literal commands. List
 commands are rejected.
 
 Every canonical rule invocation owns one shared `RuleCall`; co-outputs share
@@ -257,15 +257,20 @@ Bare `@command` and option-only `@command(repeat=...)` accept output declaration
 then one literal `command` assignment or zero-argument nested `def command()`, then
 return outputs. `declarations.py` parses this without executing the outer body;
 `command_builders.py` binds nested builder inputs/outputs/settings/resources.
-`Resource[int]` is an Annotated integer alias handled separately from config and
+`Resource[T]` is an Annotated alias for int, float, or str quantities handled separately from config and
 excluded from both hashes. `--resources FILE` / `DAG(..., resources=mapping)` applies
 file > call argument > default precedence before interning; unknown entries fail.
 Legacy syntax/hashes remain supported. New Resource requests conflict explicitly
 when deduplicating; legacy-only constraints retain prior interning behavior.
 
 Artifact classes subclass `Node`; outputs are instances of those classes.
-`output(T)` has static return type `T` and remains declaration-only. Decorated
+`outputs(T)` has static return type `T` and remains declaration-only. Decorated
 commands preserve parameter and return types, including tuple outputs. Nested
 builders receive artifact objects and use `.path` for filesystem access.
 Templates and external CommandArgs callbacks retain path rendering. Template
 hashes remain unchanged; nested builders use a new binding identity marker.
+
+Callable commands return templates, rendered once through the same shell-quoting
+path as literal commands. In f-strings, double braces preserve necroflow
+placeholders. Literal shell braces must be doubled in the returned template.
+Callable recipe identities mark these semantics; literal-template hashes stay stable.

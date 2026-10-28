@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from necroflow import Node, Pipeline, command, text_file, output, workflow
+from necroflow import Node, Pipeline, command, text_file, outputs, workflow
 
 
 class RawText(Node):
@@ -24,27 +24,27 @@ class Summary(Node):
 
 @text_file
 def write_tool_config(text: str):
-    tool_config = output(ToolConfig)
+    tool_config = outputs(ToolConfig)
     return tool_config
 
 
 @command
 def import_text(path: str):
-    raw_text = output(RawText)
+    raw_text = outputs(RawText)
     command = "cp {path} {raw_text}"
     return raw_text
 
 
 @command
 def process_text(raw_text: RawText, tool_config: ToolConfig):
-    processed_text = output(ProcessedText)
+    processed_text = outputs(ProcessedText)
     command = "tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}"
     return processed_text
 
 
 @command
 def summarize(processed_text: ProcessedText):
-    summary = output(Summary)
+    summary = outputs(Summary)
     command = "wc -c {processed_text} > {summary}"
     return summary
 

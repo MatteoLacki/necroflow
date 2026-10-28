@@ -16,7 +16,7 @@ import necroflow.cli as cli_core
 from necroflow.planning import plan_execution
 from necroflow.tgf import render_dot
 from pathlib import Path
-from necroflow import Node, Pipeline, DAG, command, output
+from necroflow import Node, Pipeline, DAG, command, outputs
 from necroflow.cli import (
     _materialize_results,
     _graph_payload,
@@ -265,16 +265,16 @@ def test_manifest_values_are_visible_result_paths(tmp_path):
 # ── main() integration ───────────────────────────────────────────────────────
 
 FACTORY_SRC = textwrap.dedent("""\
-    from necroflow import Pipeline, Node, command, output
+    from necroflow import Pipeline, Node, command, outputs
     class A(Node): filename = "a.txt"
     class B(Node): filename = "b.txt"
     @command("touch {a}")
     def make_a(v: str):
-        a = output(A)
+        a = outputs(A)
         return a
     @command("touch {b}")
     def make_b(a: A):
-        b = output(B)
+        b = outputs(B)
         return b
     def factory(P, cfg):
         P.a = make_a(P, v=cfg["v"])
@@ -1656,16 +1656,16 @@ def test_main_execution_summary_counts_parallel_command_time_once(tmp_path):
     """
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import Node, command, output
+        from necroflow import Node, command, outputs
         class A(Node): filename = "a.txt"
         class B(Node): filename = "b.txt"
         @command("sleep 1; touch {a}")
         def make_a(v: str):
-            a = output(A)
+            a = outputs(A)
             return a
         @command("sleep 1; touch {b}")
         def make_b(v: str):
-            b = output(B)
+            b = outputs(B)
             return b
         def factory(P, cfg):
             P.a = make_a(P, v=cfg["v"])
@@ -1770,16 +1770,16 @@ def test_main_keep_going_failure_writes_execution_summary(tmp_path):
     """Failed calls stay in the execution report but never publish partial files."""
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import Pipeline, Node, command, output
+        from necroflow import Pipeline, Node, command, outputs
         class A(Node): filename = "a.txt"
         class B(Node): filename = "b.txt"
         @command("touch {a}; exit 1")
         def fail_a(v: str):
-            a = output(A)
+            a = outputs(A)
             return a
         @command("touch {b}")
         def make_b(v: str):
-            b = output(B)
+            b = outputs(B)
             return b
         def factory(P, cfg):
             P.a = fail_a(P, v=cfg["v"])
@@ -1968,14 +1968,14 @@ def test_subpipeline_labels_are_requestable_from_cli(tmp_path, capsys):
     """The CLI must finish the root and resolve qualified subpipeline requests."""
     factory = tmp_path / "subpipelines.py"
     factory.write_text(textwrap.dedent("""\
-            from necroflow import Node, command, output, workflow
+            from necroflow import Node, command, outputs, workflow
 
             class Result(Node):
                 filename = "result.txt"
 
             @command("touch {result}")
             def build(value: str):
-                result = output(Result)
+                result = outputs(Result)
                 return result
 
             @workflow
@@ -2408,21 +2408,21 @@ def test_explain_leaves_consumers_of_unhashed_parents_undecided(tmp_path, capsys
     """
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import Node, command, output
+        from necroflow import Node, command, outputs
         class A(Node): filename = "a.txt"
         class B(Node): filename = "b.txt"
         class C(Node): filename = "c.txt"
         @command("echo {v} > {a}")
         def make_a(v: str):
-            a = output(A)
+            a = outputs(A)
             return a
         @command("cat {a} > {b}")
         def make_b(a: A):
-            b = output(B)
+            b = outputs(B)
             return b
         @command("cat {b} > {c}")
         def make_c(b: B):
-            c = output(C)
+            c = outputs(C)
             return c
         def factory(P, cfg):
             P.a = make_a(P, v=cfg["v"])
@@ -2547,7 +2547,7 @@ def test_node_json_resources_follow_the_bound_thread_cap(tmp_path):
 
     @command("touch {result}", threads="all")
     def use_all():
-        result = output(Out)
+        result = outputs(Out)
         return result
 
     dag = DAG(tmp_path)

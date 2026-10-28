@@ -5,7 +5,7 @@ import json
 import pytest
 import tomlkit
 
-from necroflow import DAG, Node, Pipeline, command, output, run
+from necroflow import DAG, Node, Pipeline, command, outputs, run
 from necroflow.cli import _provenance_payload, main
 from necroflow.rules import Inputs, Outputs, Command
 
@@ -20,7 +20,7 @@ def _cmd(args):
 
 @command(_cmd)
 def nullable(plugin: str | None = None):
-    out = output(Out)
+    out = outputs(Out)
     return out
 
 

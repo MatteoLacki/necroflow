@@ -9,7 +9,7 @@ from necroflow import (
     Node,
     Pipeline,
     command,
-    output,
+    outputs,
 )
 
 
@@ -560,14 +560,14 @@ def test_workdir_is_reserved_input_output_name():
 
         @command("touch {a}")
         def bad_input(workdir: str):
-            a = output(A)
+            a = outputs(A)
             return a
 
     with pytest.raises(ValueError, match="reserved command placeholder"):
 
         @command("touch {workdir}")
         def bad_output(x: str):
-            workdir = output(A)
+            workdir = outputs(A)
             return workdir
 
 
@@ -577,14 +577,14 @@ def test_constraint_is_reserved_input_output_name():
 
         @command("echo {constraint} > {a}")
         def bad_input(constraint: str):
-            a = output(A)
+            a = outputs(A)
             return a
 
     with pytest.raises(ValueError, match="reserved command placeholder"):
 
         @command("touch {constraint}")
         def bad_output(x: str):
-            constraint = output(A)
+            constraint = outputs(A)
             return constraint
 
 

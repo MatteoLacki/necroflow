@@ -142,11 +142,11 @@ def test_publication_failure_leaves_completed_nodes_cached(tmp_path, monkeypatch
     """Retrying publication reuses successful nodes after a copy error."""
     factory = tmp_path / "pipeline.py"
     factory.write_text(
-        "from necroflow import Node, command, output\n"
+        "from necroflow import Node, command, outputs\n"
         "class Result(Node): filename = 'result.txt'\n"
         "@command('echo result > {out}')\n"
         "def source():\n"
-        "    out = output(Result)\n"
+        "    out = outputs(Result)\n"
         "    return out\n"
         "def build(pipeline, config):\n"
         "    pipeline.result = source(pipeline)\n"

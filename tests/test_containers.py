@@ -22,7 +22,7 @@ from necroflow import (
     Outputs,
     Pipeline,
     command,
-    output,
+    outputs,
 )
 from necroflow.containers import docker_argv
 from necroflow.fingerprints import PROVENANCE_HASH_DOMAIN, canonical_bytes
@@ -45,43 +45,43 @@ class Tree(Node):
 
 @command("printf hello > {text}")
 def host_text():
-    text = output(Text)
+    text = outputs(Text)
     return text
 
 
 @command("{env}:cat {source} > {copy}")
 def docker_copy(source: Text, env: Docker):
-    copy = output(Copy)
+    copy = outputs(Copy)
     return copy
 
 
 @command("cat {source} > {copy}")
 def host_copy_with_env(source: Text, env: Docker):
-    copy = output(Copy)
+    copy = outputs(Copy)
     return copy
 
 
 @command("{label}:cat {source} > {copy}")
 def label_prefix(source: Text, label: str):
-    copy = output(Copy)
+    copy = outputs(Copy)
     return copy
 
 
 @command("cat {source} > {copy}")
 def plain_copy(source: Copy):
-    copy = output(Text)
+    copy = outputs(Text)
     return copy
 
 
 @command("{env}:cat {sources} > {copy}")
 def docker_concat(sources: tuple[Text, ...], env: Docker):
-    copy = output(Copy)
+    copy = outputs(Copy)
     return copy
 
 
 @command("{env}:exit 7")
 def docker_failure(env: Docker):
-    text = output(Text)
+    text = outputs(Text)
     return text
 
 
@@ -91,7 +91,7 @@ def callback_command(args):
 
 @command(callback_command)
 def docker_callback(source: Text, env: Docker):
-    copy = output(Copy)
+    copy = outputs(Copy)
     return copy
 
 
@@ -101,13 +101,13 @@ def host_callback_command(args):
 
 @command(host_callback_command)
 def host_callback(source: Text, env: Docker):
-    copy = output(Copy)
+    copy = outputs(Copy)
     return copy
 
 
 @command(host_callback_command)
 def plain_callback(source: Text):
-    copy = output(Copy)
+    copy = outputs(Copy)
     return copy
 
 
@@ -117,7 +117,7 @@ def empty_callback_command(args):
 
 @command(empty_callback_command)
 def empty_callback(env: Docker):
-    text = output(Text)
+    text = outputs(Text)
     return text
 
 

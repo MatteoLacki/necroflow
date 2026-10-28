@@ -43,7 +43,7 @@ Three deliberate deviations from Snakemake, all forced by necroflow's model:
 
 from pathlib import Path
 
-from necroflow import DAG, Node, Pipeline, command, output
+from necroflow import DAG, Node, Pipeline, command, outputs
 from necroflow.rules import Constraints, Inputs, Outputs, Command
 
 
@@ -136,7 +136,7 @@ class Big(Node):
 
 @command
 def make_raw(tag: str):
-    raw = output(Raw)
+    raw = outputs(Raw)
     command = "head -c 200000 /dev/zero | tr '\\0' 'a' > {raw}"
     return raw
 

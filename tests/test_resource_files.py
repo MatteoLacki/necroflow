@@ -13,12 +13,12 @@ from test_inline_commands import inline
 @pytest.fixture
 def job(tmp_path):
     factory = tmp_path / "workflow.py"
-    factory.write_text("""from necroflow import command, output, Resource, Node
+    factory.write_text("""from necroflow import command, outputs, Resource, Node
 class Result(Node):
     filename = "result.txt"
 @command
 def make(threads: Resource[int] = 1):
-    result = output(Result)
+    result = outputs(Result)
     command = "echo {threads} > {result}"
     return result
 
@@ -126,3 +126,71 @@ def test_mcp_resource_parity(tmp_path, job):
     assert "echo 2" in mcp_server.explain(**kwargs)["calls"][0]["command"]
     mcp_server.outputs(**kwargs)
     mcp_server.doctor(**kwargs)
+
+
+def test_typed_float_and_memory_resources(tmp_path):
+    """Fractional quotas and typed builder values survive overrides without rehashing."""
+    from necroflow import Node, Resource, command, outputs, memory_bytes
+    from necroflow.executor import ResourcePool
+
+    class Result(Node):
+        filename = "result"
+
+    @command
+    def make(
+        gpu: Resource[float] = 0.25,
+        ram: Resource[int] = memory_bytes("16G"),
+        scratch: Resource[str] = "2Gi",
+    ):
+        result = outputs(Result)
+
+        def command():
+            assert isinstance(gpu, float)
+            assert isinstance(ram, int)
+            assert isinstance(scratch, str)
+            return f"echo {gpu} {ram} {scratch} > {result.path}"
+
+        return result
+
+    plain = make(Pipeline(DAG(tmp_path / "plain")))
+    pipeline = Pipeline(
+        DAG(
+            tmp_path / "override",
+            resources={"make": {"gpu": 0.5, "ram": "2Gi", "scratch": "4Gi"}},
+        )
+    )
+    pipeline.result = make(pipeline)
+    call = pipeline.result.rule_call
+    assert call.resources == {"threads": 1, "gpu": 0.5, "ram": 2**31, "scratch": 2**32}
+    assert plain.rule_hash == call.rule_hash
+    assert plain.provenance_hash == call.provenance_hash
+    pipeline.finish()
+    pipeline.dag.require(pipeline.sinks())
+    run(pipeline.dag, resource_caps={"gpu": 0.75})
+    assert pipeline.result.path.read_text().strip() == "0.5 2147483648 4Gi"
+    pool = ResourcePool({"threads": 4, "gpu": 0.75})
+    pool.acquire(call)
+    assert not pool.admits(call)
+    pool.release(call)
+    assert pool.admits(call)
+    assert memory_bytes("16G") == 16_000_000_000
+    assert memory_bytes("16Gi") == 16 * 2**30
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -0.5, 0.0, True])
+def test_invalid_float_resources(value):
+    """Invalid quantities fail at policy construction, before any command runs."""
+    from necroflow.resources import ResourcePolicy
+
+    with pytest.raises(ValueError):
+        ResourcePolicy({"make": {"gpu": value}})
+
+
+def test_fractional_cli_cap():
+    """CLI resource caps preserve fractional values."""
+    from necroflow.cli import _parse_resource_caps
+    from types import SimpleNamespace
+
+    assert _parse_resource_caps(
+        SimpleNamespace(cores="2", constraints=["gpu=0.5"])
+    ) == {"threads": 2, "gpu": 0.5}

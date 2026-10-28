@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import tomlkit
 
-from necroflow import DAG, Pipeline, Node, Resource, command, output, run
+from necroflow import DAG, Pipeline, Node, Resource, command, outputs, run
 from necroflow.rules import Command, Inputs, Outputs, Constraints
 
 
@@ -18,14 +18,14 @@ class Result(Node):
 
 @command
 def inline(text: str = "hello", threads: Resource[int] = 2):
-    result = output(Result)
+    result = outputs(Result)
     command = "printf %s {text} > {result}"
     return result
 
 
 @command(repeat=2)
 def nested(text: str = "hello", threads: Resource[int] = 2):
-    result = output(Result)
+    result = outputs(Result)
 
     def command():
         return f"printf %s {shlex.quote(text)} > {shlex.quote(str(result.path))}"
@@ -37,7 +37,7 @@ def load_rule(tmp_path, body, name="definition"):
     """Load genuine source so declaration source inspection is exercised."""
     path = tmp_path / f"{name}.py"
     path.write_text(
-        "from necroflow import command, output, Resource\n"
+        "from necroflow import command, outputs, Resource\n"
         "from test_inline_commands import Result\n" + body
     )
     spec = importlib.util.spec_from_file_location(name, path)
@@ -116,12 +116,12 @@ def test_new_resource_conflicts_fail(tmp_path):
 @pytest.mark.parametrize(
     "body",
     [
-        '    command = "touch {result}"\n    result = output(Result)\n    return result\n',
-        '    result = output(Result)\n    command = f"touch {result.path}"\n    return result\n',
-        '    result = output(Result)\n    command = "touch {result}"\n    command = "echo no"\n    return result\n',
-        "    result = output(Result)\n    return result\n",
-        '    result = output(Result)\n    def command(x):\n        return "true"\n    return result\n',
-        '    result = output(Result)\n    async def command():\n        return "true"\n    return result\n',
+        '    command = "touch {result}"\n    result = outputs(Result)\n    return result\n',
+        '    result = outputs(Result)\n    command = f"touch {result.path}"\n    return result\n',
+        '    result = outputs(Result)\n    command = "touch {result}"\n    command = "echo no"\n    return result\n',
+        "    result = outputs(Result)\n    return result\n",
+        '    result = outputs(Result)\n    def command(x):\n        return "true"\n    return result\n',
+        '    result = outputs(Result)\n    async def command():\n        return "true"\n    return result\n',
     ],
 )
 def test_invalid_inline_declarations_rejected(tmp_path, body):
@@ -137,13 +137,13 @@ def test_resource_types_and_defaults_checked(tmp_path):
             load_rule(
                 tmp_path,
                 f"@command\ndef bad(threads: Resource[{annotation}] = {default}):\n"
-                '    result = output(Result)\n    command = "touch {result}"\n    return result\n',
+                '    result = outputs(Result)\n    command = "touch {result}"\n    return result\n',
             )
     with pytest.raises(TypeError, match="needs a default"):
         load_rule(
             tmp_path,
             "@command\ndef bad(threads: Resource[int]):\n"
-            '    result = output(Result)\n    command = "touch {result}"\n    return result\n',
+            '    result = outputs(Result)\n    command = "touch {result}"\n    return result\n',
         )
 
 
@@ -152,7 +152,7 @@ def test_nested_resource_binding_and_all_cap(tmp_path):
 
     @command
     def build(label: str, threads: Resource[int] = 1):
-        result = output(Result)
+        result = outputs(Result)
 
         def command():
             return f"echo {threads} {label} > {result.path}"
@@ -178,7 +178,7 @@ def test_nested_undeclared_closure_rejected():
 
         @command
         def bad():
-            result = output(Result)
+            result = outputs(Result)
 
             def command():
                 return f"echo {hidden} > {result.path}"
@@ -193,7 +193,7 @@ def test_nested_inputs_outputs_and_failure_preflight(tmp_path):
     def combine(
         sources: tuple[Result, ...], optional: Result | str | None, label: str = "x"
     ):
-        result = output(Result)
+        result = outputs(Result)
 
         def command():
             assert all(isinstance(path, Result) for path in sources)
@@ -218,7 +218,7 @@ def test_nested_inputs_outputs_and_failure_preflight(tmp_path):
 
     @command
     def invalid():
-        result = output(Result)
+        result = outputs(Result)
 
         def command():
             return None
@@ -246,7 +246,7 @@ def test_legacy_callback_with_command_local(tmp_path):
 
     @command(callback_with_command_local)
     def legacy():
-        result = output(Result)
+        result = outputs(Result)
         return result
 
     node = legacy(Pipeline(DAG(tmp_path)))
@@ -257,7 +257,7 @@ def test_nested_recipe_hash_and_resource_default_independence(tmp_path):
     """Nested source/config edits alter identity; resource defaults do not."""
     body = """@command
 def build(label: str = "a", threads: Resource[int] = DEFAULT):
-    result = output(Result)
+    result = outputs(Result)
     def command():
         return f"echo {label} > {result.path}"
     return result
@@ -285,7 +285,7 @@ def test_scheduler_sees_overridden_resources(tmp_path):
 
     @command
     def allocated(label: str, threads: Resource[int] = 1, ram: Resource[int] = 100):
-        result = output(Result)
+        result = outputs(Result)
         command = "echo {threads} {ram} > {result}"
         return result
 
@@ -338,7 +338,7 @@ def test_conditional_outputs_fail_at_declaration(tmp_path):
             """@command
 def bad(enabled: bool):
     if enabled:
-        result = output(Result)
+        result = outputs(Result)
     command = "touch {result}"
     return result
 """,
@@ -354,8 +354,8 @@ def test_nested_docker_and_multioutput(tmp_path):
 
     @command
     def container(env: Docker, threads: Resource[int] = 2):
-        result = output(Result)
-        other = output(Other)
+        result = outputs(Result)
+        other = outputs(Other)
 
         def command():
             return f"{{env}}:echo {threads} > {result.path}; touch {other.path}"
@@ -377,7 +377,7 @@ def test_builder_runs_only_at_realization_and_retries(tmp_path):
 
     @command(repeat=2)
     def retry():
-        result = output(Result)
+        result = outputs(Result)
 
         def command():
             marker = result.path.parent / "attempted"
@@ -394,3 +394,75 @@ def test_builder_runs_only_at_realization_and_retries(tmp_path):
     pipeline.dag.require(pipeline.sinks())
     run(pipeline.dag)
     assert pipeline.result.path.read_text().strip() == "done"
+
+
+@command
+def returned_template(text: str, threads: Resource[int] = 2):
+    result = outputs(Result)
+
+    def command():
+        options = "{text}" if threads > 1 else "single"
+        return f"printf %s {options} > {{result}}"
+
+    return result
+
+
+def external_template(args):
+    return "printf %s {text} > {result}"
+
+
+def test_callable_templates_quote_values_once(tmp_path):
+    """Both callable forms quote placeholders, including values containing braces."""
+    text = "spaces {literal} $HOME; 'quoted'"
+    external = Command(
+        "external_template", Inputs(text=str), Outputs(result=Result), external_template
+    )
+    pipeline = Pipeline(DAG(tmp_path / "nodes {literal} with spaces"))
+    pipeline.nested = returned_template(pipeline, text)
+    pipeline.external = external(pipeline, text=text)
+    pipeline.finish()
+    pipeline.dag.require(pipeline.sinks())
+    run(pipeline.dag)
+    assert pipeline.nested.path.read_text() == text
+    assert pipeline.external.path.read_text() == text
+
+
+def test_callable_template_literal_shell_braces(tmp_path):
+    """F-string braces preserve placeholders; doubled template braces stay literal."""
+
+    @command
+    def shell_braces(text: str):
+        result = outputs(Result)
+
+        def command():
+            program = "awk"
+            return (
+                f"printf '%s\\n' {{text}} | {program} '{{{{print $1}}}}' > {{result}}"
+            )
+
+        return result
+
+    pipeline = Pipeline(DAG(tmp_path))
+    pipeline.result = shell_braces(pipeline, "first second")
+    pipeline.finish()
+    pipeline.dag.require(pipeline.sinks())
+    run(pipeline.dag)
+    assert pipeline.result.path.read_text() == "first\n"
+
+
+def test_callable_template_unknown_placeholder(tmp_path):
+    """Invalid returned placeholders fail during realization, before execution."""
+
+    @command
+    def typo():
+        result = outputs(Result)
+
+        def command():
+            return "touch {reslt}"
+
+        return result
+
+    node = typo(Pipeline(DAG(tmp_path)))
+    with pytest.raises(ValueError, match="unknown placeholders.*reslt"):
+        node.rule_call.resolve()
+    assert not node.path.exists()

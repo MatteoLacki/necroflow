@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from enum import Enum
 import inspect
+import math
 from pathlib import Path
 
 from necroflow import logger as _logger
@@ -18,6 +19,7 @@ from necroflow.planning import ExecutionPlan, Verdict, plan_execution
 from necroflow.report import RuleCallExecution, count_events
 from necroflow.rule_call import RuleCall
 from necroflow.rules import default_thread_cap
+from necroflow.resources import normalize_resource
 from necroflow.runners import Outcome, Runner, attempt, run_call
 from necroflow.schedulers import Scheduler, fifo_scheduler
 from necroflow.tgf import write_ancestor_tgf
@@ -63,12 +65,12 @@ class ResourcePool:
     its own may still start while nothing else runs, so it cannot stall the run.
     """
 
-    def __init__(self, caps: dict[str, int]):
+    def __init__(self, caps: dict[str, int | float]):
         self.caps = dict(caps)
         self._used = dict.fromkeys(caps, 0)
         self._holders = 0
 
-    def available(self) -> dict[str, int]:
+    def available(self) -> dict[str, int | float]:
         return {name: cap - self._used[name] for name, cap in self.caps.items()}
 
     def free_threads(self) -> int:
@@ -80,6 +82,7 @@ class ResourcePool:
             return True
         return all(
             self._used[name] + amount <= self.caps[name]
+            or math.isclose(self._used[name] + amount, self.caps[name], rel_tol=1e-12)
             for name, amount in self._capped(call)
         )
 
@@ -93,7 +96,7 @@ class ResourcePool:
         for name, amount in self._capped(call):
             self._used[name] -= amount
 
-    def _capped(self, call: RuleCall) -> list[tuple[str, int]]:
+    def _capped(self, call: RuleCall) -> list[tuple[str, int | float]]:
         return [(name, n) for name, n in call.resources.items() if name in self.caps]
 
 
@@ -353,7 +356,7 @@ def _validated_schedule(
     scheduler: Scheduler,
     ready: list[RuleCall],
     remaining: list[RuleCall],
-    available_resources: dict[str, int],
+    available_resources: dict[str, int | float],
 ) -> list[RuleCall]:
     selected = scheduler(ready, remaining, available_resources)
     if not isinstance(selected, list):
@@ -392,7 +395,7 @@ def _dry_run_report(plan: ExecutionPlan) -> dict[str, RuleCallExecution]:
 
 def run(
     dag: DAG,
-    resource_caps: dict[str, int] | None = None,
+    resource_caps: dict[str, int | float] | None = None,
     scheduler: Scheduler | None = None,
     keep_going: bool = False,
     autoclean: bool = False,
@@ -421,7 +424,15 @@ def run(
     scheduler = fifo_scheduler if scheduler is None else scheduler
     _validate_scheduler(scheduler)
     runner = run_call if rule_call_runner is None else rule_call_runner
-    caps = {"threads": default_thread_cap(), **(resource_caps or {})}
+    caps = {
+        name: normalize_resource(name, value)
+        for name, value in {
+            "threads": default_thread_cap(),
+            **(resource_caps or {}),
+        }.items()
+    }
+    if caps["threads"] == "all":
+        caps["threads"] = default_thread_cap()
     dag.bind_thread_cap(caps["threads"])
 
     dag.validate_resources()

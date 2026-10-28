@@ -530,9 +530,14 @@ The complete resource-file rule set is validated after all jobs compile and befo
 execution. Thread caps bind before inspection/planning; changing an all-threads
 cap clears the realized command so the scheduler and command see the same value.
 
-`output(T)` has static return type `T`, where `T` is a Node subclass.
+`outputs(T)` has static return type `T`, where `T` is a Node subclass.
 Command decorators preserve parameters and return types, including tuples.
 Nested builders receive artifact instances and access paths through `.path`;
 templates and external callbacks retain path bindings. Template identities stay
 unchanged; nested-builder identities include an artifact-binding marker.
 Return annotations do not replace output declarations.
+
+Callable commands return templates, rendered once through the same shell-quoting
+path as literal commands. In f-strings, double braces preserve necroflow
+placeholders. Literal shell braces must be doubled in the returned template.
+Callable recipe identities mark these semantics; literal-template hashes stay stable.
