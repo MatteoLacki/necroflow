@@ -18,6 +18,8 @@ Renders saved to:
     /tmp/necroalchemy_dag.txt     — full 3-word DAG
 """
 
+from necroflow import Shell
+
 import sys
 from pathlib import Path
 
@@ -143,7 +145,7 @@ class GrandSummary(Node):
 def make_seed(word: str):
     """Write the input word to a file — the starting point for all transforms."""
     seed = outputs(Seed)
-    command = "sleep $((RANDOM % 3 + 1)) && echo {word} | tee {seed}"
+    Shell("sleep $((RANDOM % 3 + 1)) && echo {word} | tee {seed}")
     return seed
 
 
@@ -151,7 +153,7 @@ def make_seed(word: str):
 def to_upper(seed: Seed):
     """Convert all characters to uppercase."""
     upper = outputs(Upper)
-    command = "sleep $((RANDOM % 3 + 1)) && tr a-z A-Z < {seed} | tee {upper}"
+    Shell("sleep $((RANDOM % 3 + 1)) && tr a-z A-Z < {seed} | tee {upper}")
     return upper
 
 
@@ -159,7 +161,7 @@ def to_upper(seed: Seed):
 def to_lower(seed: Seed):
     """Convert all characters to lowercase."""
     lower = outputs(Lower)
-    command = "sleep $((RANDOM % 3 + 1)) && tr A-Z a-z < {seed} | tee {lower}"
+    Shell("sleep $((RANDOM % 3 + 1)) && tr A-Z a-z < {seed} | tee {lower}")
     return lower
 
 
@@ -167,7 +169,7 @@ def to_lower(seed: Seed):
 def reverse_it(seed: Seed):
     """Reverse the character order of the seed."""
     reversed = outputs(Reversed)
-    command = "sleep $((RANDOM % 3 + 1)) && rev {seed} | tee {reversed}"
+    Shell("sleep $((RANDOM % 3 + 1)) && rev {seed} | tee {reversed}")
     return reversed
 
 
@@ -175,7 +177,7 @@ def reverse_it(seed: Seed):
 def sort_chars(seed: Seed):
     """Extract individual characters and sort them alphabetically."""
     sorted_chars = outputs(SortedChars)
-    command = (
+    Shell(
         "sleep $((RANDOM % 3 + 1)) && grep -o . {seed} | sort | tee " "{sorted_chars}"
     )
     return sorted_chars
@@ -185,7 +187,7 @@ def sort_chars(seed: Seed):
 def encode_rot13(upper: Upper):
     """Apply ROT13 substitution cipher to the uppercased text."""
     rot13 = outputs(Rot13)
-    command = (
+    Shell(
         "sleep $((RANDOM % 3 + 1)) && tr A-Za-z N-ZA-Mn-za-m < {upper} | tee " "{rot13}"
     )
     return rot13
@@ -195,7 +197,7 @@ def encode_rot13(upper: Upper):
 def repeat_word(lower: Lower, n: int):
     """Repeat the lowercased word n times, one per line."""
     repeated = outputs(Repeated)
-    command = (
+    Shell(
         "sleep $((RANDOM % 3 + 1)) && for _ in $(seq {n}); do cat {lower}; "
         "done | tee {repeated}"
     )
@@ -206,7 +208,7 @@ def repeat_word(lower: Lower, n: int):
 def merge_cases(upper: Upper, lower: Lower):
     """Paste uppercase and lowercase versions side by side (diamond convergence)."""
     merged = outputs(Merged)
-    command = "sleep $((RANDOM % 3 + 1)) && paste {upper} {lower} | tee {merged}"
+    Shell("sleep $((RANDOM % 3 + 1)) && paste {upper} {lower} | tee {merged}")
     return merged
 
 
@@ -214,7 +216,7 @@ def merge_cases(upper: Upper, lower: Lower):
 def unique_chars(sorted_chars: SortedChars):
     """Deduplicate the sorted character list to get the unique character set."""
     unique_chars = outputs(UniqueChars)
-    command = "sleep $((RANDOM % 3 + 1)) && uniq {sorted_chars} | tee {unique_chars}"
+    Shell("sleep $((RANDOM % 3 + 1)) && uniq {sorted_chars} | tee {unique_chars}")
     return unique_chars
 
 
@@ -222,7 +224,7 @@ def unique_chars(sorted_chars: SortedChars):
 def combine_all(merged: Merged, rot13: Rot13, repeated: Repeated, reversed: Reversed):
     """Concatenate all four transform outputs into one blob (4-way fan-in)."""
     combined = outputs(Combined)
-    command = (
+    Shell(
         "sleep $((RANDOM % 3 + 1)) && cat {merged} {rot13} {repeated} "
         "{reversed} | tee {combined}"
     )
@@ -234,7 +236,7 @@ def make_stats(combined: Combined, unique_chars: UniqueChars):
     """Compute byte count of combined blob and unique-character count (co-outputs)."""
     stats = outputs(Stats)
     audit = outputs(Audit)
-    command = (
+    Shell(
         "sleep $((RANDOM % 3 + 1)) && wc -c {combined} | tee {stats} && wc -l "
         "{unique_chars} | tee {audit}"
     )
@@ -245,7 +247,7 @@ def make_stats(combined: Combined, unique_chars: UniqueChars):
 def shout_rot(rot13: Rot13):
     """Re-uppercase the ROT13 output for maximum shouting energy."""
     upper_rot = outputs(UpperRot)
-    command = "sleep $((RANDOM % 3 + 1)) && tr a-z A-Z < {rot13} | tee {upper_rot}"
+    Shell("sleep $((RANDOM % 3 + 1)) && tr a-z A-Z < {rot13} | tee {upper_rot}")
     return upper_rot
 
 
@@ -253,7 +255,7 @@ def shout_rot(rot13: Rot13):
 def sort_combined(combined: Combined):
     """Lexicographically sort all lines in the combined blob."""
     sorted_combined = outputs(SortedCombined)
-    command = "sleep $((RANDOM % 3 + 1)) && sort {combined} | tee {sorted_combined}"
+    Shell("sleep $((RANDOM % 3 + 1)) && sort {combined} | tee {sorted_combined}")
     return sorted_combined
 
 
@@ -261,7 +263,7 @@ def sort_combined(combined: Combined):
 def count_lines(combined: Combined):
     """Count the total number of lines in the combined blob."""
     line_counts = outputs(LineCounts)
-    command = "sleep $((RANDOM % 3 + 1)) && wc -l < {combined} | tee {line_counts}"
+    Shell("sleep $((RANDOM % 3 + 1)) && wc -l < {combined} | tee {line_counts}")
     return line_counts
 
 
@@ -269,7 +271,7 @@ def count_lines(combined: Combined):
 def final_mix(upper_rot: UpperRot, sorted_combined: SortedCombined):
     """Concatenate shouted ROT13 and sorted blob into the final mix."""
     final_mix = outputs(FinalMix)
-    command = (
+    Shell(
         "sleep $((RANDOM % 3 + 1)) && cat {upper_rot} {sorted_combined} | tee "
         "{final_mix}"
     )
@@ -280,7 +282,7 @@ def final_mix(upper_rot: UpperRot, sorted_combined: SortedCombined):
 def grand_summary(stats: Stats, line_counts: LineCounts, final_mix: FinalMix):
     """Assemble stats, line counts, and final mix into the grand summary."""
     grand_summary = outputs(GrandSummary)
-    command = (
+    Shell(
         "sleep $((RANDOM % 3 + 1)) && cat {stats} {line_counts} {final_mix} | "
         "tee {grand_summary}"
     )

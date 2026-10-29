@@ -1,5 +1,7 @@
 """The declaration name changes without breaking old imports or identities."""
 
+from necroflow import Shell
+
 from necroflow import Command, DAG, Pipeline, Node, command, outputs
 from necroflow.rules import Rule, Inputs, Outputs
 
@@ -11,7 +13,7 @@ class Result(Node):
 @command
 def make():
     result = outputs(Result)
-    command = "touch {result}"
+    Shell("touch {result}")
     return result
 
 
@@ -31,6 +33,8 @@ def test_legacy_alias_preserves_identity_and_interning(tmp_path):
     a = old(pipeline)
     b = new(pipeline)
     c = make(pipeline)
-    assert a is b is c
-    assert a.rule_hash == b.rule_hash == c.rule_hash
-    assert a.provenance_hash == b.provenance_hash == c.provenance_hash
+    assert a is b
+    assert c is make(pipeline)
+    assert c.rule_hash != a.rule_hash
+    assert a.rule_hash == b.rule_hash
+    assert a.provenance_hash == b.provenance_hash

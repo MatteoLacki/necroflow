@@ -8,7 +8,7 @@ import textwrap
 from dataclasses import dataclass
 from typing import Any, cast, get_args
 
-from necroflow.command_builders import NestedCommand
+from necroflow.construction import Executable
 from necroflow.resources import is_resource, resource_value
 
 
@@ -131,16 +131,29 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
             f"rule {rule_name!r}: declaration must end with return output_name"
         )
 
-    command_node = None
     if inline:
-        if len(body) < 3:
-            raise ValueError(
-                f"rule {rule_name!r}: declare outputs, command, then return"
+        if (
+            inspect.iscoroutinefunction(fn)
+            or inspect.isgeneratorfunction(fn)
+            or inspect.isasyncgenfunction(fn)
+        ):
+            raise TypeError(
+                "command declarations must be synchronous non-generator functions"
             )
-        command_node = body[-2]
-        body = [*body[:-2], body[-1]]
+        captured = inspect.getclosurevars(fn).nonlocals
+        hidden = {
+            name
+            for name, value in captured.items()
+            if not _is_nodetype(value) and value is not outputs
+        }
+        if hidden:
+            raise TypeError(
+                f"command captures undeclared closure values: {sorted(hidden)}"
+            )
+    groups = []
+    statements = body[:-1]
     declarations = {}
-    for stmt in body[:-1]:
+    for position, stmt in enumerate(statements):
         if not (
             isinstance(stmt, ast.Assign)
             and len(stmt.targets) == 1
@@ -149,6 +162,19 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
             and isinstance(stmt.value.func, ast.Name)
             and namespace.get(stmt.value.func.id) is outputs
         ):
+            if inline and declarations:
+                # Remaining statements are ordinary Python, but outputs stay fixed.
+                if any(
+                    isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Name)
+                    and namespace.get(n.func.id) is outputs
+                    for remaining in statements[position:]
+                    for n in ast.walk(remaining)
+                ):
+                    raise ValueError(
+                        "outputs() declarations must be an unconditional top-level prefix"
+                    )
+                break
             raise ValueError(
                 f"rule {rule_name!r}: body may contain only "
                 "name = outputs(Node) declarations before the final return"
@@ -166,6 +192,7 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
                 f"rule {rule_name!r}: outputs() requires one name per positional Node; "
                 "use name = outputs(Type) or a, b = outputs(A, B)"
             )
+        groups.append(tuple(target.id for target in targets))
         for target_name, type_expr in zip(targets, stmt.value.args):
             if not isinstance(type_expr, ast.Name):
                 raise ValueError(
@@ -219,35 +246,17 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
         raise ValueError(f"rule {rule_name!r}: " + "; ".join(details))
 
     outputs_specs = {name: declarations[name] for name in returned_names}
-    if inline and "command" in {*inputs_specs, *outputs_specs, *resources}:
-        raise ValueError(
-            f"rule {rule_name!r}: command is reserved in inline declarations"
-        )
     if inline and (
         set(inputs_specs) & set(outputs_specs) or set(resources) & set(outputs_specs)
     ):
         raise ValueError(f"rule {rule_name!r}: input/resource and output names overlap")
     cmd = None
     if inline:
-        if (
-            isinstance(command_node, ast.Assign)
-            and len(command_node.targets) == 1
-            and isinstance(command_node.targets[0], ast.Name)
-            and command_node.targets[0].id == "command"
-            and isinstance(command_node.value, ast.Constant)
-            and isinstance(command_node.value.value, str)
-        ):
-            cmd = command_node.value.value
-        elif (
-            isinstance(command_node, ast.FunctionDef) and command_node.name == "command"
-        ):
-            cmd = NestedCommand.create(
-                fn, command_node, [*inputs_specs, *resources, *outputs_specs]
-            )
-        else:
-            raise ValueError(
-                f"rule {rule_name!r}: command must be a literal string or zero-argument def command() after outputs"
-            )
+        # Hash executable logic, not defaults/decorators or a resource-dependent template.
+        tree = ast.dump(
+            ast.Module(body=body, type_ignores=[]), include_attributes=False
+        )
+        cmd = Executable(fn, tuple(groups), tree)
     return Declaration(
         rule_name, inputs_specs, outputs_specs, resources, resource_types, info, cmd
     )

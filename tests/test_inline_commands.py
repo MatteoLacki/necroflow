@@ -1,5 +1,7 @@
 """Inline declarations preserve identity and defer command execution."""
 
+from necroflow import Shell
+
 import importlib.util
 import shlex
 import sys
@@ -19,7 +21,7 @@ class Result(Node):
 @command
 def inline(text: str = "hello", threads: Resource[int] = 2):
     result = outputs(Result)
-    command = "printf %s {text} > {result}"
+    Shell("printf %s {text} > {result}")
     return result
 
 
@@ -27,8 +29,10 @@ def inline(text: str = "hello", threads: Resource[int] = 2):
 def nested(text: str = "hello", threads: Resource[int] = 2):
     result = outputs(Result)
 
-    def command():
+    def build_command():
         return f"printf %s {shlex.quote(text)} > {shlex.quote(str(result.path))}"
+
+    Shell(build_command())
 
     return result
 
@@ -37,7 +41,7 @@ def load_rule(tmp_path, body, name="definition"):
     """Load genuine source so declaration source inspection is exercised."""
     path = tmp_path / f"{name}.py"
     path.write_text(
-        "from necroflow import command, outputs, Resource\n"
+        "from necroflow import command, outputs, Resource, Shell\n"
         "from test_inline_commands import Result\n" + body
     )
     spec = importlib.util.spec_from_file_location(name, path)
@@ -47,8 +51,8 @@ def load_rule(tmp_path, body, name="definition"):
     return module
 
 
-def test_inline_template_matches_legacy_identity(tmp_path):
-    """Resource annotation/defaults never enter either hash; templates stay identical."""
+def test_executable_recipe_has_distinct_identity(tmp_path):
+    """Executing declaration bodies has its own recipe format, distinct from templates."""
     legacy = Command(
         "inline",
         Inputs(text=str),
@@ -59,8 +63,8 @@ def test_inline_template_matches_legacy_identity(tmp_path):
     )
     a = inline(Pipeline(DAG(tmp_path / "a")), threads=4)
     b = legacy(Pipeline(DAG(tmp_path / "b")))
-    assert a.rule_hash == b.rule_hash
-    assert a.provenance_hash == b.provenance_hash
+    assert a.rule_hash != b.rule_hash
+    assert a.provenance_hash != b.provenance_hash
     assert a.config == {"text": "hello"}
     assert a.rule_call.resources == {"threads": 4}
     assert inline.constraints == {"threads": 2}
@@ -127,7 +131,8 @@ def test_new_resource_conflicts_fail(tmp_path):
 def test_invalid_inline_declarations_rejected(tmp_path, body):
     """Malformed inline declarations fail at import, without running their bodies."""
     with pytest.raises((ValueError, TypeError)):
-        load_rule(tmp_path, "@command\ndef bad():\n" + body)
+        rule = load_rule(tmp_path, "@command\ndef bad():\n" + body).bad
+        rule(Pipeline(DAG(tmp_path)))
 
 
 def test_resource_types_and_defaults_checked(tmp_path):
@@ -142,33 +147,37 @@ def test_resource_types_and_defaults_checked(tmp_path):
     with pytest.raises(TypeError, match="needs a default"):
         load_rule(
             tmp_path,
-            "@command\ndef bad(threads: Resource[int]):\n"
-            '    result = outputs(Result)\n    command = "touch {result}"\n    return result\n',
+            'from necroflow import Shell\n@command\ndef bad(threads: Resource[int]):\n    result = outputs(Result)\n    Shell("touch {result}")\n    return result\n',
         )
 
 
 def test_nested_resource_binding_and_all_cap(tmp_path):
-    """Builder scopes remain per-call and refresh when all-threads cap changes."""
+    """Bodies see final resource overrides; execution caps cannot replay their branches."""
 
     @command
     def build(label: str, threads: Resource[int] = 1):
         result = outputs(Result)
 
-        def command():
+        def build_command():
             return f"echo {threads} {label} > {result.path}"
+
+        Shell(build_command())
 
         return result
 
-    pipeline = Pipeline(DAG(tmp_path, resources={"build": {"threads": "all"}}))
+    pipeline = Pipeline(DAG(tmp_path, resources={"build": {"threads": 3}}))
     a = build(pipeline, label="a").rule_call
     b = build(pipeline, label="b").rule_call
-    pipeline.dag.bind_thread_cap(3)
     assert "echo 3 a" in a.resolve()
     assert "echo 3 b" in b.resolve()
-    before = a.provenance_hash
     pipeline.dag.bind_thread_cap(7)
-    assert "echo 7 a" in a.resolve()
-    assert a.provenance_hash == before
+    assert "echo 3 a" in a.resolve()
+    unresolved = Pipeline(
+        DAG(tmp_path / "all", resources={"build": {"threads": "all"}})
+    )
+    with pytest.raises(ValueError, match="concrete threads"):
+        build(unresolved, label="a")
+    assert not unresolved.dag.calls
 
 
 def test_nested_undeclared_closure_rejected():
@@ -180,8 +189,10 @@ def test_nested_undeclared_closure_rejected():
         def bad():
             result = outputs(Result)
 
-            def command():
+            def build_command():
                 return f"echo {hidden} > {result.path}"
+
+            Shell(build_command())
 
             return result
 
@@ -195,7 +206,7 @@ def test_nested_inputs_outputs_and_failure_preflight(tmp_path):
     ):
         result = outputs(Result)
 
-        def command():
+        def build_command():
             assert all(isinstance(path, Result) for path in sources)
             assert optional is None
             return (
@@ -204,6 +215,8 @@ def test_nested_inputs_outputs_and_failure_preflight(tmp_path):
                 + " > "
                 + shlex.quote(str(result.path))
             )
+
+        Shell(build_command())
 
         return result
 
@@ -220,20 +233,18 @@ def test_nested_inputs_outputs_and_failure_preflight(tmp_path):
     def invalid():
         result = outputs(Result)
 
-        def command():
+        def build_command():
             return None
+
+        Shell(build_command())
 
         return result
 
     other = Pipeline(DAG(tmp_path / "invalid"))
-    other.result = invalid(other)
-    other.finish()
-    other.dag.require(other.sinks())
-    called = []
-    with pytest.raises(ValueError, match="non-empty shell string"):
-        run(other.dag, rule_call_runner=lambda *args: called.append(args))
-    assert not called
-    assert not other.result.path.exists()
+    with pytest.raises(TypeError, match="non-empty shell string"):
+        invalid(other)
+    assert not other.dag.calls
+    assert not other.dag.nodes_dir.exists()
 
 
 def callback_with_command_local(args):
@@ -255,13 +266,7 @@ def test_legacy_callback_with_command_local(tmp_path):
 
 def test_nested_recipe_hash_and_resource_default_independence(tmp_path):
     """Nested source/config edits alter identity; resource defaults do not."""
-    body = """@command
-def build(label: str = "a", threads: Resource[int] = DEFAULT):
-    result = outputs(Result)
-    def command():
-        return f"echo {label} > {result.path}"
-    return result
-"""
+    body = 'from necroflow import Shell\n@command\ndef build(label: str = "a", threads: Resource[int] = DEFAULT):\n    result = outputs(Result)\n    def build_command():\n        return f"echo {label} > {result.path}"\n    Shell(build_command())\n    return result\n'
     a = load_rule(tmp_path, body.replace("DEFAULT", "2"), "version_a").build
     b = load_rule(tmp_path, body.replace("DEFAULT", "7"), "version_b").build
     c = load_rule(
@@ -286,7 +291,7 @@ def test_scheduler_sees_overridden_resources(tmp_path):
     @command
     def allocated(label: str, threads: Resource[int] = 1, ram: Resource[int] = 100):
         result = outputs(Result)
-        command = "echo {threads} {ram} > {result}"
+        Shell("echo {threads} {ram} > {result}")
         return result
 
     pipeline = Pipeline(
@@ -335,13 +340,7 @@ def test_conditional_outputs_fail_at_declaration(tmp_path):
     with pytest.raises(ValueError, match="output"):
         load_rule(
             tmp_path,
-            """@command
-def bad(enabled: bool):
-    if enabled:
-        result = outputs(Result)
-    command = "touch {result}"
-    return result
-""",
+            'from necroflow import Shell\n@command\ndef bad(enabled: bool):\n    if enabled:\n        result = outputs(Result)\n    Shell("touch {result}")\n    return result\n',
         )
 
 
@@ -357,8 +356,10 @@ def test_nested_docker_and_multioutput(tmp_path):
         result = outputs(Result)
         other = outputs(Other)
 
-        def command():
+        def build_command():
             return f"{{env}}:echo {threads} > {result.path}; touch {other.path}"
+
+        Shell(build_command())
 
         return result, other
 
@@ -379,9 +380,11 @@ def test_builder_runs_only_at_realization_and_retries(tmp_path):
     def retry():
         result = outputs(Result)
 
-        def command():
+        def build_command():
             marker = result.path.parent / "attempted"
             return f"test -e {marker} && echo done > {result.path} || (touch {marker}; exit 1)"
+
+        Shell(build_command())
 
         return result
 
@@ -400,9 +403,11 @@ def test_builder_runs_only_at_realization_and_retries(tmp_path):
 def returned_template(text: str, threads: Resource[int] = 2):
     result = outputs(Result)
 
-    def command():
+    def build_command():
         options = "{text}" if threads > 1 else "single"
         return f"printf %s {options} > {{result}}"
+
+    Shell(build_command())
 
     return result
 
@@ -434,11 +439,13 @@ def test_callable_template_literal_shell_braces(tmp_path):
     def shell_braces(text: str):
         result = outputs(Result)
 
-        def command():
+        def build_command():
             program = "awk"
             return (
                 f"printf '%s\\n' {{text}} | {program} '{{{{print $1}}}}' > {{result}}"
             )
+
+        Shell(build_command())
 
         return result
 
@@ -457,12 +464,14 @@ def test_callable_template_unknown_placeholder(tmp_path):
     def typo():
         result = outputs(Result)
 
-        def command():
+        def build_command():
             return "touch {reslt}"
+
+        Shell(build_command())
 
         return result
 
-    node = typo(Pipeline(DAG(tmp_path)))
+    pipeline = Pipeline(DAG(tmp_path))
     with pytest.raises(ValueError, match="unknown placeholders.*reslt"):
-        node.rule_call.resolve()
-    assert not node.path.exists()
+        typo(pipeline)
+    assert not pipeline.dag.calls

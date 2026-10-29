@@ -29,6 +29,12 @@ from necroflow.fingerprints import validate_command_callback
 from necroflow.workflow import _active_pipeline
 from necroflow.declarations import parse_declaration, is_inline_declaration
 from necroflow.resources import resource_value
+from necroflow.construction import (
+    Executable,
+    Construction,
+    _current_build,
+    current_build,
+)
 
 BUILTIN_COMMAND_PLACEHOLDERS = {"workdir", "constraint"}
 
@@ -315,12 +321,11 @@ def outputs(*node_types: type[Node]) -> tuple[Node, ...]: ...
 def outputs(*node_types: type[Node]) -> Node | tuple[Node, ...]:
     """Declare one artifact or unpack several artifacts in a command body.
 
-    The decorator parses these calls without executing them. A single type
-    returns that artifact type; multiple types return a tuple in the same order.
+    The decorator analyses names/types once. During construction this retrieves
+    the corresponding typed artifacts. One type returns one artifact; multiple
+    types return a tuple in the same order.
     """
-    raise RuntimeError(
-        "outputs() is declaration-only; use it inside a decorated rule declaration"
-    )
+    return current_build().outputs(node_types)
 
 
 class Command(Generic[_Params, _ReturnT]):
@@ -409,7 +414,9 @@ class Command(Generic[_Params, _ReturnT]):
             )
         self.docker_inputs = docker_input_names(inputs.specs)
         container_input = None
-        if callable(command):
+        if isinstance(command, Executable):
+            pass
+        elif callable(command):
             validate_command_callback(command)
         elif command is not None:
             self._validate_command(name, inputs, outputs, command, self.constraints)
@@ -419,7 +426,8 @@ class Command(Generic[_Params, _ReturnT]):
         # Callbacks may select a Docker input only once they run, so any
         # callback with a Docker input must carry the container policy.
         self.container_capable = container_input is not None or bool(
-            callable(command) and self.docker_inputs
+            (callable(command) or isinstance(command, Executable))
+            and self.docker_inputs
         )
 
     @staticmethod
@@ -698,6 +706,7 @@ class Command(Generic[_Params, _ReturnT]):
             self.command,
             self.outputs.specs,
             resource_requests=resource_requests,
+            intern=not isinstance(self.command, Executable),
         )
 
     def _shape_outputs(self, nodes: list[Node]) -> _ReturnT:
@@ -721,6 +730,10 @@ class Command(Generic[_Params, _ReturnT]):
         """Compile using an explicit Pipeline or the active workflow context."""
         from necroflow.pipeline import Pipeline
 
+        if _current_build.get() is not None:
+            raise RuntimeError(
+                "commands cannot be called inside command declarations; compose them in a workflow"
+            )
         if args and isinstance(args[0], Pipeline):
             pipeline, args = args[0], args[1:]
         else:
@@ -744,7 +757,34 @@ class Command(Generic[_Params, _ReturnT]):
             }
         )
         resource_requests = pipeline.dag.resource_requests(self, resource_requests)
+        if (
+            isinstance(self.command, Executable)
+            and resource_requests.get("threads") == "all"
+        ):
+            raise ValueError(
+                "executable commands require concrete threads; replace 'all' with an integer"
+            )
         nodes = self._compile_outputs(pipeline, args, config, resource_requests)
+        if isinstance(self.command, Executable):
+            call = nodes[0].rule_call
+            execution_bound = inspect.BoundArguments(
+                self._signature,
+                {
+                    **bound,
+                    **{
+                        name: resource_requests[name] for name in self.resource_defaults
+                    },
+                },
+            )
+            call.command = Construction(self.command, call).execute(execution_bound)
+            container, template = split_prefix(call.command, self.docker_inputs)
+            if not template.strip():
+                raise ValueError("Shell container command body is empty")
+            self._validate_command(
+                self.__name__, self.inputs, self.outputs, template, resource_requests
+            )
+            canonical = pipeline.dag.intern(call)
+            nodes = [canonical.output_nodes[name] for name in self.outputs.specs]
         return self._shape_outputs(nodes)
 
 

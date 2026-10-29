@@ -99,6 +99,8 @@ class Node:
         command,
         outputs_specs: dict,
         resource_requests: dict | None = None,
+        *,
+        intern: bool = True,
     ) -> list[Node]:
         shellpath = pipeline.shellpath if command is not None else None
         call = RuleCall(
@@ -147,6 +149,8 @@ class Node:
             _check_path_limits(node.path)
         all_outputs: dict[str, Node] = {n.output_name: n for n in nodes}
         call.output_nodes = all_outputs
+        if not intern:
+            return nodes
         canonical = pipeline.dag.intern(call)
         return [canonical.output_nodes[name] for name in outputs_specs]
 

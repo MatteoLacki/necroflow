@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from necroflow import Shell
+
 import json
 from pathlib import Path
 
@@ -31,7 +33,7 @@ def write_tool_config(text: str):
 @command
 def import_text(path: str):
     raw_text = outputs(RawText)
-    command = "cp {path} {raw_text}"
+    Shell("cp {path} {raw_text}")
     return raw_text
 
 
@@ -40,14 +42,14 @@ def process_text(
     raw_text: RawText, tool_config: ToolConfig, threads: Resource[int] = 1
 ):
     processed_text = outputs(ProcessedText)
-    command = "tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}"
+    Shell("tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}")
     return processed_text
 
 
 @command
 def summarize(processed_text: ProcessedText):
     summary = outputs(Summary)
-    command = "wc -c {processed_text} > {summary}"
+    Shell("wc -c {processed_text} > {summary}")
     return summary
 
 

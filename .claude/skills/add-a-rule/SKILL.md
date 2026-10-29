@@ -10,26 +10,28 @@ Full reference: `docs/rules.md`, `docs/generated-config-files.md`, `src/necroflo
 ## Shell command rules
 
 ```python
-from necroflow import command, outputs
+from necroflow import command, outputs, Shell, Resource, memory_bytes
 
-@command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4, ram="8Gi")
-def align(fastq: Fastq, ref: str):
+@command
+def align(fastq: Fastq, ref: str, threads: Resource[int] = 4,
+          ram: Resource[int] = memory_bytes("8Gi")):
     """Align reads to a reference genome with BWA-MEM."""
     bam = outputs(Bam)
     log = outputs(Log)
+    Shell("bwa mem -t {threads} {ref} {fastq} > {bam} 2> {log}")
     return bam, log
 ```
 
-- First decorator argument = command template; remaining keywords = resource constraints.
-- Function parameters: Node annotations are positional node inputs; plain types
-  (`str`, `int`, unions) are config keywords.
+- Bare @command executes the body during construction; register exactly one Shell.
+- Function parameters follow ordinary Python binding; Node annotations describe
+  dependencies, plain types describe config, and Resource[T] describes execution quantities.
 - Outputs use real local assignments: `name = outputs(Node)`. Return every
   declared name exactly once, using a tuple for multiple outputs. The docstring becomes
   `node.info`.
 - Call the decorated name directly: `bam, log = align(fastq_node, ref="hg38")`.
 - There is no registry or explicit shell-rule constructor.
 
-## Command placeholders — validated at declaration
+## Command placeholders — validated during construction
 
 Allowed: declared input names, declared output names, and built-ins:
 
@@ -40,7 +42,7 @@ Allowed: declared input names, declared output names, and built-ins:
 - Double literal shell braces: `{{left,right}}`. Bash syntax needs an explicit
   `shellpath="/bin/bash"` or `--shellpath`.
 
-An undeclared placeholder fails while the module is imported.
+An undeclared Shell placeholder fails when its command is called, before execution.
 
 ## Reserved names — checked at declaration
 
@@ -53,8 +55,8 @@ input/output, or the constraint.
 
 ## Rules of the game
 
-- Generated input/output paths are shell-quoted for string commands. List commands bypass
-  the shell.
+- Generated input/output paths are shell-quoted by the template renderer. Argv-list
+  commands are unsupported.
 - The command must write every output; exit 0 with a missing output is a failure.
 - Constraints are scheduling metadata and do not affect fingerprints. `repeat=N` is
   compatibility metadata only.

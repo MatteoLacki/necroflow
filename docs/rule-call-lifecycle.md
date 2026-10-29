@@ -513,31 +513,35 @@ Identity, paths, interning, and RuleCall order are eager. Cache classification, 
 
 [Previous: Rules and Typed Outputs](rules.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)
 
-## Inline command and resource compilation
+## Executable Shell construction
 
-`declarations.parse_declaration` separates ordinary inputs, Resource parameters,
-outputs, and command definition before constructing a Command. Inline bodies contain
-output declarations, one literal command or nested builder, and the output return.
-The body never executes to discover outputs. Nested builders are source-backed
-adapters that bind runtime paths/settings/resources at command realization.
+Bare `@command` analyses a fixed prefix of `outputs(...)` assignments and the
+input/config/resource signature. Its original function executes once per user
+call during graph construction. `construction.py` provides a ContextVar-backed
+Construction and public Shell; no AST-generated closures remain.
 
-Resource parameters are omitted from rule-hash input contracts and invocation
-config/input values. Defaults are expanded into a separate call resource request;
-DAG resource-file policy overrides it before `DAG.intern`. Neither policy contents
-nor effective resource values enter identity. New Resource calls with conflicting
-requests fail at interning; legacy-only constraint interning stays compatible.
-The complete resource-file rule set is validated after all jobs compile and before
-execution. Thread caps bind before inspection/planning; changing an all-threads
-cap clears the realized command so the scheduler and command see the same value.
+Validate bindings and apply resource overrides before construction. Compute source
+recipe identity and final artifact paths from the fixed schema/input lineage;
+create an unregistered RuleCall. outputs() retrieves precreated typed artifacts.
+Shell(template) registers exactly one nonempty template. Validate its Docker prefix,
+placeholders, and the exact returned artifacts before DAG interning. Always reset
+the construction context in finally. Commands inside command bodies are rejected;
+composition belongs in workflows. Repeated calls execute bodies again but intern
+canonical artifacts. Failed bodies leave no DAG call or framework-created files.
 
-`outputs(T)` has static return type `T`, where `T` is a Node subclass.
-Command decorators preserve parameters and return types, including tuples.
-Nested builders receive artifact instances and access paths through `.path`;
-templates and external callbacks retain path bindings. Template identities stay
-unchanged; nested-builder identities include an artifact-binding marker.
-Return annotations do not replace output declarations.
+Source body AST and Python identity define the versioned construction recipe.
+Resource defaults/values and the constructed template are excluded from identity;
+ordinary config remains hashed. Resource branches must preserve semantic results
+and output schema. Resource[int/float/str] values resolve before body execution;
+float requests/caps and memory_bytes are supported. Executable declarations reject
+threads="all"; use a concrete integer. Caps cannot replay construction decisions.
 
-Callable commands return templates, rendered once through the same shell-quoting
-path as literal commands. In f-strings, double braces preserve necroflow
-placeholders. Literal shell braces must be doubled in the returned template.
-Callable recipe identities mark these semantics; literal-template hashes stay stable.
+Templates render once with shell quoting. F-string doubled braces preserve
+placeholders; literal shell braces must be doubled in the resulting template.
+Artifact arguments stay typed; .path is available without implying file existence.
+Inspection also executes bodies: prints go to the Python process, not subprocess
+logs. Source hashing does not discover arbitrary helper/global/environment state.
+
+Existing dynamic factories, external CommandArgs callbacks, and text/symlink
+materializers retain their separate lifecycle and identities. Old inline command
+assignments/nested command functions are replaced by Shell registration.

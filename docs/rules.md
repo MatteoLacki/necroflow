@@ -2,7 +2,7 @@
 
 [Previous: Config Validation](config-validation.md) | [README](../README.md) | [Next: Command-Call Lifecycle](rule-call-lifecycle.md)
 
-The primary API is the explicit factory form. Factory rules require a stable `name=` and may include `doc=`; `Inputs` and `Outputs` preserve declaration order.
+The primary API is executable `@command` declarations with `Shell`. The explicit factory form is also available. Factory rules require a stable `name=` and may include `doc=`; `Inputs` and `Outputs` preserve declaration order.
 
 ```python
 run_sage = command(
@@ -15,7 +15,7 @@ run_sage = command(
 )
 ```
 
-The decorator form below remains supported as syntactic sugar.
+The decorator form executes ordinary Python during graph construction.
 
 For a decorated rule, the function signature is the complete input schema.
 Every parameter must have a type annotation: Node dependencies use a
@@ -32,46 +32,51 @@ outputs are declared only with `outputs(ConcreteNode)`.
 A rule can keep its command inside its declaration:
 
 ```python
+from necroflow import Shell
 from necroflow import Resource, command, outputs
 
 @command
 def align(reads: Fastq, threads: Resource[int] = 4):
     bam = outputs(Bam)
-    command = "align -t {threads} {reads} > {bam}"
+    Shell("align -t {threads} {reads} > {bam}")
     return bam
 ```
 
-Declare all outputs first, then exactly one command, then return the outputs.
-A string command must be a literal (adjacent literals are allowed); placeholders
-use the existing shell-quoting rules, not Python expressions. Equivalent templates
-moved from the decorator into the body retain their existing hashes. Use
-`@command(repeat=2)` when declaration options are needed.
-
-For computed commands, define a zero-argument nested function in the same slot:
+Declare fixed outputs first, then execute ordinary Python and register exactly
+one `Shell(template)`. Return only the declared artifacts. Use
+`@command(repeat=2)` when execution options are needed.
 
 ```python
 @command
 def align(reads: Fastq, threads: Resource[int] = 4):
     bam = outputs(Bam)
-
-    def command():
-        options = "-t {threads}" if threads > 1 else ""
-        return f"align {options} {{reads}} > {{bam}}"
-
+    options = "-t {threads}" if threads > 1 else ""
+    Shell(f"align {options} {{reads}} > {{bam}}")
     return bam
 ```
 
-The outer declaration is parsed, never executed. Nested builders run during command
-realization, before the external command starts. Inputs and outputs are instances of their declared Node subclasses; use
-`.path` for filesystem access. Variadic inputs are tuples of artifacts. Mixed values and scalar settings retain
-their values, and resources retain their declared types (except the resolved all-threads policy). Returned strings are templates: the same renderer substitutes and shell-quotes
-placeholders for both literal and callable commands.
-They may use module imports/helpers, but cannot capture unrelated outer closure
-values. They must be synchronous, non-generator, undecorated functions returning
-a nonempty template string. Their canonical source AST and Python version participate
-in recipe identity; rendered paths and captured resource values do not.
-Existing external `CommandArgs` callbacks retain their closure restrictions.
-Their returned strings also pass through the template renderer.
+The decorator analyses the signature and unconditional output-assignment prefix
+once. On each call it applies defaults/resource overrides, creates typed artifacts
+with assigned paths, and executes the original function in an isolated construction
+context. `outputs(...)` retrieves those artifacts; `Shell(...)` registers a template.
+The wrapper validates the template and returned artifacts before interning the call.
+Context is restored on success or failure. Paths exist as values, not necessarily
+as files. Keep command composition in workflows; invoking another command from a
+command body is rejected. Ordinary helpers may register Shell in the active context.
+
+The body runs on every call, including repeated/cache-hit constructions and CLI
+inspection. Prints and side effects occur during construction, not job execution.
+Avoid side effects; a failed body does not register a DAG call or create its files,
+but user side effects cannot be rolled back. Closure state other than declared
+artifact classes/output helpers is rejected; globals and helper implementations
+are not automatically dependency-tracked. Represent result-affecting external
+state explicitly as inputs/config.
+
+Recipe identity includes normalized body source and Python identity, not resource
+defaults or the constructed Shell string. This new recipe kind changes hashes for
+migrated declarations. Existing factory recipes retain their hashes. Resource
+branches must preserve dependencies, output schema, and semantic results.
+External CommandArgs callbacks retain their existing separate callback lifecycle.
 
 Python evaluates f-strings first. Write `f"tool {options} {{reads}}"` to
 interpolate the local `options` value while preserving `{reads}` for necroflow.
@@ -85,8 +90,7 @@ Keep dynamic arguments as placeholders so necroflow can quote them. Values
 already interpolated by Python cannot be automatically quoted afterward, and
 any literal braces they contain must be escaped before template rendering.
 Expansion happens once: braces inside substituted paths or config values stay
-literal. Templates retain their hashes; callable recipes carry a new identity
-marker for this rendering behavior, so old callback results are not reused.
+literal. Shell templates use the existing renderer without a second interpolation pass.
 
 
 `Resource[T]` marks a scheduler quantity, not a scalar setting. It requires a
@@ -99,7 +103,9 @@ require integers. Float resources support fractional scheduler caps.
 Use `from necroflow import memory_bytes` and
 `ram: Resource[int] = memory_bytes("16G")` for integer byte counts
 (`G` is decimal, `Gi` is binary). Runtime resource parsing also accepts unit strings
-and `threads="all"`; use a resource file for those spellings in typed Python code.
+for integer quantities. Executable declarations require concrete integer threads;
+`threads="all"` remains supported only by factory/callback commands. Scheduling
+caps do not change arguments after the body has executed.
 
 Resource requests are attached to each call. New Resource declarations with
 conflicting requests for the same canonical call raise a compilation error;
@@ -380,7 +386,8 @@ def align(reads: str):
     return bam, log
 ```
 
-The decorated body is a declaration, not executable rule code. After an optional
+For the explicit `@command(template)` form shown above, the body stays declaration-only.
+Bare `@command` instead executes the body and requires a registered Shell. After an optional
 docstring it contains one or more top-level `name = outputs(ConcreteNode)`
 assignments (or `a, b = outputs(A, B)` for multiple artifacts) and a final return of each declared name exactly once. The return order
 defines the rule call's single-node or tuple shape. This is ordinary valid Python, so
@@ -664,17 +671,17 @@ An explicit return annotation is optional:
 @command
 def process_text(raw_text: RawText) -> ProcessedText:
     processed_text = outputs(ProcessedText)
-    command = "tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}"
+    Shell("tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}")
     return processed_text
 ```
 
 Multiple outputs infer `tuple[Bam, Log]`. Input annotations describe actual
-artifact instances passed by callers and received by nested builders. Decorated
+artifact instances passed by callers and received by executable bodies. Decorated
 commands preserve parameter types and Python argument binding, including
 positional-only and keyword-only parameters. Bare `Node` accepts any artifact.
 Dynamic Pipeline labels have no static subtype information; keep the direct
 command result when precise typing matters.
 
-Outputs are instances of their declared subclasses. Templates keep existing
-fingerprints; nested builders carry a new binding identity marker. Return
+Outputs are instances of their declared subclasses. Executable declarations use
+a source-based construction recipe; existing factory fingerprints remain stable. Return
 annotations do not replace explicit `outputs(...)` declarations.

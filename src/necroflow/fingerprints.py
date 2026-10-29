@@ -163,10 +163,6 @@ def _unwrapped_function(callback: Callable) -> Callable:
 def command_ast(callback: Callable) -> tuple[str, Path]:
     """Return a canonical AST dump and defining source path for a command callback."""
 
-    from necroflow.command_builders import NestedCommand
-
-    if isinstance(callback, NestedCommand):
-        return callback.tree, callback.source_path
     callback = _unwrapped_function(callback)
     try:
         lines, start_line = inspect.getsourcelines(callback)
@@ -221,10 +217,6 @@ def command_ast(callback: Callable) -> tuple[str, Path]:
 
 def validate_command_callback(callback: Callable) -> None:
     """Require a source-inspectable callback with one CommandArgs parameter."""
-    from necroflow.command_builders import NestedCommand
-
-    if isinstance(callback, NestedCommand):
-        return
     callback = _unwrapped_function(callback)
     parameters = list(inspect.signature(callback).parameters.values())
     if len(parameters) != 1 or parameters[0].kind not in (
@@ -246,19 +238,17 @@ def _command_identity(command: Any, recipe_identity: str | None) -> Any:
         return {"kind": "none"}
     if isinstance(command, str):
         return {"kind": "shell", "template": command}
-    if callable(command):
-        from necroflow.command_builders import NestedCommand
+    from necroflow.construction import Executable
 
-        tree, _source_path = command_ast(command)
+    if isinstance(command, Executable):
         return {
-            "kind": (
-                "python-nested-template-v1"
-                if isinstance(command, NestedCommand)
-                else "python-template-v1"
-            ),
+            "kind": "python-construction-v1",
             "python": python_identity(),
-            "ast": tree,
+            "ast": command.tree,
         }
+    if callable(command):
+        tree, _source_path = command_ast(command)
+        return {"kind": "python-template-v1", "python": python_identity(), "ast": tree}
     raise TypeError(f"unsupported command identity {type(command).__name__}")
 
 

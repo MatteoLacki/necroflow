@@ -1,5 +1,7 @@
 """Negative typing fixture: each ERROR line must produce a diagnostic."""
 
+from necroflow import Shell
+
 from necroflow import Node, Pipeline, Resource, command, outputs
 
 
@@ -14,7 +16,7 @@ class Other(Node):
 @command
 def copy(raw: Raw, /, *, count: int, threads: Resource[int] = 1) -> Raw:
     result = outputs(Raw)
-    command = "cp {raw} {result}"
+    Shell("cp {raw} {result}")
     return result
 
 

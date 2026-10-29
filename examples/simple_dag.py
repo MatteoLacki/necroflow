@@ -4,6 +4,8 @@ The workflows are safe to import and inspect without requiring BWA, samtools,
 featureCounts, or bcftools. Commands run only when a DAG is executed.
 """
 
+from necroflow import Shell
+
 from types import SimpleNamespace
 
 from necroflow import (
@@ -57,7 +59,7 @@ def raw_fastq(path: str):
 def align(fastq: Fastq, reference: str, threads: Resource[int] = 4):
     """Align reads and write a BAM plus the BWA log."""
     bam, log = outputs(Bam, Log)
-    command = (
+    Shell(
         "bwa mem -t {threads} {reference} {fastq} 2> {log} | samtools view -b -o {bam}"
     )
     return bam, log
@@ -67,7 +69,7 @@ def align(fastq: Fastq, reference: str, threads: Resource[int] = 4):
 def sort_bam(bam: Bam):
     """Sort a BAM by coordinate."""
     sorted_bam = outputs(SortedBam)
-    command = "samtools sort {bam} -o {sorted_bam}"
+    Shell("samtools sort {bam} -o {sorted_bam}")
     return sorted_bam
 
 
@@ -75,7 +77,7 @@ def sort_bam(bam: Bam):
 def quantify(bam: SortedBam, gene_model: str):
     """Count reads per gene."""
     counts = outputs(Counts)
-    command = "featureCounts -a {gene_model} {bam} -o {counts}"
+    Shell("featureCounts -a {gene_model} {bam} -o {counts}")
     return counts
 
 
@@ -83,7 +85,7 @@ def quantify(bam: SortedBam, gene_model: str):
 def call_variants(bam: SortedBam, reference: str):
     """Call variants from a sorted BAM."""
     vcf = outputs(Vcf)
-    command = (
+    Shell(
         "bcftools mpileup -f {reference} -Ou {bam} | bcftools call -mv -Oz -o " "{vcf}"
     )
     return vcf
@@ -93,7 +95,7 @@ def call_variants(bam: SortedBam, reference: str):
 def annotate(vcf: Vcf, database: str):
     """Annotate a VCF against a supplied database."""
     annotated_vcf = outputs(AnnotatedVcf)
-    command = "bcftools annotate -a {database} {vcf} -Oz -o {annotated_vcf}"
+    Shell("bcftools annotate -a {database} {vcf} -Oz -o {annotated_vcf}")
     return annotated_vcf
 
 

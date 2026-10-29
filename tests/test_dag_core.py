@@ -1371,7 +1371,7 @@ def test_command_decorator_rejects_invalid_output_declarations():
 
 def test_output_is_declaration_only():
     """Calling output at runtime explains that it only belongs in declarations."""
-    with pytest.raises(RuntimeError, match="declaration-only"):
+    with pytest.raises(RuntimeError, match="active @command construction"):
         outputs(Txt)
 
 

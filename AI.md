@@ -251,26 +251,35 @@ The official Python SDK renamed its high-level API between major versions:
 The `mcp` extra pins `mcp>=2`; if a future contributor's local install still
 resolves the old `fastmcp` module path, they're on v1 and need to upgrade.
 
-## Inline commands and Resource parameters
+## Executable Shell construction
 
-Bare `@command` and option-only `@command(repeat=...)` accept output declarations,
-then one literal `command` assignment or zero-argument nested `def command()`, then
-return outputs. `declarations.py` parses this without executing the outer body;
-`command_builders.py` binds nested builder inputs/outputs/settings/resources.
-`Resource[T]` is an Annotated alias for int, float, or str quantities handled separately from config and
-excluded from both hashes. `--resources FILE` / `DAG(..., resources=mapping)` applies
-file > call argument > default precedence before interning; unknown entries fail.
-Legacy syntax/hashes remain supported. New Resource requests conflict explicitly
-when deduplicating; legacy-only constraints retain prior interning behavior.
+Bare `@command` analyses a fixed prefix of `outputs(...)` assignments and the
+input/config/resource signature. Its original function executes once per user
+call during graph construction. `construction.py` provides a ContextVar-backed
+Construction and public Shell; no AST-generated closures remain.
 
-Artifact classes subclass `Node`; outputs are instances of those classes.
-`outputs(T)` has static return type `T` and remains declaration-only. Decorated
-commands preserve parameter and return types, including tuple outputs. Nested
-builders receive artifact objects and use `.path` for filesystem access.
-Templates and external CommandArgs callbacks retain path rendering. Template
-hashes remain unchanged; nested builders use a new binding identity marker.
+Validate bindings and apply resource overrides before construction. Compute source
+recipe identity and final artifact paths from the fixed schema/input lineage;
+create an unregistered RuleCall. outputs() retrieves precreated typed artifacts.
+Shell(template) registers exactly one nonempty template. Validate its Docker prefix,
+placeholders, and the exact returned artifacts before DAG interning. Always reset
+the construction context in finally. Commands inside command bodies are rejected;
+composition belongs in workflows. Repeated calls execute bodies again but intern
+canonical artifacts. Failed bodies leave no DAG call or framework-created files.
 
-Callable commands return templates, rendered once through the same shell-quoting
-path as literal commands. In f-strings, double braces preserve necroflow
-placeholders. Literal shell braces must be doubled in the returned template.
-Callable recipe identities mark these semantics; literal-template hashes stay stable.
+Source body AST and Python identity define the versioned construction recipe.
+Resource defaults/values and the constructed template are excluded from identity;
+ordinary config remains hashed. Resource branches must preserve semantic results
+and output schema. Resource[int/float/str] values resolve before body execution;
+float requests/caps and memory_bytes are supported. Executable declarations reject
+threads="all"; use a concrete integer. Caps cannot replay construction decisions.
+
+Templates render once with shell quoting. F-string doubled braces preserve
+placeholders; literal shell braces must be doubled in the resulting template.
+Artifact arguments stay typed; .path is available without implying file existence.
+Inspection also executes bodies: prints go to the Python process, not subprocess
+logs. Source hashing does not discover arbitrary helper/global/environment state.
+
+Existing dynamic factories, external CommandArgs callbacks, and text/symlink
+materializers retain their separate lifecycle and identities. Old inline command
+assignments/nested command functions are replaced by Shell registration.

@@ -1,5 +1,7 @@
 """Concrete artifact classes unify runtime objects and declaration annotations."""
 
+from necroflow import Shell
+
 import shlex
 from pathlib import Path
 
@@ -40,7 +42,7 @@ class SpecializedRaw(Raw):
 @command
 def make(text: str = "hello") -> Raw:
     raw = outputs(Raw)
-    command = "echo {text} > {raw}"
+    Shell("echo {text} > {raw}")
     return raw
 
 
@@ -48,10 +50,12 @@ def make(text: str = "hello") -> Raw:
 def process(raw: Raw, /, count: int = 1, *, threads: Resource[int] = 1) -> Done:
     done = outputs(Done)
 
-    def command():
+    def build_command():
         assert isinstance(raw, Raw)
         assert type(done) is Done
         return f"cat {raw.quoted_path()} > {shlex.quote(str(done.path))}"
+
+    Shell(build_command())
 
     return done
 
@@ -81,13 +85,13 @@ def test_scoped_subtype_and_keyword_only_input(tmp_path):
     @command
     def special() -> SpecializedRaw:
         raw = outputs(SpecializedRaw)
-        command = "touch {raw}"
+        Shell("touch {raw}")
         return raw
 
     @command
     def keyword_input(*, raw: Raw) -> Done:
         done = outputs(Done)
-        command = "cp {raw} {done}"
+        Shell("cp {raw} {done}")
         return done
 
     @workflow
@@ -142,9 +146,7 @@ def test_builder_binding_identity_is_local_to_nested_commands(tmp_path):
     raw = make(pipeline)
     assert external(pipeline, raw).rule_call.resolve().startswith("cp ")
     assert _command_identity(external_builder, None)["kind"] == "python-template-v1"
-    assert (
-        _command_identity(process.command, None)["kind"] == "python-nested-template-v1"
-    )
+    assert _command_identity(process.command, None)["kind"] == "python-construction-v1"
 
 
 def test_unpack_outputs_in_nested_builder(tmp_path):
@@ -154,10 +156,12 @@ def test_unpack_outputs_in_nested_builder(tmp_path):
     def pair():
         raw, done = outputs(Raw, Done)
 
-        def command():
+        def build_command():
             assert type(raw) is Raw
             assert type(done) is Done
             return f"echo raw > {raw.quoted_path()}; echo done > {shlex.quote(str(done.path))}"
+
+        Shell(build_command())
 
         return done, raw
 
@@ -180,7 +184,7 @@ def test_unpack_outputs_rejects_mismatches():
         @command
         def mismatched():
             raw, done = outputs(Raw)
-            command = "touch {raw} {done}"
+            Shell("touch {raw} {done}")
             return raw, done
 
     with pytest.raises(ValueError, match="duplicate output declaration"):
@@ -188,7 +192,7 @@ def test_unpack_outputs_rejects_mismatches():
         @command
         def duplicate():
             raw, raw = outputs(Raw, Done)
-            command = "touch {raw}"
+            Shell("touch {raw}")
             return raw
 
     with pytest.raises(ValueError, match="one name per positional Node"):
@@ -196,5 +200,5 @@ def test_unpack_outputs_rejects_mismatches():
         @command
         def packed():
             raw = outputs(Raw, Done)
-            command = "touch {raw}"
+            Shell("touch {raw}")
             return raw

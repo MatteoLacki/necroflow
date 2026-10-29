@@ -1,5 +1,7 @@
 """Execution-resource files apply uniformly without changing data identity."""
 
+from necroflow import Shell
+
 import json
 
 import pytest
@@ -13,19 +15,9 @@ from test_inline_commands import inline
 @pytest.fixture
 def job(tmp_path):
     factory = tmp_path / "workflow.py"
-    factory.write_text("""from necroflow import command, outputs, Resource, Node
-class Result(Node):
-    filename = "result.txt"
-@command
-def make(threads: Resource[int] = 1):
-    result = outputs(Result)
-    command = "echo {threads} > {result}"
-    return result
-
-def build(P, config):
-    assert "resources" not in config
-    P.result = make(P)
-""")
+    factory.write_text(
+        'from necroflow import Shell\nfrom necroflow import command, outputs, Resource, Node\nclass Result(Node):\n    filename = "result.txt"\n@command\ndef make(threads: Resource[int] = 1):\n    result = outputs(Result)\n    Shell("echo {threads} > {result}")\n    return result\n\ndef build(P, config):\n    assert "resources" not in config\n    P.result = make(P)\n'
+    )
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory}:build"\n')
     return job
@@ -50,7 +42,7 @@ def args(tmp_path, job, resources, command):
 def test_inspection_commands_accept_resource_files(tmp_path, job, capsys, subcommand):
     """All inspection paths compile with the same override/cap policy as execution."""
     resources = tmp_path / "resources.toml"
-    resources.write_text('[make]\nthreads = "all"\n')
+    resources.write_text("[make]\nthreads = 3\n")
     main([*args(tmp_path, job, resources, subcommand), "--json"])
     payload = json.loads(capsys.readouterr().out)
     assert not list((tmp_path / "nodes").glob("*/*/result.txt"))
@@ -144,11 +136,13 @@ def test_typed_float_and_memory_resources(tmp_path):
     ):
         result = outputs(Result)
 
-        def command():
+        def build_command():
             assert isinstance(gpu, float)
             assert isinstance(ram, int)
             assert isinstance(scratch, str)
             return f"echo {gpu} {ram} {scratch} > {result.path}"
+
+        Shell(build_command())
 
         return result
 

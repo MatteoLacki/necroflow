@@ -4,6 +4,8 @@ Run:
     python examples/schedulers.py
 """
 
+from necroflow import Shell
+
 from pathlib import Path
 from necroflow import DAG, Node, Pipeline, command, outputs, workflow
 
@@ -27,28 +29,28 @@ class Merged(Node):
 @command
 def make_text(word: str):
     text = outputs(Text)
-    command = "echo {word} > {text}"
+    Shell("echo {word} > {text}")
     return text
 
 
 @command
 def to_upper(text: Text):
     upper = outputs(Upper)
-    command = "tr a-z A-Z < {text} > {upper}"
+    Shell("tr a-z A-Z < {text} > {upper}")
     return upper
 
 
 @command
 def to_lower(text: Text):
     lower = outputs(Lower)
-    command = "tr A-Z a-z < {text} > {lower}"
+    Shell("tr A-Z a-z < {text} > {lower}")
     return lower
 
 
 @command
 def merge(upper: Upper, lower: Lower):
     merged = outputs(Merged)
-    command = "paste {upper} {lower} > {merged}"
+    Shell("paste {upper} {lower} > {merged}")
     return merged
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import os
 import shlex
 import shutil
@@ -165,9 +166,15 @@ class RuleCall:
 
     def compute_identity(self) -> tuple[dict[str, Any], str, str]:
         """Return this call's canonical recipe and two identity hashes."""
+        from necroflow.construction import Executable
+
         rule_identity = _rule_identity(
             rule_name=self.rule.__name__,
-            command=self.command,
+            command=(
+                self.rule.command
+                if isinstance(self.rule.command, Executable)
+                else self.command
+            ),
             recipe_identity=self.rule.recipe_identity,
             input_types=self.rule.inputs.specs,
             output_types=self.rule.outputs.specs,
@@ -439,6 +446,19 @@ class RuleCall:
 
     def _command_record(self) -> dict[str, Any]:
         """Return how this call's command was declared and realized."""
+        from necroflow.construction import Executable
+
+        if isinstance(self.rule.command, Executable):
+            return {
+                "kind": "python-construction",
+                "source": os.path.relpath(
+                    inspect.getsourcefile(self.rule.command.function),
+                    self.dag.nodes_dir,
+                ),
+                "python": python_identity(),
+                "template": self.command,
+                "realized": self.resolve(),
+            }
         record = {
             "kind": "python" if callable(self.command) else "shell",
             "realized": self.resolve(),
@@ -515,13 +535,7 @@ class RuleCall:
 
     def _call_command_callback(self) -> str:
         """Invoke a builder and validate its returned, still-unrendered template."""
-        from necroflow.command_builders import NestedCommand
-
-        result = (
-            self.command(self)
-            if isinstance(self.command, NestedCommand)
-            else self.command(self.command_args())
-        )
+        result = self.command(self.command_args())
         if not isinstance(result, str) or not result.strip():
             raise TypeError(
                 f"Python command callback {self.command.__qualname__!r} must return "

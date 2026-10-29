@@ -1,5 +1,6 @@
 __version__ = "0.0.8"
 
+from necroflow.construction import Shell
 from necroflow.resources import Resource, memory_bytes
 from necroflow.containers import Docker
 from necroflow.dag import DAG
@@ -31,6 +32,7 @@ __all__ = [
     "__version__",
     "Docker",
     "Resource",
+    "Shell",
     "memory_bytes",
     "Node",
     "RuleCall",
