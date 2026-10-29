@@ -1,6 +1,6 @@
 """Static-analysis fixture for rule output and dynamic pipeline shapes."""
 
-from necroflow import Shell
+from necroflow import shell
 
 from typing import Annotated, assert_type
 
@@ -119,7 +119,7 @@ from necroflow import Resource
 @command
 def inline_source(text: str, threads: Resource[int] = 4):
     source = outputs(Source)
-    Shell("printf %s {text} > {source}")
+    shell("printf %s {text} > {source}")
     return source
 
 
@@ -130,7 +130,7 @@ def nested_source(text: str, threads: Resource[int] = 4):
     def build_command():
         return f"echo {text} > {source.path}"
 
-    Shell(build_command())
+    shell(build_command())
 
     return source
 
@@ -158,7 +158,7 @@ assert_type(nested_source(pipeline, text="hello"), Source)
 @command
 def annotated_source(text: str) -> Source:
     source = outputs(Source)
-    Shell("printf %s {text} > {source}")
+    shell("printf %s {text} > {source}")
     return source
 
 
@@ -192,7 +192,7 @@ def precise(source: Source, /, *, count: int = 1, threads: Resource[int] = 1) ->
     def build_command():
         return f"cat {source.path} > {left.path}"
 
-    Shell(build_command())
+    shell(build_command())
 
     return left
 
@@ -214,7 +214,7 @@ def fractional(gpu: Resource[float] = 0.5, scratch: Resource[str] = "2Gi"):
         assert_type(scratch, str)
         return f"echo {gpu} {scratch} > {source.path}"
 
-    Shell(build_command())
+    shell(build_command())
 
     return source
 

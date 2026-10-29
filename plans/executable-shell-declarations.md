@@ -1,4 +1,4 @@
-# Executable Shell declarations
+# Executable shell declarations
 
 Status: implemented and verified. Full suite: 693 passed, 2 skipped; Pyright clean.
 Paper examples and cache scenarios verified; manuscript/supplement PDFs build.
@@ -8,11 +8,11 @@ The approved replacement executes ordinary Python inside a ContextVar-backed
 construction context. Decoration analyses fixed top-level outputs assignments,
 parameter/resource types, and normalized body source once. Each invocation binds
 arguments and overrides, creates unregistered typed artifacts with final paths,
-executes the function, validates exactly one registered Shell and exact returned
+executes the function, validates exactly one registered shell and exact returned
 artifacts, and only then interns the call. Context always resets on failure.
 
 No argument conversion, generated closures, public construction context manager,
-or return of Shell is required. Commands cannot call other commands while building;
+or return of shell is required. Commands cannot call other commands while building;
 compose them in workflows. Outputs remain a fixed prefix and returned shape.
 Paths are assigned before body execution because output schema and source identity
 are known; no provisional Node class is needed. Repeated calls execute bodies again,

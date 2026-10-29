@@ -1,6 +1,6 @@
 """Inline declarations preserve identity and defer command execution."""
 
-from necroflow import Shell
+from necroflow import shell
 
 import importlib.util
 import shlex
@@ -21,7 +21,7 @@ class Result(Node):
 @command
 def inline(text: str = "hello", threads: Resource[int] = 2):
     result = outputs(Result)
-    Shell("printf %s {text} > {result}")
+    shell("printf %s {text} > {result}")
     return result
 
 
@@ -32,7 +32,7 @@ def nested(text: str = "hello", threads: Resource[int] = 2):
     def build_command():
         return f"printf %s {shlex.quote(text)} > {shlex.quote(str(result.path))}"
 
-    Shell(build_command())
+    shell(build_command())
 
     return result
 
@@ -41,7 +41,7 @@ def load_rule(tmp_path, body, name="definition"):
     """Load genuine source so declaration source inspection is exercised."""
     path = tmp_path / f"{name}.py"
     path.write_text(
-        "from necroflow import command, outputs, Resource, Shell\n"
+        "from necroflow import command, outputs, Resource, shell\n"
         "from test_inline_commands import Result\n" + body
     )
     spec = importlib.util.spec_from_file_location(name, path)
@@ -147,7 +147,7 @@ def test_resource_types_and_defaults_checked(tmp_path):
     with pytest.raises(TypeError, match="needs a default"):
         load_rule(
             tmp_path,
-            'from necroflow import Shell\n@command\ndef bad(threads: Resource[int]):\n    result = outputs(Result)\n    Shell("touch {result}")\n    return result\n',
+            'from necroflow import shell\n@command\ndef bad(threads: Resource[int]):\n    result = outputs(Result)\n    shell("touch {result}")\n    return result\n',
         )
 
 
@@ -161,7 +161,7 @@ def test_nested_resource_binding_and_all_cap(tmp_path):
         def build_command():
             return f"echo {threads} {label} > {result.path}"
 
-        Shell(build_command())
+        shell(build_command())
 
         return result
 
@@ -192,7 +192,7 @@ def test_nested_undeclared_closure_rejected():
             def build_command():
                 return f"echo {hidden} > {result.path}"
 
-            Shell(build_command())
+            shell(build_command())
 
             return result
 
@@ -216,7 +216,7 @@ def test_nested_inputs_outputs_and_failure_preflight(tmp_path):
                 + shlex.quote(str(result.path))
             )
 
-        Shell(build_command())
+        shell(build_command())
 
         return result
 
@@ -236,7 +236,7 @@ def test_nested_inputs_outputs_and_failure_preflight(tmp_path):
         def build_command():
             return None
 
-        Shell(build_command())
+        shell(build_command())
 
         return result
 
@@ -266,7 +266,7 @@ def test_legacy_callback_with_command_local(tmp_path):
 
 def test_nested_recipe_hash_and_resource_default_independence(tmp_path):
     """Nested source/config edits alter identity; resource defaults do not."""
-    body = 'from necroflow import Shell\n@command\ndef build(label: str = "a", threads: Resource[int] = DEFAULT):\n    result = outputs(Result)\n    def build_command():\n        return f"echo {label} > {result.path}"\n    Shell(build_command())\n    return result\n'
+    body = 'from necroflow import shell\n@command\ndef build(label: str = "a", threads: Resource[int] = DEFAULT):\n    result = outputs(Result)\n    def build_command():\n        return f"echo {label} > {result.path}"\n    shell(build_command())\n    return result\n'
     a = load_rule(tmp_path, body.replace("DEFAULT", "2"), "version_a").build
     b = load_rule(tmp_path, body.replace("DEFAULT", "7"), "version_b").build
     c = load_rule(
@@ -291,7 +291,7 @@ def test_scheduler_sees_overridden_resources(tmp_path):
     @command
     def allocated(label: str, threads: Resource[int] = 1, ram: Resource[int] = 100):
         result = outputs(Result)
-        Shell("echo {threads} {ram} > {result}")
+        shell("echo {threads} {ram} > {result}")
         return result
 
     pipeline = Pipeline(
@@ -340,7 +340,7 @@ def test_conditional_outputs_fail_at_declaration(tmp_path):
     with pytest.raises(ValueError, match="output"):
         load_rule(
             tmp_path,
-            'from necroflow import Shell\n@command\ndef bad(enabled: bool):\n    if enabled:\n        result = outputs(Result)\n    Shell("touch {result}")\n    return result\n',
+            'from necroflow import shell\n@command\ndef bad(enabled: bool):\n    if enabled:\n        result = outputs(Result)\n    shell("touch {result}")\n    return result\n',
         )
 
 
@@ -359,7 +359,7 @@ def test_nested_docker_and_multioutput(tmp_path):
         def build_command():
             return f"{{env}}:echo {threads} > {result.path}; touch {other.path}"
 
-        Shell(build_command())
+        shell(build_command())
 
         return result, other
 
@@ -384,7 +384,7 @@ def test_builder_runs_only_at_realization_and_retries(tmp_path):
             marker = result.path.parent / "attempted"
             return f"test -e {marker} && echo done > {result.path} || (touch {marker}; exit 1)"
 
-        Shell(build_command())
+        shell(build_command())
 
         return result
 
@@ -407,7 +407,7 @@ def returned_template(text: str, threads: Resource[int] = 2):
         options = "{text}" if threads > 1 else "single"
         return f"printf %s {options} > {{result}}"
 
-    Shell(build_command())
+    shell(build_command())
 
     return result
 
@@ -445,7 +445,7 @@ def test_callable_template_literal_shell_braces(tmp_path):
                 f"printf '%s\\n' {{text}} | {program} '{{{{print $1}}}}' > {{result}}"
             )
 
-        Shell(build_command())
+        shell(build_command())
 
         return result
 
@@ -467,7 +467,7 @@ def test_callable_template_unknown_placeholder(tmp_path):
         def build_command():
             return "touch {reslt}"
 
-        Shell(build_command())
+        shell(build_command())
 
         return result
 

@@ -17,7 +17,7 @@ It runs both through direct Python calls and through `necroflow job.toml`, whose
 
 from __future__ import annotations
 
-from necroflow import Shell
+from necroflow import shell
 
 import json
 
@@ -157,7 +157,7 @@ def select_recalibration_spectra(spectra: SpectraFile, top_k: int):
     """Subset a spectra file to its top-K most intense precursors, for mass-error
     estimation on a fast first pass."""
     subset = outputs(RecalibrationSpectraSubset)
-    Shell(
+    shell(
         "python scripts/select_top_precursors.py {spectra} --top-k {top_k} -o "
         "{subset}"
     )
@@ -170,7 +170,7 @@ def run_sage(spectra: SpectraFile, fasta: Fasta, config: SageConfig):
     results_pin = outputs(SageResultsPin)
     results_tsv = outputs(SageResultsTsv)
     matched_fragments = outputs(SageMatchedFragments)
-    Shell(
+    shell(
         "sage {config} -f {fasta} --write-pin --annotate-matches -o {workdir} "
         "{spectra} && test -f {results_json} && test -f {results_pin} && test "
         "-f {results_tsv} && test -f {matched_fragments}"
@@ -206,7 +206,7 @@ def recalibrate_spectra(
     dataset may need `spectrum_q` instead."""
     tolerance = outputs(RecalibrationTolerance)
     recalibrated_spectra = outputs(RecalibratedSpectra)
-    Shell(
+    shell(
         "python scripts/fit_recalibration.py {results_tsv} --fdr {fdr} "
         "--q-column {q_column} -o {tolerance} && python "
         "scripts/recalibrate_spectra.py {spectra} {tolerance} -o "
@@ -218,7 +218,7 @@ def recalibrate_spectra(
 @command
 def update_sage_config(sage_config: SageConfig, tolerance: RecalibrationTolerance):
     recalibrated_sage_config = outputs(SageConfig)
-    Shell(
+    shell(
         "python -m necroflow.tools.config_set {sage_config} "
         "{workdir}/precursor_tol_updated.json --target precursor_tol --source "
         "{tolerance} --source-field precursor_tol && python -m "

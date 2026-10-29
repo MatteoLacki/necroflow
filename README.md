@@ -26,7 +26,7 @@ A command-line run points at a Python workflow. Rules describe typed outputs and
 
 ```python
 # pipeline.py
-from necroflow import DAG, Node, Pipeline, command, symlink_file, outputs, workflow, Shell, Resource
+from necroflow import DAG, Node, Pipeline, command, symlink_file, outputs, workflow, shell, Resource
 
 class Fastq(Node):
     filename = "reads.fastq.gz"
@@ -45,13 +45,13 @@ def raw_fastq(path: str):
 @command
 def align(fastq: Fastq, ref: str, threads: Resource[int] = 4):
     bam = outputs(Bam)
-    Shell("bwa mem -t {threads} {ref} {fastq} > {bam}")
+    shell("bwa mem -t {threads} {ref} {fastq} > {bam}")
     return bam
 
 @command
 def count(bam: Bam, gene_model: str):
     counts = outputs(Counts)
-    Shell("featureCounts -a {gene_model} {bam} -o {counts}")
+    shell("featureCounts -a {gene_model} {bam} -o {counts}")
     return counts
 
 @workflow

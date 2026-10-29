@@ -513,17 +513,17 @@ Identity, paths, interning, and RuleCall order are eager. Cache classification, 
 
 [Previous: Rules and Typed Outputs](rules.md) | [README](../README.md) | [Next: Generated Config Files](generated-config-files.md)
 
-## Executable Shell construction
+## Executable shell construction
 
 Bare `@command` analyses a fixed prefix of `outputs(...)` assignments and the
 input/config/resource signature. Its original function executes once per user
 call during graph construction. `construction.py` provides a ContextVar-backed
-Construction and public Shell; no AST-generated closures remain.
+Construction and public shell; no AST-generated closures remain.
 
 Validate bindings and apply resource overrides before construction. Compute source
 recipe identity and final artifact paths from the fixed schema/input lineage;
 create an unregistered RuleCall. outputs() retrieves precreated typed artifacts.
-Shell(template) registers exactly one nonempty template. Validate its Docker prefix,
+shell(template) registers exactly one nonempty template. Validate its Docker prefix,
 placeholders, and the exact returned artifacts before DAG interning. Always reset
 the construction context in finally. Commands inside command bodies are rejected;
 composition belongs in workflows. Repeated calls execute bodies again but intern
@@ -544,4 +544,4 @@ logs. Source hashing does not discover arbitrary helper/global/environment state
 
 Existing dynamic factories, external CommandArgs callbacks, and text/symlink
 materializers retain their separate lifecycle and identities. Old inline command
-assignments/nested command functions are replaced by Shell registration.
+assignments/nested command functions are replaced by shell registration.

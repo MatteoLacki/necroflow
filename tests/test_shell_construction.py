@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from necroflow import DAG, Node, Pipeline, Resource, Shell, command, outputs, run
+from necroflow import DAG, Node, Pipeline, Resource, shell, command, outputs, run
 from necroflow.construction import _current_build
 
 
@@ -19,10 +19,10 @@ def construct(text: str, threads: Resource[int] = 1):
     assert product.path == product.rule_call.workdir / Product.filename
     print(f"construct {text}")
     if text == "fail":
-        Shell("touch {product}")
+        shell("touch {product}")
         raise RuntimeError("body failed")
     options = "{text}" if threads > 1 else "single"
-    Shell(f"printf %s {options} > {{product}}")
+    shell(f"printf %s {options} > {{product}}")
     return product
 
 
@@ -53,12 +53,12 @@ def test_failed_construction_restores_context_and_leaves_dag_empty(tmp_path):
     assert not pipeline.dag.calls
     assert not pipeline.dag.nodes_dir.exists()
     with pytest.raises(RuntimeError, match="active @command"):
-        Shell("true")
+        shell("true")
     assert construct(pipeline, "ok").rule_call.command
 
 
 def test_concurrent_construction_isolation(tmp_path):
-    """Each thread binds Shell and outputs to its own call."""
+    """Each thread binds shell and outputs to its own call."""
 
     def build(i):
         pipeline = Pipeline(DAG(tmp_path / str(i)))
@@ -79,7 +79,7 @@ def test_nested_command_rejected(tmp_path):
     def outer():
         product = outputs(Product)
         construct("child")
-        Shell("touch {product}")
+        shell("touch {product}")
         return product
 
     pipeline = Pipeline(DAG(tmp_path))
@@ -97,15 +97,15 @@ def test_shell_and_return_contracts(tmp_path, mode):
     def invalid(mode: str):
         product = outputs(Product)
         if mode != "missing":
-            Shell("touch {product}")
+            shell("touch {product}")
         if mode == "twice":
-            Shell("echo extra")
+            shell("echo extra")
         if mode == "replacement":
             product = None
         return product
 
     pipeline = Pipeline(DAG(tmp_path))
-    with pytest.raises(ValueError, match="Shell|output artifacts"):
+    with pytest.raises(ValueError, match="shell|output artifacts"):
         invalid(pipeline, mode)
     assert not pipeline.dag.calls
     assert _current_build.get() is None

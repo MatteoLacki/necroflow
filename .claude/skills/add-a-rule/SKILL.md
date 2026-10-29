@@ -7,10 +7,10 @@ description: How to declare a necroflow rule correctly — command decorators, b
 
 Full reference: `docs/rules.md`, `docs/generated-config-files.md`, `src/necroflow/rules.py`.
 
-## Shell command rules
+## shell command rules
 
 ```python
-from necroflow import command, outputs, Shell, Resource, memory_bytes
+from necroflow import command, outputs, shell, Resource, memory_bytes
 
 @command
 def align(fastq: Fastq, ref: str, threads: Resource[int] = 4,
@@ -18,11 +18,11 @@ def align(fastq: Fastq, ref: str, threads: Resource[int] = 4,
     """Align reads to a reference genome with BWA-MEM."""
     bam = outputs(Bam)
     log = outputs(Log)
-    Shell("bwa mem -t {threads} {ref} {fastq} > {bam} 2> {log}")
+    shell("bwa mem -t {threads} {ref} {fastq} > {bam} 2> {log}")
     return bam, log
 ```
 
-- Bare @command executes the body during construction; register exactly one Shell.
+- Bare @command executes the body during construction; register exactly one shell.
 - Function parameters follow ordinary Python binding; Node annotations describe
   dependencies, plain types describe config, and Resource[T] describes execution quantities.
 - Outputs use real local assignments: `name = outputs(Node)`. Return every
@@ -42,7 +42,7 @@ Allowed: declared input names, declared output names, and built-ins:
 - Double literal shell braces: `{{left,right}}`. Bash syntax needs an explicit
   `shellpath="/bin/bash"` or `--shellpath`.
 
-An undeclared Shell placeholder fails when its command is called, before execution.
+An undeclared shell placeholder fails when its command is called, before execution.
 
 ## Reserved names — checked at declaration
 

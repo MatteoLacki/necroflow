@@ -2,7 +2,7 @@
 
 [Previous: Config Validation](config-validation.md) | [README](../README.md) | [Next: Command-Call Lifecycle](rule-call-lifecycle.md)
 
-The primary API is executable `@command` declarations with `Shell`. The explicit factory form is also available. Factory rules require a stable `name=` and may include `doc=`; `Inputs` and `Outputs` preserve declaration order.
+The primary API is executable `@command` declarations with `shell`. The explicit factory form is also available. Factory rules require a stable `name=` and may include `doc=`; `Inputs` and `Outputs` preserve declaration order.
 
 ```python
 run_sage = command(
@@ -32,18 +32,18 @@ outputs are declared only with `outputs(ConcreteNode)`.
 A rule can keep its command inside its declaration:
 
 ```python
-from necroflow import Shell
+from necroflow import shell
 from necroflow import Resource, command, outputs
 
 @command
 def align(reads: Fastq, threads: Resource[int] = 4):
     bam = outputs(Bam)
-    Shell("align -t {threads} {reads} > {bam}")
+    shell("align -t {threads} {reads} > {bam}")
     return bam
 ```
 
 Declare fixed outputs first, then execute ordinary Python and register exactly
-one `Shell(template)`. Return only the declared artifacts. Use
+one `shell(template)`. Return only the declared artifacts. Use
 `@command(repeat=2)` when execution options are needed.
 
 ```python
@@ -51,18 +51,18 @@ one `Shell(template)`. Return only the declared artifacts. Use
 def align(reads: Fastq, threads: Resource[int] = 4):
     bam = outputs(Bam)
     options = "-t {threads}" if threads > 1 else ""
-    Shell(f"align {options} {{reads}} > {{bam}}")
+    shell(f"align {options} {{reads}} > {{bam}}")
     return bam
 ```
 
 The decorator analyses the signature and unconditional output-assignment prefix
 once. On each call it applies defaults/resource overrides, creates typed artifacts
 with assigned paths, and executes the original function in an isolated construction
-context. `outputs(...)` retrieves those artifacts; `Shell(...)` registers a template.
+context. `outputs(...)` retrieves those artifacts; `shell(...)` registers a template.
 The wrapper validates the template and returned artifacts before interning the call.
 Context is restored on success or failure. Paths exist as values, not necessarily
 as files. Keep command composition in workflows; invoking another command from a
-command body is rejected. Ordinary helpers may register Shell in the active context.
+command body is rejected. Ordinary helpers may register shell in the active context.
 
 The body runs on every call, including repeated/cache-hit constructions and CLI
 inspection. Prints and side effects occur during construction, not job execution.
@@ -73,7 +73,7 @@ are not automatically dependency-tracked. Represent result-affecting external
 state explicitly as inputs/config.
 
 Recipe identity includes normalized body source and Python identity, not resource
-defaults or the constructed Shell string. This new recipe kind changes hashes for
+defaults or the constructed shell string. This new recipe kind changes hashes for
 migrated declarations. Existing factory recipes retain their hashes. Resource
 branches must preserve dependencies, output schema, and semantic results.
 External CommandArgs callbacks retain their existing separate callback lifecycle.
@@ -83,14 +83,14 @@ interpolate the local `options` value while preserving `{reads}` for necroflow.
 Ordinary strings need only single braces: `"tool {reads}"`.
 Literal shell braces must be doubled in the returned template; for example,
 `"awk '{{print $1}}' {reads} > {bam}"`. Inside an f-string those literal braces
-need four braces in source. Shell variables such as `$HOME` need no escaping;
+need four braces in source. shell variables such as `$HOME` need no escaping;
 write `${{HOME}}` when using shell's braced form in an ordinary template.
 
 Keep dynamic arguments as placeholders so necroflow can quote them. Values
 already interpolated by Python cannot be automatically quoted afterward, and
 any literal braces they contain must be escaped before template rendering.
 Expansion happens once: braces inside substituted paths or config values stay
-literal. Shell templates use the existing renderer without a second interpolation pass.
+literal. shell templates use the existing renderer without a second interpolation pass.
 
 
 `Resource[T]` marks a scheduler quantity, not a scalar setting. It requires a
@@ -387,7 +387,7 @@ def align(reads: str):
 ```
 
 For the explicit `@command(template)` form shown above, the body stays declaration-only.
-Bare `@command` instead executes the body and requires a registered Shell. After an optional
+Bare `@command` instead executes the body and requires a registered shell. After an optional
 docstring it contains one or more top-level `name = outputs(ConcreteNode)`
 assignments (or `a, b = outputs(A, B)` for multiple artifacts) and a final return of each declared name exactly once. The return order
 defines the rule call's single-node or tuple shape. This is ordinary valid Python, so
@@ -671,7 +671,7 @@ An explicit return annotation is optional:
 @command
 def process_text(raw_text: RawText) -> ProcessedText:
     processed_text = outputs(ProcessedText)
-    Shell("tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}")
+    shell("tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}")
     return processed_text
 ```
 

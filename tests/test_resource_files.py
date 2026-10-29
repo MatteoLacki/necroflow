@@ -1,6 +1,6 @@
 """Execution-resource files apply uniformly without changing data identity."""
 
-from necroflow import Shell
+from necroflow import shell
 
 import json
 
@@ -16,7 +16,7 @@ from test_inline_commands import inline
 def job(tmp_path):
     factory = tmp_path / "workflow.py"
     factory.write_text(
-        'from necroflow import Shell\nfrom necroflow import command, outputs, Resource, Node\nclass Result(Node):\n    filename = "result.txt"\n@command\ndef make(threads: Resource[int] = 1):\n    result = outputs(Result)\n    Shell("echo {threads} > {result}")\n    return result\n\ndef build(P, config):\n    assert "resources" not in config\n    P.result = make(P)\n'
+        'from necroflow import shell\nfrom necroflow import command, outputs, Resource, Node\nclass Result(Node):\n    filename = "result.txt"\n@command\ndef make(threads: Resource[int] = 1):\n    result = outputs(Result)\n    shell("echo {threads} > {result}")\n    return result\n\ndef build(P, config):\n    assert "resources" not in config\n    P.result = make(P)\n'
     )
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory}:build"\n')
@@ -142,7 +142,7 @@ def test_typed_float_and_memory_resources(tmp_path):
             assert isinstance(scratch, str)
             return f"echo {gpu} {ram} {scratch} > {result.path}"
 
-        Shell(build_command())
+        shell(build_command())
 
         return result
 

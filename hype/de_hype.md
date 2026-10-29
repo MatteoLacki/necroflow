@@ -32,7 +32,7 @@ def my_pipeline(P: Pipeline, config: dict) -> None:
 ## Die Pfade erzeugt das Framework
 
 - Ein Ergebnis landet in `nodes/{Regel}/{provenance_hash}/{Datei}`. Der Hash (Fingerprint v4)
-  umfasst die Rezeptstruktur, die Config, die Shell und die vollständige Elternlinie.
+  umfasst die Rezeptstruktur, die Config, die shell und die vollständige Elternlinie.
 - Identische Arbeit konvergiert in ein einziges Verzeichnis — auch zwischen unabhängigen
   Pipelines innerhalb eines DAG. Du entwirfst weder eine Dateinamen-Taxonomie noch Wildcards.
 - Neben dem Ergebnis liegt `.rip/`: `dependencies.toml` (Linie + SHA-256 der konsumierten Eltern),

@@ -779,7 +779,7 @@ class Command(Generic[_Params, _ReturnT]):
             call.command = Construction(self.command, call).execute(execution_bound)
             container, template = split_prefix(call.command, self.docker_inputs)
             if not template.strip():
-                raise ValueError("Shell container command body is empty")
+                raise ValueError("shell container command body is empty")
             self._validate_command(
                 self.__name__, self.inputs, self.outputs, template, resource_requests
             )

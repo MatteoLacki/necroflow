@@ -13,7 +13,7 @@ reruns the command at the same content-addressed output path.
 
 from __future__ import annotations
 
-from necroflow import Shell
+from necroflow import shell
 
 import hashlib
 import time
@@ -38,7 +38,7 @@ class PreparedText(Node):
 @command
 def prepare_text(dependency: str):
     prepared_text = outputs(PreparedText)
-    Shell("cat {dependency} > {prepared_text}")
+    shell("cat {dependency} > {prepared_text}")
     return prepared_text
 
 

@@ -15,22 +15,19 @@ def current_build():
     build = _current_build.get()
     if build is None:
         raise RuntimeError(
-            "outputs() and Shell() require an active @command construction"
+            "outputs() and shell() require an active @command construction"
         )
     return build
 
 
-class Shell:
+def shell(template: str) -> None:
     """Register this invocation's shell template; placeholders are rendered later."""
-
-    def __init__(self, template: str):
-        build = current_build()
-        if not isinstance(template, str) or not template.strip():
-            raise TypeError("Shell requires a non-empty shell string")
-        if build.shell is not None:
-            raise ValueError("exactly one Shell is allowed per command invocation")
-        self.template = template
-        build.shell = self
+    build = current_build()
+    if not isinstance(template, str) or not template.strip():
+        raise TypeError("shell requires a non-empty shell string")
+    if build.shell is not None:
+        raise ValueError("exactly one shell is allowed per command invocation")
+    build.shell = template
 
 
 @dataclass(frozen=True)
@@ -45,7 +42,7 @@ class Construction:
         self.recipe = recipe
         self.call = call
         self.index = 0
-        self.shell = None
+        self.shell: str | None = None
 
     def outputs(self, types):
         if self.index >= len(self.recipe.groups):
@@ -72,7 +69,7 @@ class Construction:
                     "return must contain exactly the declared output artifacts in order"
                 )
             if self.shell is None:
-                raise ValueError("command invocation must register exactly one Shell")
-            return self.shell.template
+                raise ValueError("command invocation must register exactly one shell")
+            return self.shell
         finally:
             _current_build.reset(token)

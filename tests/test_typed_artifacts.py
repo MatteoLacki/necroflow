@@ -1,6 +1,6 @@
 """Concrete artifact classes unify runtime objects and declaration annotations."""
 
-from necroflow import Shell
+from necroflow import shell
 
 import shlex
 from pathlib import Path
@@ -42,7 +42,7 @@ class SpecializedRaw(Raw):
 @command
 def make(text: str = "hello") -> Raw:
     raw = outputs(Raw)
-    Shell("echo {text} > {raw}")
+    shell("echo {text} > {raw}")
     return raw
 
 
@@ -55,7 +55,7 @@ def process(raw: Raw, /, count: int = 1, *, threads: Resource[int] = 1) -> Done:
         assert type(done) is Done
         return f"cat {raw.quoted_path()} > {shlex.quote(str(done.path))}"
 
-    Shell(build_command())
+    shell(build_command())
 
     return done
 
@@ -85,13 +85,13 @@ def test_scoped_subtype_and_keyword_only_input(tmp_path):
     @command
     def special() -> SpecializedRaw:
         raw = outputs(SpecializedRaw)
-        Shell("touch {raw}")
+        shell("touch {raw}")
         return raw
 
     @command
     def keyword_input(*, raw: Raw) -> Done:
         done = outputs(Done)
-        Shell("cp {raw} {done}")
+        shell("cp {raw} {done}")
         return done
 
     @workflow
@@ -161,7 +161,7 @@ def test_unpack_outputs_in_nested_builder(tmp_path):
             assert type(done) is Done
             return f"echo raw > {raw.quoted_path()}; echo done > {shlex.quote(str(done.path))}"
 
-        Shell(build_command())
+        shell(build_command())
 
         return done, raw
 
@@ -184,7 +184,7 @@ def test_unpack_outputs_rejects_mismatches():
         @command
         def mismatched():
             raw, done = outputs(Raw)
-            Shell("touch {raw} {done}")
+            shell("touch {raw} {done}")
             return raw, done
 
     with pytest.raises(ValueError, match="duplicate output declaration"):
@@ -192,7 +192,7 @@ def test_unpack_outputs_rejects_mismatches():
         @command
         def duplicate():
             raw, raw = outputs(Raw, Done)
-            Shell("touch {raw}")
+            shell("touch {raw}")
             return raw
 
     with pytest.raises(ValueError, match="one name per positional Node"):
@@ -200,5 +200,5 @@ def test_unpack_outputs_rejects_mismatches():
         @command
         def packed():
             raw = outputs(Raw, Done)
-            Shell("touch {raw}")
+            shell("touch {raw}")
             return raw

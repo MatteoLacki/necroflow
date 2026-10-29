@@ -41,7 +41,7 @@ Three deliberate deviations from Snakemake, all forced by necroflow's model:
    fallback handle anything oversized.
 """
 
-from necroflow import Shell
+from necroflow import shell
 
 from pathlib import Path
 
@@ -139,7 +139,7 @@ class Big(Node):
 @command
 def make_raw(tag: str):
     raw = outputs(Raw)
-    Shell("head -c 200000 /dev/zero | tr '\\0' 'a' > {raw}")
+    shell("head -c 200000 /dev/zero | tr '\\0' 'a' > {raw}")
     return raw
 
 

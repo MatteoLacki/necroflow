@@ -151,7 +151,7 @@ docker run
 - Deduplicate identical mounts. Reject paths containing `,`, `"`, or newlines
   (Docker parses `--mount` as CSV) with a clear error. Spaces are fine because argv is a list.
 - Workdir is created on the host first and bound writable; all co-outputs live there.
-- Plain config values never create mounts. Shell text is never parsed for paths.
+- Plain config values never create mounts. shell text is never parsed for paths.
 - Container shell is `/bin/sh -c`. `Pipeline.shellpath` remains host-only; rules
   needing Bash call it explicitly.
 - Logs, retries (`repeat`), nonzero-exit failure, and missing-output checks reuse
