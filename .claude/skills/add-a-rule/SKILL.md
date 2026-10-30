@@ -10,15 +10,15 @@ Full reference: `docs/rules.md`, `docs/generated-config-files.md`, `src/necroflo
 ## shell command rules
 
 ```python
-from necroflow import command, outputs, shell, Resource, memory_bytes
+import necroflow as nf
 
-@command
-def align(fastq: Fastq, ref: str, threads: Resource[int] = 4,
-          ram: Resource[int] = memory_bytes("8Gi")):
+@nf.command
+def align(fastq: Fastq, ref: str, threads: nf.Resource[int] = 4,
+          ram: nf.Resource[int] = nf.memory_bytes("8Gi")):
     """Align reads to a reference genome with BWA-MEM."""
-    bam = outputs(Bam)
-    log = outputs(Log)
-    shell("bwa mem -t {threads} {ref} {fastq} > {bam} 2> {log}")
+    bam = nf.outputs(Bam)
+    log = nf.outputs(Log)
+    nf.shell("bwa mem -t {threads} {ref} {fastq} > {bam} 2> {log}")
     return bam, log
 ```
 
@@ -70,16 +70,16 @@ input/output, or the constraint.
 Ingest files directly in workflows; declare text generation with `@text_file`:
 
 ```python
-from necroflow import symlink, text_file, outputs, workflow
+import necroflow as nf
 
-@text_file
+@nf.text_file
 def sage_config(text: str):
-    config = outputs(SageConfig)
+    config = nf.outputs(SageConfig)
     return config
 
-@workflow
+@nf.workflow
 def build(P, config):
-    P.fastq = symlink(Fastq, config["reads"])
+    P.fastq = nf.symlink(Fastq, config["reads"])
     P.config = sage_config(text=config["sage_config"])
 ```
 

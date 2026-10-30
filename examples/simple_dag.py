@@ -4,27 +4,16 @@ The workflows are safe to import and inspect without requiring BWA, samtools,
 featureCounts, or bcftools. Commands run only when a DAG is executed.
 """
 
-from necroflow import shell
+import necroflow as nf
 
 from types import SimpleNamespace
 
-from necroflow import (
-    Resource,
-    DAG,
-    Node,
-    Pipeline,
-    command,
-    outputs,
-    symlink,
-    workflow,
-)
 
-
-class Fastq(Node):
+class Fastq(nf.Node):
     filename = "reads.fastq.gz"
 
 
-class Bam(Node):
+class Bam(nf.Node):
     filename = "aligned.bam"
 
 
@@ -32,88 +21,88 @@ class SortedBam(Bam):
     filename = "sorted.bam"
 
 
-class Log(Node):
+class Log(nf.Node):
     filename = "align.log"
 
 
-class Counts(Node):
+class Counts(nf.Node):
     filename = "counts.txt"
 
 
-class Vcf(Node):
+class Vcf(nf.Node):
     filename = "variants.vcf.gz"
 
 
-class AnnotatedVcf(Node):
+class AnnotatedVcf(nf.Node):
     filename = "annotated.vcf.gz"
 
 
-@command
-def align(fastq: Fastq, reference: str, threads: Resource[int] = 4):
+@nf.command
+def align(fastq: Fastq, reference: str, threads: nf.Resource[int] = 4):
     """Align reads and write a BAM plus the BWA log."""
-    bam, log = outputs(Bam, Log)
-    shell(
+    bam, log = nf.outputs(Bam, Log)
+    nf.shell(
         "bwa mem -t {threads} {reference} {fastq} 2> {log} | samtools view -b -o {bam}"
     )
     return bam, log
 
 
-@command
+@nf.command
 def sort_bam(bam: Bam):
     """Sort a BAM by coordinate."""
-    sorted_bam = outputs(SortedBam)
-    shell("samtools sort {bam} -o {sorted_bam}")
+    sorted_bam = nf.outputs(SortedBam)
+    nf.shell("samtools sort {bam} -o {sorted_bam}")
     return sorted_bam
 
 
-@command
+@nf.command
 def quantify(bam: SortedBam, gene_model: str):
     """Count reads per gene."""
-    counts = outputs(Counts)
-    shell("featureCounts -a {gene_model} {bam} -o {counts}")
+    counts = nf.outputs(Counts)
+    nf.shell("featureCounts -a {gene_model} {bam} -o {counts}")
     return counts
 
 
-@command
+@nf.command
 def call_variants(bam: SortedBam, reference: str):
     """Call variants from a sorted BAM."""
-    vcf = outputs(Vcf)
-    shell(
+    vcf = nf.outputs(Vcf)
+    nf.shell(
         "bcftools mpileup -f {reference} -Ou {bam} | bcftools call -mv -Oz -o " "{vcf}"
     )
     return vcf
 
 
-@command
+@nf.command
 def annotate(vcf: Vcf, database: str):
     """Annotate a VCF against a supplied database."""
-    annotated_vcf = outputs(AnnotatedVcf)
-    shell("bcftools annotate -a {database} {vcf} -Oz -o {annotated_vcf}")
+    annotated_vcf = nf.outputs(AnnotatedVcf)
+    nf.shell("bcftools annotate -a {database} {vcf} -Oz -o {annotated_vcf}")
     return annotated_vcf
 
 
-@workflow
-def aligned_reads(P: Pipeline, config) -> None:
+@nf.workflow
+def aligned_reads(P: nf.Pipeline, config) -> None:
     """Construct the import, alignment, and sorting prefix."""
-    P.fastq = symlink(Fastq, config.path)
+    P.fastq = nf.symlink(Fastq, config.path)
     P.bam, P.align_log = align(P.fastq, reference=config.reference)
     P.sorted_bam = sort_bam(P.bam)
 
 
-@workflow
-def quantification_pipeline(P: Pipeline, config) -> None:
+@nf.workflow
+def quantification_pipeline(P: nf.Pipeline, config) -> None:
     aligned_reads(P, config)
     P.counts = quantify(P.sorted_bam, gene_model=config.gene_model)
 
 
-@workflow
-def variant_pipeline(P: Pipeline, config) -> None:
+@nf.workflow
+def variant_pipeline(P: nf.Pipeline, config) -> None:
     aligned_reads(P, config)
     P.vcf = call_variants(P.sorted_bam, reference=config.reference)
 
 
-@workflow
-def extended_pipeline(P: Pipeline, config) -> None:
+@nf.workflow
+def extended_pipeline(P: nf.Pipeline, config) -> None:
     quantification_pipeline(P, config)
     if config.call_variants:
         P.vcf = call_variants(P.sorted_bam, reference=config.reference)
@@ -134,17 +123,17 @@ def example_config(**overrides):
 
 def inspect_example():
     config = example_config()
-    pipeline = Pipeline(DAG("results"))
+    pipeline = nf.Pipeline(nf.DAG("results"))
     extended_pipeline(pipeline, config)
     return pipeline, [node.rule_call.resolve() for node in pipeline.nodes]
 
 
 def shared_dag(outdir="results"):
     config = example_config()
-    dag = DAG(outdir)
-    quant = Pipeline(dag)
+    dag = nf.DAG(outdir)
+    quant = nf.Pipeline(dag)
     quantification_pipeline(quant, config)
-    variants = Pipeline(dag)
+    variants = nf.Pipeline(dag)
     variant_pipeline(variants, config)
     quant.finish()
     variants.finish()
@@ -156,4 +145,4 @@ def shared_dag(outdir="results"):
 if __name__ == "__main__":
     pipeline, commands = inspect_example()
     print(pipeline)
-    print("\n".join(command for command in commands if command is not None))
+    print("\n".join(nf.command for command in commands if nf.command is not None))

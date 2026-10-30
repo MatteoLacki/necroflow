@@ -515,6 +515,10 @@ Identity, paths, interning, and RuleCall order are eager. Cache classification, 
 
 ## Executable shell construction
 
+Declarations support `import necroflow as nf`, including `@nf.command`,
+`nf.outputs(...)`, and module-qualified artifact types. Static lookup resolves
+names and module attributes without evaluating calls or object properties.
+
 Bare `@command` analyses a fixed prefix of `outputs(...)` assignments and the
 input/config/resource signature. Its original function executes once per user
 call during graph construction. `construction.py` provides a ContextVar-backed

@@ -1,63 +1,52 @@
 from __future__ import annotations
 
-from necroflow import shell
+import necroflow as nf
 
 import json
 from pathlib import Path
 
-from necroflow import (
-    Node,
-    Pipeline,
-    Resource,
-    command,
-    symlink,
-    text_file,
-    outputs,
-    workflow,
-)
 
-
-class RawText(Node):
+class RawText(nf.Node):
     filename = "input.txt"
 
 
-class ToolConfig(Node):
+class ToolConfig(nf.Node):
     filename = "tool_config.json"
 
 
-class ProcessedText(Node):
+class ProcessedText(nf.Node):
     filename = "processed.txt"
 
 
-class Summary(Node):
+class Summary(nf.Node):
     filename = "summary.txt"
 
 
-@text_file
+@nf.text_file
 def write_tool_config(text: str):
-    tool_config = outputs(ToolConfig)
+    tool_config = nf.outputs(ToolConfig)
     return tool_config
 
 
-@command
+@nf.command
 def process_text(
-    raw_text: RawText, tool_config: ToolConfig, threads: Resource[int] = 1
+    raw_text: RawText, tool_config: ToolConfig, threads: nf.Resource[int] = 1
 ):
-    processed_text = outputs(ProcessedText)
-    shell("tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}")
+    processed_text = nf.outputs(ProcessedText)
+    nf.shell("tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}")
     return processed_text
 
 
-@command
+@nf.command
 def summarize(processed_text: ProcessedText):
-    summary = outputs(Summary)
-    shell("wc -c {processed_text} > {summary}")
+    summary = nf.outputs(Summary)
+    nf.shell("wc -c {processed_text} > {summary}")
     return summary
 
 
-@workflow
-def canonical_pipeline(P: Pipeline, config: dict) -> None:
-    P.raw = symlink(RawText, config["input"])
+@nf.workflow
+def canonical_pipeline(P: nf.Pipeline, config: dict) -> None:
+    P.raw = nf.symlink(RawText, config["input"])
     P.tool_config = write_tool_config(
         text=json.dumps(config.get("tool", {}), sort_keys=True, indent=2) + "\n",
     )

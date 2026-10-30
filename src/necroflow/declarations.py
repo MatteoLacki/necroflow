@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import inspect
 import textwrap
 from dataclasses import dataclass
+from types import ModuleType
 from typing import Any, cast, get_args
 
 from necroflow.construction import Executable
@@ -23,6 +25,17 @@ class Declaration:
     command: Any = None
 
 
+def _resolve_reference(expr, namespace):
+    """Resolve names and module attributes without evaluating Python expressions."""
+    if isinstance(expr, ast.Name):
+        return namespace.get(expr.id, vars(builtins).get(expr.id))
+    if isinstance(expr, ast.Attribute):
+        owner = _resolve_reference(expr.value, namespace)
+        if isinstance(owner, ModuleType):
+            return vars(owner).get(expr.attr)
+    return None
+
+
 def is_inline_declaration(fn) -> bool:
     """Distinguish bare declarations from legacy one-argument callbacks."""
     if not inspect.isfunction(fn) or fn.__name__ == "<lambda>":
@@ -38,9 +51,7 @@ def is_inline_declaration(fn) -> bool:
 
     namespace = {**fn.__globals__, **inspect.getclosurevars(fn).nonlocals}
     return any(
-        isinstance(n, ast.Call)
-        and isinstance(n.func, ast.Name)
-        and namespace.get(n.func.id) is outputs
+        isinstance(n, ast.Call) and _resolve_reference(n.func, namespace) is outputs
         for statement in body
         for n in ast.walk(statement)
     )
@@ -48,8 +59,6 @@ def is_inline_declaration(fn) -> bool:
 
 def parse_declaration(fn, *, inline=False) -> Declaration:
     """Parse a typed rule signature and assignment-based output declarations."""
-    import builtins
-
     from necroflow.rules import outputs
     from necroflow.nodes import _is_nodetype
 
@@ -159,15 +168,13 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
             and len(stmt.targets) == 1
             and isinstance(stmt.targets[0], (ast.Name, ast.Tuple))
             and isinstance(stmt.value, ast.Call)
-            and isinstance(stmt.value.func, ast.Name)
-            and namespace.get(stmt.value.func.id) is outputs
+            and _resolve_reference(stmt.value.func, namespace) is outputs
         ):
             if inline and declarations:
                 # Remaining statements are ordinary Python, but outputs stay fixed.
                 if any(
                     isinstance(n, ast.Call)
-                    and isinstance(n.func, ast.Name)
-                    and namespace.get(n.func.id) is outputs
+                    and _resolve_reference(n.func, namespace) is outputs
                     for remaining in statements[position:]
                     for n in ast.walk(remaining)
                 ):
@@ -194,19 +201,11 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
             )
         groups.append(tuple(target.id for target in targets))
         for target_name, type_expr in zip(targets, stmt.value.args):
-            if not isinstance(type_expr, ast.Name):
+            output_type = _resolve_reference(type_expr, namespace)
+            if output_type is None:
                 raise ValueError(
                     f"rule {rule_name!r}: outputs() argument must be a concrete Node name"
                 )
-            try:
-                output_type = namespace[type_expr.id]
-            except KeyError:
-                try:
-                    output_type = getattr(builtins, type_expr.id)
-                except AttributeError as exc:
-                    raise ValueError(
-                        f"rule {rule_name!r}: outputs() argument must be a concrete Node name"
-                    ) from exc
             output_name = target_name.id
             if not _is_nodetype(output_type):
                 raise TypeError(

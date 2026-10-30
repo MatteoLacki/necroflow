@@ -31,33 +31,33 @@ A command-line run points at a Python workflow. Rules describe typed outputs and
 
 ```python
 # pipeline.py
-from necroflow import DAG, Node, Pipeline, command, symlink, outputs, workflow, shell, Resource
+import necroflow as nf
 
-class Fastq(Node):
+class Fastq(nf.Node):
     filename = "reads.fastq.gz"
 
-class Bam(Node):
+class Bam(nf.Node):
     filename = "aligned.bam"
 
-class Counts(Node):
+class Counts(nf.Node):
     filename = "counts.txt"
 
 
-@command
-def align(fastq: Fastq, ref: str, threads: Resource[int] = 4):
-    bam = outputs(Bam)
-    shell("bwa mem -t {threads} {ref} {fastq} > {bam}")
+@nf.command
+def align(fastq: Fastq, ref: str, threads: nf.Resource[int] = 4):
+    bam = nf.outputs(Bam)
+    nf.shell("bwa mem -t {threads} {ref} {fastq} > {bam}")
     return bam
 
-@command
+@nf.command
 def count(bam: Bam, gene_model: str):
-    counts = outputs(Counts)
-    shell("featureCounts -a {gene_model} {bam} -o {counts}")
+    counts = nf.outputs(Counts)
+    nf.shell("featureCounts -a {gene_model} {bam} -o {counts}")
     return counts
 
-@workflow
-def rna_pipeline(P: Pipeline, config: dict) -> None:
-    P.fastq = symlink(Fastq, config["path"])
+@nf.workflow
+def rna_pipeline(P: nf.Pipeline, config: dict) -> None:
+    P.fastq = nf.symlink(Fastq, config["path"])
     P.bam = align(P.fastq, ref=config["ref"])
     P.counts = count(P.bam, gene_model=config["gene_model"])
 ```
@@ -100,15 +100,15 @@ omitted, necroflow requests every labelled sink Node. More on jobs in [Job TOML 
 `P.subpipeline(prefix)` returns a view over the same Pipeline. Assignments through the view are registered on the root with the prefix, while rule identity and DAG deduplication remain unchanged:
 
 ```python
-from necroflow import workflow
+import necroflow as nf
 
-@workflow
+@nf.workflow
 def sample_pipeline(P: Pipeline, reference, sample: dict) -> None:
     P.fastq = symlink(Fastq, sample["reads"])
     P.bam = align(P.fastq, ref=reference)
     P.counts = count(P.bam, gene_model=sample["gene_model"])
 
-@workflow
+@nf.workflow
 def cohort_pipeline(P: Pipeline, config: dict) -> None:
     for sample in config["samples"]:
         sample_pipeline(
@@ -169,14 +169,14 @@ adds its named nodes. This lets several fragments contribute to one public
 workflow without changing the CLI workflow signature:
 
 ```python
-from necroflow import workflow
+import necroflow as nf
 
-@workflow
+@nf.workflow
 def add_alignment(P, config):
     P.fastq = symlink(Fastq, config["path"])
     P.bam = align(P.fastq, ref=config["ref"])
 
-@workflow
+@nf.workflow
 def rna_pipeline(P, config):
     add_alignment(P, config)
     P.counts = count(P.bam, gene_model=config["gene_model"])

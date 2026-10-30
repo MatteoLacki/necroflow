@@ -19,27 +19,27 @@ Linux/macOS, or WSL). The example uses the POSIX `tr` utility.
 In a new working directory, save this as `pipeline.py`:
 
 ```python
-from necroflow import Node, Pipeline, command, outputs, shell, symlink, workflow
+import necroflow as nf
 
 
-class Source(Node):
+class Source(nf.Node):
     filename = "source.txt"
 
 
-class Uppercase(Node):
+class Uppercase(nf.Node):
     filename = "uppercase.txt"
 
 
-@command
+@nf.command
 def uppercase(text: Source):
-    result = outputs(Uppercase)
-    shell("tr '[:lower:]' '[:upper:]' < {text} > {result}")
+    result = nf.outputs(Uppercase)
+    nf.shell("tr '[:lower:]' '[:upper:]' < {text} > {result}")
     return result
 
 
-@workflow
-def build(P: Pipeline, config: dict) -> None:
-    P.source = symlink(Source, config["input"])
+@nf.workflow
+def build(P: nf.Pipeline, config: dict) -> None:
+    P.source = nf.symlink(Source, config["input"])
     P.uppercase = uppercase(P.source)
 ```
 

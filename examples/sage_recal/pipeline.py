@@ -17,27 +17,17 @@ It runs both through direct Python calls and through `necroflow job.toml`, whose
 
 from __future__ import annotations
 
-from necroflow import shell
+import necroflow as nf
 
 import json
 
-from necroflow import (
-    Node,
-    Pipeline,
-    command,
-    symlink,
-    text_file,
-    outputs,
-    workflow,
-)
-
 
 # --- node types ---
-class MzMlSpectra(Node):
+class MzMlSpectra(nf.Node):
     filename = "spectra.mzml"
 
 
-class MgfSpectra(Node):
+class MgfSpectra(nf.Node):
     filename = "spectra.mgf"
 
 
@@ -54,27 +44,27 @@ class MgfSpectra(Node):
 SpectraFile = MzMlSpectra | MgfSpectra
 
 
-class Fasta(Node):
+class Fasta(nf.Node):
     filename = "fasta.fasta"
 
 
-class SageConfig(Node):
+class SageConfig(nf.Node):
     filename = "sage_config.json"
 
 
-class SageResultsJson(Node):
+class SageResultsJson(nf.Node):
     filename = "results.json"
 
 
-class SageResultsPin(Node):
+class SageResultsPin(nf.Node):
     filename = "results.sage.pin"
 
 
-class SageResultsTsv(Node):
+class SageResultsTsv(nf.Node):
     filename = "results.sage.tsv"
 
 
-class SageMatchedFragments(Node):
+class SageMatchedFragments(nf.Node):
     filename = "matched_fragments.sage.tsv"
 
 
@@ -96,7 +86,7 @@ class RecalibratedSpectra(MgfSpectra):
     filename = "recalibrated_spectra.mgf"
 
 
-class RecalibrationTolerance(Node):
+class RecalibrationTolerance(nf.Node):
     filename = "recalibration_tolerance.json"
 
 
@@ -114,47 +104,47 @@ class RecalibrationTolerance(Node):
 # call site (see raw_spectra() below) rather than inside a single templated command.
 
 
-@workflow
-def raw_spectra(P: Pipeline, path: str):
+@nf.workflow
+def raw_spectra(P: nf.Pipeline, path: str):
     """Choose the concrete artifact type by the real file's extension -- see the comment
     above SpectraFile's definition for why a mismatched extension is a silent,
     zero-spectra Sage failure."""
     lower = str(path).lower()
     if lower.endswith(".mgf"):
-        return symlink(MgfSpectra, path)
+        return nf.symlink(MgfSpectra, path)
     if lower.endswith(".mzml") or lower.endswith(".mzml.gz"):
-        return symlink(MzMlSpectra, path)
+        return nf.symlink(MzMlSpectra, path)
     raise ValueError(
         f"unsupported spectra file extension: {path!r} (expected .mzml or .mgf)"
     )
 
 
-@text_file
+@nf.text_file
 def write_sage_config(text: str):
-    sage_config = outputs(SageConfig)
+    sage_config = nf.outputs(SageConfig)
     return sage_config
 
 
 # --- compute rules ---
-@command
+@nf.command
 def select_recalibration_spectra(spectra: SpectraFile, top_k: int):
     """Subset a spectra file to its top-K most intense precursors, for mass-error
     estimation on a fast first pass."""
-    subset = outputs(RecalibrationSpectraSubset)
-    shell(
+    subset = nf.outputs(RecalibrationSpectraSubset)
+    nf.shell(
         "python scripts/select_top_precursors.py {spectra} --top-k {top_k} -o "
         "{subset}"
     )
     return subset
 
 
-@command
+@nf.command
 def run_sage(spectra: SpectraFile, fasta: Fasta, config: SageConfig):
-    results_json = outputs(SageResultsJson)
-    results_pin = outputs(SageResultsPin)
-    results_tsv = outputs(SageResultsTsv)
-    matched_fragments = outputs(SageMatchedFragments)
-    shell(
+    results_json = nf.outputs(SageResultsJson)
+    results_pin = nf.outputs(SageResultsPin)
+    results_tsv = nf.outputs(SageResultsTsv)
+    matched_fragments = nf.outputs(SageMatchedFragments)
+    nf.shell(
         "sage {config} -f {fasta} --write-pin --annotate-matches -o {workdir} "
         "{spectra} && test -f {results_json} && test -f {results_pin} && test "
         "-f {results_tsv} && test -f {matched_fragments}"
@@ -162,7 +152,7 @@ def run_sage(spectra: SpectraFile, fasta: Fasta, config: SageConfig):
     return results_json, results_pin, results_tsv, matched_fragments
 
 
-@command
+@nf.command
 def recalibrate_spectra(
     results_tsv: SageResultsTsv,
     spectra: SpectraFile,
@@ -188,9 +178,9 @@ def recalibrate_spectra(
     `q_column` defaults to Sage's peptide-level FDR (the standard, stricter choice for
     real datasets); see scripts/fit_recalibration.py's docstring for why a small
     dataset may need `spectrum_q` instead."""
-    tolerance = outputs(RecalibrationTolerance)
-    recalibrated_spectra = outputs(RecalibratedSpectra)
-    shell(
+    tolerance = nf.outputs(RecalibrationTolerance)
+    recalibrated_spectra = nf.outputs(RecalibratedSpectra)
+    nf.shell(
         "python scripts/fit_recalibration.py {results_tsv} --fdr {fdr} "
         "--q-column {q_column} -o {tolerance} && python "
         "scripts/recalibrate_spectra.py {spectra} {tolerance} -o "
@@ -199,10 +189,10 @@ def recalibrate_spectra(
     return tolerance, recalibrated_spectra
 
 
-@command
+@nf.command
 def update_sage_config(sage_config: SageConfig, tolerance: RecalibrationTolerance):
-    recalibrated_sage_config = outputs(SageConfig)
-    shell(
+    recalibrated_sage_config = nf.outputs(SageConfig)
+    nf.shell(
         "python -m necroflow.tools.config_set {sage_config} "
         "{workdir}/precursor_tol_updated.json --target precursor_tol --source "
         "{tolerance} --source-field precursor_tol && python -m "
@@ -213,8 +203,8 @@ def update_sage_config(sage_config: SageConfig, tolerance: RecalibrationToleranc
     return recalibrated_sage_config
 
 
-@workflow
-def recalibrated_sage_search(P: Pipeline, config: dict) -> None:
+@nf.workflow
+def recalibrated_sage_search(P: nf.Pipeline, config: dict) -> None:
     """Two-pass Sage search: the first pass searches a subset of the spectra to
     estimate mass error, then the second pass re-runs the full spectra file with
     recalibrated tolerances. `run_sage` is instantiated twice on distinct lineage.
@@ -234,7 +224,7 @@ def recalibrated_sage_search(P: Pipeline, config: dict) -> None:
     made things worse, because the calibration sample never saw the full error range
     to correct for. A wide calibration-only tolerance fixes that."""
     P.spectra = raw_spectra(P, config["spectra_path"])
-    P.fasta = symlink(Fasta, config["fasta_path"])
+    P.fasta = nf.symlink(Fasta, config["fasta_path"])
     P.sage_config = write_sage_config(
         text=json.dumps(config["sage"], sort_keys=True, indent=2) + "\n"
     )

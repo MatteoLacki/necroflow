@@ -43,29 +43,27 @@ job TOMLs can keep their `.pipeline` reference.
 
 ```python
 # pipeline.py
-from necroflow import (
-    Node, Pipeline, Resource, command, outputs, shell, symlink, workflow,
-)
+import necroflow as nf
 
 
-class Source(Node):
+class Source(nf.Node):
     filename = "source.txt"
 
 
-class Result(Node):
+class Result(nf.Node):
     filename = "result.txt"
 
 
-@command
-def convert(src: Source, threads: Resource[int] = 4):
-    dst = outputs(Result)
-    shell("cat {src} > {dst}")
+@nf.command
+def convert(src: Source, threads: nf.Resource[int] = 4):
+    dst = nf.outputs(Result)
+    nf.shell("cat {src} > {dst}")
     return dst
 
 
-@workflow
-def factory(P: Pipeline, config: dict) -> None:
-    P.source = symlink(Source, config["path"])
+@nf.workflow
+def factory(P: nf.Pipeline, config: dict) -> None:
+    P.source = nf.symlink(Source, config["path"])
     P.result = convert(P.source)
 ```
 
@@ -153,11 +151,11 @@ the CLI. Save as `run_pipeline.py` and run `python run_pipeline.py`:
 
 ```python
 # run_pipeline.py
-from necroflow import DAG, Pipeline
+import necroflow as nf
 from pipeline import factory
 
-dag = DAG("python-nodes")
-P = Pipeline(dag)
+dag = nf.DAG("python-nodes")
+P = nf.Pipeline(dag)
 factory(P, {"path": "input.txt"})
 P.finish()
 dag.require([P.result])

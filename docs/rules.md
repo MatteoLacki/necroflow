@@ -17,6 +17,9 @@ run_sage = command(
 
 The decorator form executes ordinary Python during graph construction.
 
+Examples can use `import necroflow as nf` with `@nf.command`, `nf.outputs(Type)`,
+and `nf.shell(...)`. Module-qualified artifact types are accepted in outputs.
+
 For a decorated rule, the function signature is the complete input schema.
 Every parameter must have a type annotation: Node dependencies use a
 `Node` contract, scalar/config inputs use ordinary Python types, and a

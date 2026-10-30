@@ -24,6 +24,8 @@ Before version 1.0.0, prefer simpler APIs over backwards compatibility. Breaking
 API changes are allowed; migrate affected callers, examples, docs, and tests
 together rather than adding compatibility wrappers solely to preserve old syntax.
 
+Examples use `import necroflow as nf` and qualify framework names with `nf.`.
+
 **Code is authoritative.** Read the relevant docstrings and focused docs before
 asserting behavior. Detailed invariants, module map, scheduler/run protocols,
 testing conventions, and human review markers live in `docs/agent-internals.md`.
