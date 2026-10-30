@@ -102,9 +102,9 @@ These have been true since the June refactors and are load-bearing design decisi
   lives outside the node store and is passed in as a path. A `mutable=True` Command flag existed for
   this until 2026-09-16 and was removed: it stopped external byte edits from staling consumers but
   could not stop the workdir itself being discarded whenever identity moved.
-- **Variadic Node inputs retain groups.** `tuple[Node, ...]` accepts an ordered
-  tuple, while `Annotated[tuple[Node, ...], Many(...)]` applies inclusive size
-  bounds. RuleCall/fingerprint/command contexts retain named tuple groups;
+- **Variadic Node inputs retain groups.** `list[Node]` and `tuple[Node, ...]` accept their respective ordered
+  containers; `Annotated[..., Many(...)]` applies inclusive size bounds. Lists
+  are copied for the body and snapshotted as tuples for dependencies. RuleCall/fingerprint/command contexts retain named tuple groups;
   `RuleCall.parents` is their declaration-order flattening for graph traversal.
 - **Addresses are eager.** The Pipeline owns fingerprint/shell policy while its DAG owns the
   node-store root. A rule call returns Nodes with final fingerprints, relative paths, and absolute

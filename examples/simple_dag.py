@@ -25,6 +25,10 @@ class Log(nf.Node):
     filename = "align.log"
 
 
+class CombinedLog(nf.Node):
+    filename = "combined.log"
+
+
 class Counts(nf.Node):
     filename = "counts.txt"
 
@@ -45,6 +49,15 @@ def align(fastq: Fastq, reference: str, threads: nf.Resource[int] = 4):
         "bwa mem -t {threads} {reference} {fastq} 2> {log} | samtools view -b -o {bam}"
     )
     return bam, log
+
+
+@nf.command
+def combine_logs(logs: list[Log]) -> CombinedLog:
+    combined = nf.outputs(CombinedLog)
+    if not logs:
+        raise ValueError("at least one log is required")
+    nf.shell("cat {logs} > {combined}")
+    return combined
 
 
 @nf.command
@@ -87,6 +100,16 @@ def aligned_reads(P: nf.Pipeline, config) -> None:
     P.fastq = nf.symlink(Fastq, config.path)
     P.bam, P.align_log = align(P.fastq, reference=config.reference)
     P.sorted_bam = sort_bam(P.bam)
+
+
+@nf.workflow
+def cohort_pipeline(P: nf.Pipeline, configs: list[SimpleNamespace]) -> None:
+    logs = []
+    for number, config in enumerate(configs, 1):
+        sample = P.subpipeline(f"sample_{number}")
+        aligned_reads(sample, config)
+        logs.append(sample.align_log)
+    P.combined_log = combine_logs(logs)
 
 
 @nf.workflow
@@ -145,4 +168,4 @@ def shared_dag(outdir="results"):
 if __name__ == "__main__":
     pipeline, commands = inspect_example()
     print(pipeline)
-    print("\n".join(nf.command for command in commands if nf.command is not None))
+    print("\n".join(command for command in commands if command is not None))

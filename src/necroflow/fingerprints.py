@@ -128,6 +128,8 @@ def _type_name(annotation: Any) -> str:
             type_name = f"{value_type.__module__}.{value_type.__qualname__}"
             metadata_names.append(f"{type_name}:{value!r}")
         return f"typing.Annotated[{_type_name(base)},{','.join(metadata_names)}]"
+    if origin is list:
+        return f"builtins.list[{_type_name(get_args(annotation)[0])}]"
     if origin is tuple:
         members = get_args(annotation)
         if len(members) == 2 and members[1] is Ellipsis:

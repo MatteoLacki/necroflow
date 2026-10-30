@@ -239,52 +239,43 @@ dependency groups.
 
 ## Variadic Node inputs
 
-Use `tuple[Node, ...]` when a rule consumes an ordered number of Nodes
-that is only known while the workflow runs. The call receives one actual
-tuple for that named input:
+Use `list[Node]` or `tuple[Node, ...]` for an ordered number of artifact inputs.
+A list annotation requires a list; a tuple annotation requires a tuple. Order and
+duplicates are preserved. Sets, generators, and expanded positional arguments are
+not supported. The collection kind and element contract participate in recipe identity.
 
 ```python
-from typing import Annotated
-from necroflow import Many
+@command
+def merge(bams: list[Bam]) -> MergedBam:
+    merged = outputs(MergedBam)
+    shell("samtools merge {merged} {bams}")
+    return merged
 
-merge = command(
-    "samtools merge {merged} {bams}",
-    Inputs(bams=Annotated[tuple[Bam, ...], Many(min=1, max=10)]),
-    Outputs(merged=MergedBam),
-    name="merge",
-)
-
-P.merged = merge(P, tuple(sample_bams))
+P.merged = merge(P, sample_bams)
 ```
 
-A plain `tuple[Bam, ...]` accepts zero or more Nodes. `Many()` changes the
-default minimum to one; `min` and `max` are inclusive, and `max=None` is
-unbounded. Values must be tuples rather than lists, generators, or expanded
-positional arguments. Tuple elements retain their order and must belong to the
-same DAG as the compiling Pipeline. Node unions also work, for example
-`tuple[Bam | Cram, ...]`.
+Both plain forms accept zero or more artifacts. Use
+`Annotated[list[Bam], Many(min=1, max=10)]` (or the tuple equivalent) for inclusive
+bounds. `Many()` defaults to a minimum of one; `max=None` is unbounded. Element
+unions such as `list[Bam | Cram]` work; mixed artifact/scalar element unions do not.
+Every artifact must belong to the compiling Pipeline's DAG.
 
-Several variadic groups may appear alongside fixed Node inputs. Each group is
-still one positional rule argument:
+Lists are copied before construction. The body receives a fresh list matching its
+annotation; dependencies are recorded as an immutable tuple before body execution.
+Mutating the caller's list later cannot change a call's identity, dependencies, or
+rendered arguments. The template's collection binding refers to that original
+snapshot, even if the body modifies its private list. Build the intended dependency
+list in the workflow before calling the command.
 
-```python
-P.comparison = compare(
-    P,
-    tuple(tumor_bams),
-    P.reference,
-    tuple(normal_bams),
-)
-```
-
-In a static shell template, `{bams}` expands to one shell-quoted path per tuple
-element, separated by spaces. An empty plain tuple expands to the empty string.
-For repeated flags or another layout, use a Python command callback; its
-`args.inputs.bams` is an ordered `tuple[Path, ...]`. Group membership, element
-order, input name, and any `Many` bounds participate in the default fingerprint.
+Several groups can coexist with fixed artifact inputs. External CommandArgs callbacks
+continue receiving canonical tuples of paths regardless of the original container.
+The normal template renderer expands `{bams}` to independently quoted paths;
+`flag=` and `sep=` formats below apply equally to lists and tuples.
+See `examples/simple_dag.py` for a cohort workflow that collects logs in a list.
 
 ## Variadic shell argument formats
 
-Tuple artifact inputs support three forms. Order and duplicate inputs are preserved.
+List and tuple artifact inputs support three forms. Order and duplicate inputs are preserved.
 
 | Placeholder | Expansion | Quoting |
 |---|---|---|
@@ -295,8 +286,8 @@ Tuple artifact inputs support three forms. Order and duplicate inputs are preser
 Use `shell("analyse {files:flag=-f} > {report}")` for repeated flags, or
 `shell("analyse --files {files:sep=,} > {report}")` for a delimited value.
 The program must accept the chosen command-line convention. `flag=` and `sep=`
-are mutually exclusive, nonempty options; unknown tuple formats are errors.
-Empty tuples emit no arguments for the default/flag forms and one empty argument
+are mutually exclusive, nonempty options; unknown collection formats are errors.
+Empty collections emit no arguments for the default/flag forms and one empty argument
 for `sep=`. Reject empty inputs in the declaration if the tool requires files.
 A path containing the separator is ambiguous to the tool's list parser; shell
 quoting preserves argument boundaries but cannot escape its internal format.

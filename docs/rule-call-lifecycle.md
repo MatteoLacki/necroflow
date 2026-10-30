@@ -568,3 +568,10 @@ Construction, owner validation, interning, resource policy, and execution follow
 the normal Command lifecycle. The helper creates no files during construction;
 the shell command creates the symlink during execution, retaining consumed-hash
 tracking of external contents. The former `@symlink_file` decorator is removed.
+
+List artifact inputs use list[Node] contracts alongside tuple[Node, ...]. Validate
+the declared container and element types; copy caller-owned lists before running
+the body and snapshot their dependencies into canonical tuples before hashing.
+Executable bodies receive lists for list annotations. Parent grouping, callbacks,
+and shell expansion operate on immutable tuple snapshots. List contract type names
+include their element types; existing tuple identity encodings are unchanged.

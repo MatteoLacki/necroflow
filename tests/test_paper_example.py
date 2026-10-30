@@ -32,3 +32,23 @@ def test_paper_example_workflows_have_consistent_contracts():
     assert type(quant.counts) is example.Counts
     assert type(variants.vcf) is example.Vcf
     assert len(dag.nodes) < len(quant.nodes) + len(variants.nodes)
+
+
+def test_cohort_collects_logs_as_a_list():
+    """The cohort example passes a normal list to a typed collider command."""
+    example = _load_example()
+    pipeline = Pipeline(DAG("/tmp/necroflow-paper-list-cohort"))
+    example.cohort_pipeline(
+        pipeline,
+        [
+            example.example_config(path="/data/a.fastq"),
+            example.example_config(path="/data/b.fastq"),
+        ],
+    )
+    pipeline.finish()
+    combined = pipeline.combined_log
+    assert type(combined) is example.CombinedLog
+    assert len(combined.parents) == 2
+    assert all(type(node) is example.Log for node in combined.parents)
+    assert combined.rule_call.inputs.logs == tuple(combined.parents)
+    assert combined.rule_call.resolve().startswith("cat ")

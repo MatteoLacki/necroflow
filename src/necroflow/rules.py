@@ -128,6 +128,7 @@ class Many:
 class _NodeInputContract:
     element_type: Any
     variadic: bool = False
+    collection: type = tuple
     many: Many | None = None
     value_types: tuple[Any, ...] = ()
 
@@ -160,7 +161,7 @@ def _node_input_contract(
 
     Fixed Node subclasses and unions containing Node subclasses produce positional contracts.
     A fixed mixed union may select either a managed Node or a plain value.
-    ``tuple[Node, ...]`` produces a variadic contract, optionally bounded
+    ``tuple[Node, ...]`` or ``list[Node]`` produces a variadic contract, optionally bounded
     by one ``Many`` item in ``Annotated`` metadata. Invalid or ambiguous Node
     declarations raise immediately; ordinary config annotations return
     ``None`` and are therefore handled as keyword inputs by ``Command``.
@@ -178,9 +179,12 @@ def _node_input_contract(
         )
     many = many_values[0] if many_values else None
 
-    if get_origin(base) is tuple:
+    if get_origin(base) in (tuple, list):
+        collection = get_origin(base)
         tuple_args = get_args(base)
-        if len(tuple_args) == 2 and tuple_args[1] is Ellipsis:
+        if (
+            collection is tuple and len(tuple_args) == 2 and tuple_args[1] is Ellipsis
+        ) or (collection is list and len(tuple_args) == 1):
             element_type = tuple_args[0]
             element_members = _union_members(element_type)
             if element_members:
@@ -190,14 +194,16 @@ def _node_input_contract(
                 ):
                     raise TypeError(
                         f"Command {rule_name!r}: input {input_name!r} mixes "
-                        "Node and non-Node tuple element union members"
+                        f"Node and non-Node {collection.__name__} element union members"
                     )
             if _is_nodetype(element_type) or _is_nodetype_union(element_type):
-                return _NodeInputContract(element_type, variadic=True, many=many)
+                return _NodeInputContract(
+                    element_type, variadic=True, collection=collection, many=many
+                )
             if many is not None:
                 raise TypeError(
                     f"Command {rule_name!r}: input {input_name!r} uses Many with "
-                    "a tuple whose element type is not a Node"
+                    f"a {collection.__name__} whose element type is not a Node"
                 )
             return None
         if many is not None or any(
@@ -632,12 +638,12 @@ class Command(Generic[_Params, _ReturnT]):
 
             values: tuple[Any, ...]
             if contract.variadic:
-                if not isinstance(value, tuple):
+                if not isinstance(value, contract.collection):
                     raise TypeError(
-                        f"{name}: {pname!r} expected tuple of Nodes, "
+                        f"{name}: {pname!r} expected {contract.collection.__name__} of Nodes, "
                         f"got {type(value).__name__!r}"
                     )
-                values = value
+                values = tuple(value)
                 minimum = contract.many.min if contract.many is not None else 0
                 maximum = contract.many.max if contract.many is not None else None
                 if len(values) < minimum or (
@@ -707,7 +713,7 @@ class Command(Generic[_Params, _ReturnT]):
         input_values = {}
         for (name, contract), value in zip(self._pos_inputs, args):
             if contract.variadic or isinstance(value, Node):
-                node_inputs[name] = value
+                node_inputs[name] = tuple(value) if contract.variadic else value
             else:
                 input_values[name] = value
         return Node.make_outputs(
@@ -758,6 +764,14 @@ class Command(Generic[_Params, _ReturnT]):
             )
         pipeline._assert_open()
         bound = self._bind_call(args, kwargs)
+        # Snapshot caller-owned lists; bodies receive their own correctly typed copy.
+        for name, contract in self._pos_inputs:
+            if (
+                contract.variadic
+                and contract.collection is list
+                and isinstance(bound[name], list)
+            ):
+                bound[name] = list(bound[name])
         args = tuple(bound[name] for name, _contract in self._pos_inputs)
         config = {name: bound[name] for name in self._kw_inputs}
         self._validate_positional_inputs(pipeline, args)

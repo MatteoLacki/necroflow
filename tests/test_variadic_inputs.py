@@ -478,3 +478,111 @@ def test_bad_tuple_formats_fail_before_registration(tmp_path, spec):
     with pytest.raises(ValueError):
         invalid(pipeline, (), spec)
     assert not pipeline.dag.calls
+
+
+@command
+def capture_list(files: list[Bam], mode: str, interpreter: str, script: str):
+    merged = outputs(Merged)
+    assert isinstance(files, list)
+    if mode == "mutate":
+        files.clear()
+    spec = {"args": "", "mutate": "", "flag": ":flag=-f", "sep": ":sep=,"}[mode]
+    shell("{interpreter} -c {script} {merged} {files" + spec + "}")
+    return merged
+
+
+@pytest.mark.parametrize("mode", ["args", "flag", "sep", "mutate"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_list_inputs_render_and_snapshot(tmp_path, mode, empty):
+    """Lists reach the body as copies; dependency snapshots render every format."""
+    import ast
+    import sys
+
+    pipeline = Pipeline(DAG(tmp_path / "lists {braces} 'quotes' $value"))
+    a = _source(pipeline, "a")
+    b = _source(pipeline, "b")
+    original = [] if empty else [b, a, b]
+    caller = list(original)
+    script = "import sys;open(sys.argv[1], 'w').write(repr(sys.argv[2:]))"
+    pipeline.result = capture_list(pipeline, caller, mode, sys.executable, script)
+    assert caller == original
+    assert pipeline.result.rule_call.inputs.files == tuple(original)
+    assert pipeline.result.parents == original
+    if mode != "mutate":
+        assert (
+            capture_list(pipeline, list(original), mode, sys.executable, script)
+            is pipeline.result
+        )
+    caller.clear()
+    assert pipeline.result.parents == original
+    pipeline.finish()
+    pipeline.dag.require([pipeline.result])
+    run(pipeline.dag)
+    paths = [str(n.path) for n in original]
+    expected = paths
+    if mode == "flag":
+        expected = [part for path in paths for part in ("-f", path)]
+    elif mode == "sep":
+        expected = [",".join(paths)]
+    assert ast.literal_eval(pipeline.result.path.read_text()) == expected
+
+
+def test_list_validation_bounds_order_and_identity(tmp_path):
+    """List contracts validate members and retain collection kind/order in identity."""
+    pipeline = Pipeline(DAG(tmp_path))
+    a, b = _source(pipeline, "a"), _source(pipeline, "b")
+    rule = Command(
+        "merge_list",
+        Inputs(files=Annotated[list[Bam], Many(min=1, max=3)]),
+        Outputs(merged=Merged),
+        "cat {files} > {merged}",
+    )
+    forward = rule(pipeline, [a, b])
+    assert rule(pipeline, [a, b]) is forward
+    assert rule(pipeline, [b, a]).provenance_hash != forward.provenance_hash
+    with pytest.raises(TypeError, match="expected list"):
+        rule(pipeline, (a, b))
+    with pytest.raises(TypeError, match="files\\[0\\].*expected Bam"):
+        rule(pipeline, [_source(pipeline, "wrong", Reference)])
+    foreign = _source(Pipeline(DAG(tmp_path / "foreign")), "a")
+    with pytest.raises(ValueError, match="different DAG"):
+        rule(pipeline, [foreign])
+    with pytest.raises(ValueError, match="between"):
+        rule(pipeline, [])
+    with pytest.raises(ValueError, match="between"):
+        rule(pipeline, [a] * 4)
+    other_type = Command(
+        "merge_list",
+        Inputs(files=list[OtherBam]),
+        Outputs(merged=Merged),
+        "cat {files} > {merged}",
+    )
+    other = _source(pipeline, "other", OtherBam)
+    assert other_type(pipeline, [other]).rule_hash != forward.rule_hash
+    plain_list = Command(
+        "kind",
+        Inputs(files=list[Bam]),
+        Outputs(merged=Merged),
+        "cat {files} > {merged}",
+    )
+    plain_tuple = Command(
+        "kind",
+        Inputs(files=tuple[Bam, ...]),
+        Outputs(merged=Merged),
+        "cat {files} > {merged}",
+    )
+    assert plain_list(pipeline, [a]).rule_hash != plain_tuple(pipeline, (a,)).rule_hash
+    union = Command(
+        "union",
+        Inputs(files=list[Bam | OtherBam]),
+        Outputs(merged=Merged),
+        "cat {files} > {merged}",
+    )
+    assert union(pipeline, [a, other]).parents == [a, other]
+    with pytest.raises(TypeError, match="mixes"):
+        Command(
+            "bad",
+            Inputs(files=list[Bam | str]),
+            Outputs(merged=Merged),
+            "touch {merged}",
+        )

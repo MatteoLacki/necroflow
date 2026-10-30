@@ -215,3 +215,14 @@ def fractional(gpu: Resource[float] = 0.5, scratch: Resource[str] = "2Gi"):
 
 
 assert_type(fractional(pipeline, gpu=0.25), Source)
+
+
+@command
+def merge_list(sources: list[Source]) -> Left:
+    left = outputs(Left)
+    assert_type(sources, list[Source])
+    shell("cat {sources} > {left}")
+    return left
+
+
+assert_type(merge_list(pipeline, [source_node]), Left)
