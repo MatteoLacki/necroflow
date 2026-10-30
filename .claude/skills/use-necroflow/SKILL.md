@@ -1,0 +1,1 @@
+../../../src/necroflow/skills/use-necroflow/SKILL.md

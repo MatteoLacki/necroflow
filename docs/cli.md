@@ -90,6 +90,17 @@ should enqueue work there and return promptly.
 
 Fingerprinting is framework-owned. A job containing `.fingerprint` is rejected.
 
+## Agent usage guide
+
+```bash
+necroflow guide
+```
+
+Prints the packaged `use-necroflow` skill as Markdown, including a complete
+workflow, job TOML, inspection/run commands, and cache troubleshooting. Works
+outside a source checkout and does not load workflows or create files.
+The source is [SKILL.md](../src/necroflow/skills/use-necroflow/SKILL.md).
+
 ## Project scaffolding
 
 Create a starter workflow with:

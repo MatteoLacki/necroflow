@@ -58,8 +58,8 @@ input/output, or the constraint.
 - Generated input/output paths are shell-quoted by the template renderer. Argv-list
   commands are unsupported.
 - The command must write every output; exit 0 with a missing output is a failure.
-- Constraints are scheduling metadata and do not affect fingerprints. `repeat=N` is
-  compatibility metadata only.
+- Constraints are scheduling metadata and do not affect fingerprints. `repeat=N` retries failed commands up to N attempts,
+  stopping at the first success; retry policy stays outside fingerprints.
 - Config values are fingerprinted by value. A file path string does not hash that file.
   Ingest external datasets with `@symlink_file` or
   `symlink_file_rule(name, OutputType)` so source edits enter stale detection.

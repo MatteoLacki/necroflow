@@ -14,6 +14,11 @@ Python pipeline framework inspired by Snakemake. Define rules, wire them into pi
 
 Compact overview of the current software surface, see [features.txt](features.txt).
 
+For agents writing or operating pipelines, start with the
+[usage skill](src/necroflow/skills/use-necroflow/SKILL.md): one complete example,
+inspection commands, and common mistakes. Every installation includes it:
+`necroflow guide`. Framework contributors start with [AGENTS.md](AGENTS.md).
+
 See [COMPARISON.md](COMPARISON.md) for a detailed comparison with Snakemake, Nextflow, Luigi, CWL/WDL, and Prefect/Airflow across 20 axes.
 
 See [COMPARISON_PYDRA.md](COMPARISON_PYDRA.md) for a feature comparison with Pydra

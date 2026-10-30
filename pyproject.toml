@@ -66,4 +66,4 @@ where = ["src"]
 version = {attr = "necroflow.__version__"}
 
 [tool.setuptools.package-data]
-necroflow = ["templates/canonical/*"]
+necroflow = ["templates/canonical/*", "skills/*/SKILL.md"]

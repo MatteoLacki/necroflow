@@ -827,6 +827,12 @@ def _explain(args) -> None:
             print("  reason:", reason["kind"])
 
 
+def _guide(args) -> None:
+    """Print the usage skill shipped with the installed package."""
+    guide = resources.files("necroflow") / "skills" / "use-necroflow" / "SKILL.md"
+    print(guide.read_text(encoding="utf-8"), end="")
+
+
 def _init(args) -> None:
     """Copy the canonical starter project into the requested directory."""
     dest = Path(args.dir)
@@ -1187,6 +1193,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command")
 
+    guide_parser = subparsers.add_parser(
+        "guide", help="Print the packaged pipeline usage skill"
+    )
+    guide_parser.set_defaults(func=_guide)
+
     init_parser = subparsers.add_parser(
         "init", help="Create a starter necroflow project"
     )
@@ -1290,6 +1301,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> None:
     argv = list(argv) if argv is not None else None
     commands = {
+        "guide",
         "init",
         "graph",
         "outputs",

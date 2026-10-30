@@ -1,4 +1,4 @@
-"""Drift guards: CLAUDE.md and docs/ must not contradict the code.
+"""Drift guards: agent guidance and docs/ must not contradict the code.
 
 CLAUDE.md is auto-loaded by AI agents and trusted over the source. Stale
 signatures there caused agents to write code against APIs that no longer
@@ -16,23 +16,25 @@ from necroflow.schedulers import fifo_scheduler
 
 REPO = Path(__file__).resolve().parent.parent
 CLAUDE_MD = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
+AGENT_REFERENCE = CLAUDE_MD + (REPO / "docs" / "agent-internals.md").read_text(
+    encoding="utf-8"
+)
 
 
-def test_run_parameters_are_documented_in_claude_md():
-    """Every run() parameter name must appear in CLAUDE.md.
+def test_run_parameters_are_documented_in_agent_reference():
+    """Every run() parameter name must appear in the agent reference.
 
-    Agents read CLAUDE.md before the code. If run() grows a parameter that
-    CLAUDE.md never mentions, agents cannot discover it; if CLAUDE.md lists the
-    parameters, at minimum the list must be complete. The full semantics live
-    in the docstring — CLAUDE.md only needs the names.
+    CLAUDE.md routes agents to docs/agent-internals.md for framework details.
+    That reference must list every run() parameter so agents can discover it;
+    the full semantics live in the code's docstring.
     """
     params = inspect.signature(executor.run).parameters
-    missing = [name for name in params if name not in CLAUDE_MD]
-    assert not missing, f"run() params absent from CLAUDE.md: {missing}"
+    missing = [name for name in params if name not in AGENT_REFERENCE]
+    assert not missing, f"run() params absent from agent reference: {missing}"
 
 
-def test_scheduler_protocol_in_claude_md_matches_code():
-    """The scheduler protocol documented in CLAUDE.md must match the built-ins.
+def test_scheduler_protocol_in_agent_reference_matches_code():
+    """The scheduler protocol documented in the agent reference must match the built-ins.
 
     The protocol grew a third argument (available_resources); the old 2-argument
     form survived in CLAUDE.md and taught agents to write schedulers that raise
@@ -41,12 +43,14 @@ def test_scheduler_protocol_in_claude_md_matches_code():
     """
     params = list(inspect.signature(fifo_scheduler).parameters)
     assert params == ["ready", "remaining", "available_resources"]
-    missing = [name for name in params if name not in CLAUDE_MD]
-    assert not missing, f"scheduler protocol params absent from CLAUDE.md: {missing}"
+    missing = [name for name in params if name not in AGENT_REFERENCE]
+    assert (
+        not missing
+    ), f"scheduler protocol params absent from agent reference: {missing}"
 
 
 def test_file_map_covers_all_modules():
-    """Every top-level module and subpackage of necroflow must appear in CLAUDE.md.
+    """Every top-level module and subpackage of necroflow must appear in the agent reference.
 
     The file map is how agents route to the right module. Modules added after
     the map was written (config.py, ...) were invisible to
@@ -58,12 +62,12 @@ def test_file_map_covers_all_modules():
         if path.name.startswith("_"):  # __init__.py and other internal modules
             continue
         if path.is_file() and path.suffix == ".py":
-            if path.name not in CLAUDE_MD:
+            if path.name not in AGENT_REFERENCE:
                 missing.append(path.name)
         elif path.is_dir() and path.name != "__pycache__":
-            if f"{path.name}/" not in CLAUDE_MD:
+            if f"{path.name}/" not in AGENT_REFERENCE:
                 missing.append(f"{path.name}/")
-    assert not missing, f"modules absent from CLAUDE.md file map: {missing}"
+    assert not missing, f"modules absent from agent reference file map: {missing}"
 
 
 def test_cli_subcommands_are_documented():
