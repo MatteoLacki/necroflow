@@ -282,6 +282,26 @@ For repeated flags or another layout, use a Python command callback; its
 `args.inputs.bams` is an ordered `tuple[Path, ...]`. Group membership, element
 order, input name, and any `Many` bounds participate in the default fingerprint.
 
+## Variadic shell argument formats
+
+Tuple artifact inputs support three forms. Order and duplicate inputs are preserved.
+
+| Placeholder | Expansion | Quoting |
+|---|---|---|
+| `{files}` | `file0 file1` | Each path separately |
+| `{files:flag=-f}` | `-f file0 -f file1` | Each flag/path separately |
+| `{files:sep=,}` | `file0,file1` | Join raw paths, then quote the whole argument |
+
+Use `shell("analyse {files:flag=-f} > {report}")` for repeated flags, or
+`shell("analyse --files {files:sep=,} > {report}")` for a delimited value.
+The program must accept the chosen command-line convention. `flag=` and `sep=`
+are mutually exclusive, nonempty options; unknown tuple formats are errors.
+Empty tuples emit no arguments for the default/flag forms and one empty argument
+for `sep=`. Reject empty inputs in the declaration if the tool requires files.
+A path containing the separator is ambiguous to the tool's list parser; shell
+quoting preserves argument boundaries but cannot escape its internal format.
+In f-strings, double the outer braces: `f"analyse {options} {{files:flag=-f}}"`.
+
 ## Python command callbacks
 
 When a command must be assembled from resolved values, pass a module-level

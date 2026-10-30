@@ -16,6 +16,9 @@ from necroflow import (
     outputs,
     Outputs,
     Pipeline,
+    run,
+    shell,
+    text_file,
 )
 from necroflow.planning import plan_execution
 from necroflow.rules import Command
@@ -370,3 +373,108 @@ def test_fixed_input_v4_hashes_are_deterministic(tmp_path):
     assert source.provenance_hash == other_source.provenance_hash
     assert consumed.rule_hash == other_consumed.rule_hash
     assert consumed.provenance_hash == other_consumed.provenance_hash
+
+
+def test_shell_log_tuple_concatenates_quoted_paths_in_order(tmp_path):
+    """Execute the paper's collider with shell-sensitive paths and reversed inputs."""
+
+    class Log(Node):
+        filename = "run {literal}'s $value.log"
+
+    @text_file
+    def make_log(text: str):
+        log = outputs(Log)
+        return log
+
+    @command
+    def combine_logs(logs: tuple[Log, ...]) -> Log:
+        combined_log = outputs(Log)
+        if not logs:
+            raise ValueError("at least one log is required")
+        shell("cat {logs} > {combined_log}")
+        return combined_log
+
+    pipeline = Pipeline(DAG(tmp_path / "nodes {braces} 'quotes' $value; spaces"))
+    pipeline.first = make_log(pipeline, text="first\n")
+    pipeline.second = make_log(pipeline, text="second\n")
+    logs = (pipeline.first, pipeline.second)
+    pipeline.forward = combine_logs(pipeline, logs)
+    pipeline.reverse = combine_logs(pipeline, tuple(reversed(logs)))
+
+    with pytest.raises(TypeError):
+        " ".join(logs)
+
+    for node, ordered in (
+        (pipeline.forward, logs),
+        (pipeline.reverse, tuple(reversed(logs))),
+    ):
+        assert shlex.split(node.rule_call.resolve()) == [
+            "cat",
+            *(str(log.path) for log in ordered),
+            ">",
+            str(node.path),
+        ]
+        assert node.parents == list(ordered)
+
+    before = set(pipeline.dag.calls)
+    with pytest.raises(ValueError, match="at least one log"):
+        combine_logs(pipeline, ())
+    assert set(pipeline.dag.calls) == before
+
+    pipeline.finish()
+    pipeline.dag.require([pipeline.forward, pipeline.reverse])
+    run(pipeline.dag)
+    assert pipeline.forward.path.read_text() == "first\nsecond\n"
+    assert pipeline.reverse.path.read_text() == "second\nfirst\n"
+
+
+@pytest.mark.parametrize("mode", ["args", "flag", "sep"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_tuple_formats_execute_with_exact_argv(tmp_path, mode, empty):
+    """A real process receives each repeated flag/path or one joined value intact."""
+    import ast
+    import sys
+
+    @command
+    def capture(files: tuple[Bam, ...], mode: str, interpreter: str, script: str):
+        merged = outputs(Merged)
+        templates = {
+            "args": "{interpreter} -c {script} {merged} {files}",
+            "flag": "{interpreter} -c {script} {merged} {files:flag=-f}",
+            "sep": "{interpreter} -c {script} {merged} --files {files:sep=,}",
+        }
+        shell(templates[mode])
+        return merged
+
+    pipeline = Pipeline(DAG(tmp_path / "nodes {literal} 'quoted' $value; spaces"))
+    first = _source(pipeline, "first")
+    second = _source(pipeline, "second")
+    files = () if empty else (second, first, second)
+    script = "import sys;open(sys.argv[1], 'w').write(repr(sys.argv[2:]))"
+    pipeline.result = capture(pipeline, files, mode, sys.executable, script)
+    pipeline.finish()
+    pipeline.dag.require([pipeline.result])
+    run(pipeline.dag)
+    paths = [str(f.path) for f in files]
+    expected = paths if mode == "args" else [part for p in paths for part in ("-f", p)]
+    if mode == "sep":
+        expected = ["--files", ",".join(paths)]
+    assert ast.literal_eval(pipeline.result.path.read_text()) == expected
+
+
+@pytest.mark.parametrize(
+    "spec", ["flag=", "sep=", "flag=word", "flag=-f -g", "wat=,", "flag=-f,sep=,"]
+)
+def test_bad_tuple_formats_fail_before_registration(tmp_path, spec):
+    """Malformed tuple formats are rejected when a Shell is constructed."""
+
+    @command
+    def invalid(files: tuple[Bam, ...], spec: str):
+        merged = outputs(Merged)
+        shell("cat {files:" + spec + "} > {merged}")
+        return merged
+
+    pipeline = Pipeline(DAG(tmp_path))
+    with pytest.raises(ValueError):
+        invalid(pipeline, (), spec)
+    assert not pipeline.dag.calls

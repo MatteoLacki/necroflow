@@ -550,6 +550,12 @@ Existing dynamic factories, external CommandArgs callbacks, and text/symlink
 materializers retain their separate lifecycle and identities. Old inline command
 assignments/nested command functions are replaced by shell registration.
 
+Variadic shell placeholders preserve tuple order and duplicates. `{files}` emits
+independently quoted paths, `{files:flag=-f}` repeats the flag for each path, and
+`{files:sep=,}` joins raw paths before quoting one argument. The latter emits an
+empty argument for an empty tuple; the other forms emit none. Tuple formats are
+validated during construction; flag and separator options cannot be combined.
+
 ## Typed external-file shorthand
 
 `symlink(Type, path)` compiles through the existing symlink-file rule factory.

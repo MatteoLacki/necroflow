@@ -557,6 +557,19 @@ class Command(Generic[_Params, _ReturnT]):
                     else:
                         placeholders.add(field_name)
                     continue
+                contract = (
+                    _node_input_contract(name, field_name, inputs.specs[field_name])
+                    if field_name in inputs.specs
+                    else None
+                )
+                if contract is not None and contract.variadic:
+                    from necroflow.rule_call import _ShellArguments
+
+                    _ShellArguments.parse_spec(format_spec)
+                    if _conversion is not None:
+                        raise ValueError(
+                            "tuple placeholders do not support !s, !r, or !a conversions"
+                        )
                 # Keep the top-level field name for advanced format expressions.
                 placeholders.add(field_name.split(".", 1)[0].split("[", 1)[0])
         constraint_names = set(constraints) | {"threads"}

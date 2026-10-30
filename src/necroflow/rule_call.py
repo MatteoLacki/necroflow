@@ -90,8 +90,32 @@ class _ShellArguments:
     def __init__(self, values: tuple[Path, ...]):
         self.values = values
 
+    @staticmethod
+    def parse_spec(spec: str) -> tuple[str, str]:
+        if not spec:
+            return "args", ""
+        if ",flag=" in spec or ",sep=" in spec:
+            raise ValueError("flag= and sep= cannot be combined")
+        if spec.startswith("flag="):
+            flag = spec[5:]
+            if not flag.startswith("-") or any(c.isspace() for c in flag):
+                raise ValueError("flag= requires one nonempty flag, e.g. flag=-f")
+            return "flag", flag
+        if spec.startswith("sep=") and spec[4:]:
+            return "sep", spec[4:]
+        raise ValueError(f"invalid tuple format {spec!r}; use flag=-f or sep=,")
+
+    def __format__(self, spec: str) -> str:
+        mode, value = self.parse_spec(spec)
+        if mode == "sep":
+            return shlex.quote(value.join(str(item) for item in self.values))
+        paths = [shlex.quote(str(item)) for item in self.values]
+        if mode == "flag":
+            return " ".join(f"{shlex.quote(value)} {path}" for path in paths)
+        return " ".join(paths)
+
     def __str__(self) -> str:
-        return " ".join(shlex.quote(str(value)) for value in self.values)
+        return format(self, "")
 
 
 class _ConstraintFormatter:
@@ -113,7 +137,7 @@ def _quote_command_substitution(value: Any) -> Any:
     if isinstance(value, _ConstraintFormatter):
         return value
     if isinstance(value, _ShellArguments):
-        return str(value)
+        return value
     return shlex.quote(str(value))
 
 
