@@ -190,8 +190,8 @@ non-Node arms; a managed Node cannot be captured as a default because it belongs
 to one concrete DAG. Defaults on pure fixed or variadic Node inputs raise
 ``TypeError``. Positional mixed defaults must be trailing among positional
 inputs so omission cannot shift a later required dependency. Specialized
-``text_file`` and ``symlink_file`` declarations continue to require their one
-input explicitly.
+``text_file`` declarations continue to require their text input explicitly;
+``symlink(Type, path)`` requires an external path.
 
 Defaults are expanded before a rule call is validated and fingerprinted. An
 omitted value and the same value passed explicitly therefore intern to the same
@@ -628,15 +628,38 @@ def validate(config):
         raise ValueError("invalid mmappet dataset: missing precursors.parquet")
 ```
 
+## External-file ingestion
+
+```python
+from necroflow import symlink, workflow
+
+@workflow
+def build(P, config):
+    P.fastq = symlink(Fastq, config["reads"])
+```
+
+`symlink(Type, path)` returns an instance of the concrete Node subclass using
+its declared filename. It accepts string or text `PathLike` paths. Workflow
+ownership is implicit; outside workflows use `symlink(Type, path, pipeline=P)`.
+An explicit owner overrides the active context for that call. Labels remain
+explicit, construction creates no files, and finished Pipelines reject new calls.
+
+The generated rule is named `symlink_<TypeName>` with output name `file`.
+Fingerprints include the qualified artifact type, filename, path text, and usual
+shell policy, so the same type/path deduplicates within a shared DAG regardless
+of labels or call locations. Distinct qualified types retain distinct identities.
+External bytes participate in normal content-change detection after ingestion;
+see [external dataset ingestion](caching.md#external-dataset-ingestion).
+
+For custom rule names or input/output names use `symlink_file_rule(...)`.
+`@symlink_file` has been removed; replace its declarations/calls with the helper.
+Generated rule identities can change existing cache addresses.
+
 ## Multi-output rules
 
 A rule with multiple declared outputs is one atomic RuleCall. Requesting either output activates, executes, validates, hashes, reports, retains, and cleans all co-outputs together; CLI results still copy only requested Nodes:
 
 ```python
-@symlink_file
-def raw_fastq(path: str):
-    fastq = outputs(Fastq)
-    return fastq
 @command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
 def align(fastq: Fastq, ref: str):
     """Align reads with BWA-MEM, capturing the log."""
@@ -644,7 +667,7 @@ def align(fastq: Fastq, ref: str):
     return bam, log
 dag = DAG("nodes")
 P = Pipeline(dag)
-P.fastq = raw_fastq(P, path=config.path)
+P.fastq = symlink(Fastq, config.path, pipeline=P)
 P.bam, P.log = align(P, P.fastq, ref="hg38")
 P.finish()
 dag.require(P.sinks())
@@ -655,7 +678,7 @@ dag.require(P.sinks())
 ## Command declaration class
 
 `Command` is the declaration class returned by `@command`, `command(...)`,
-`@text_file`, and `@symlink_file`. It is available as `from necroflow import Command`.
+`@text_file`, and `symlink_file_rule(...)`. It is available as `from necroflow import Command`.
 Calling a Command compiles output Nodes; `RuleCall` remains the invocation/execution
 object. Existing `from necroflow.rules import Rule` imports remain supported:
 `Rule` is an alias of `Command`, not a separate type. The rename does not alter

@@ -16,7 +16,7 @@ from necroflow import (
     Pipeline,
     command,
     outputs,
-    symlink_file,
+    symlink,
     text_file,
     workflow,
 )
@@ -36,12 +36,6 @@ class Right(Node):
 
 @text_file
 def write_text(text: str):
-    result = outputs(Text)
-    return result
-
-
-@symlink_file
-def link_text(path: str):
     result = outputs(Text)
     return result
 
@@ -77,7 +71,7 @@ def test_workflow_rules_and_file_helpers_execute_with_explicit_labels(tmp_path):
         local = write_text(text="hello\n")
         left, right = split(local)
         P.result = merge((left, right))
-        P.external = link_text(path=str(external))
+        P.external = symlink(Text, external)
         P.source = source_rule(value="source")
         # Explicit and scoped calls have identical fingerprints and canonical Nodes.
         assert source_rule(P, value="source") is P.source

@@ -160,17 +160,23 @@ bytes. Editing that file in place changes nothing necroflow can see: the
 downstream node stays `UP_TO_DATE` forever. This applies with no ingestion
 node at all; there is nothing to compare against.
 
-The fix is to ingest the file through its own rule, symlinking it in. Use the
-built-in `@symlink_file` decorator instead of hand-writing the same
-`ln -s` command for every dataset type:
+Ingest external files with `symlink(Type, path)` inside a workflow:
 
 ```python
-@symlink_file
-def raw_spectra(path: str):
-    spectra = outputs(Mzml)
-    return spectra
-P.spectra = raw_spectra(P, path=config["spectra"])
+from necroflow import symlink, workflow
+
+@workflow
+def build(P, config):
+    P.spectra = symlink(Mzml, config["spectra"])
 ```
+
+Direct Python callers use `symlink(Mzml, path, pipeline=P)`. The helper compiles
+an ordinary `symlink_Mzml` rule with output name `file`; it creates the link only
+during execution. Type identity and path determine its address, so aliases,
+subpipeline prefixes, and equivalent workflows share one call within a DAG.
+Use `symlink_file_rule(name, Type)` when an explicit rule name is needed.
+The old `@symlink_file` decorator has been removed; migrating to the generated
+rule changes cache addresses when the old rule had a different identity.
 
 `$(realpath ...)` resolves to an absolute path so the symlink survives if the
 working directory changes; see `examples/sage_recal/pipeline.py` for a

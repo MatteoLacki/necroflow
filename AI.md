@@ -53,7 +53,7 @@ Explicit factory and direct `Command` construction use `input_defaults`. Default
 are type-checked when the `Command` is declared and expanded before call validation.
 Omitted and explicitly equal values intern to the same Node. Pure fixed and
 variadic Node inputs, plus managed Node values themselves, must not be defaults.
-Built-in `text_file` and `symlink_file` inputs remain explicit.
+Built-in `text_file` inputs remain explicit; `symlink(Type, path)` ingests external files.
 
 ## Mixed Node/value inputs
 
@@ -283,3 +283,12 @@ logs. Source hashing does not discover arbitrary helper/global/environment state
 Existing dynamic factories, external CommandArgs callbacks, and text/symlink
 materializers retain their separate lifecycle and identities. Old inline command
 assignments/nested command functions are replaced by shell registration.
+
+## Typed external-file shorthand
+
+Use `symlink(Type, path)` in workflows, or `symlink(Type, path, pipeline=P)`
+with an explicit owner. The `@symlink_file` decorator is removed. The helper
+compiles `symlink_<TypeName>` through `symlink_file_rule(...)` with config input
+`path` and output `file`; qualified type identity, filename, and path text enter
+normal hashing. Labels and call sites do not. Construction creates no files.
+Migrating a named decorator to this generated rule can change cache addresses.

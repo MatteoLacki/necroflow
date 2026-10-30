@@ -12,7 +12,7 @@ necroflow
 │   ├── Module-level rule declarations
 │   │   ├── shell command factory: command(cmd, Inputs(...), Outputs(...), name=...)
 │   │   ├── decorator sugar: @command(...)
-│   │   ├── built-in decorators: @text_file / @symlink_file
+│   │   ├── built-in file helpers: @text_file / symlink(Type, path)
 │   │   ├── explicit built-in factories: text_file_rule / symlink_file_rule
 │   │   ├── lint-clean name = outputs(Node) declarations
 │   │   ├── typed Inputs / Outputs
@@ -26,7 +26,7 @@ necroflow
 │   │   ├── threads="all" reserves the full execution thread cap
 │   │   ├── repeat=N permits up to N subprocess attempts, including the first
 │   │   ├── built-in text_file rules for generated config files
-│   │   └── built-in symlink_file rules for content-tracked external inputs
+│   │   └── built-in symlink ingestion for content-tracked external inputs
 │   ├── Pipeline
 │   │   ├── references a shared DAG and owns fingerprint/shell compile policy
 │   │   ├── @workflow supplies scoped Pipeline ownership for rule(...) calls

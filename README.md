@@ -31,7 +31,7 @@ A command-line run points at a Python workflow. Rules describe typed outputs and
 
 ```python
 # pipeline.py
-from necroflow import DAG, Node, Pipeline, command, symlink_file, outputs, workflow, shell, Resource
+from necroflow import DAG, Node, Pipeline, command, symlink, outputs, workflow, shell, Resource
 
 class Fastq(Node):
     filename = "reads.fastq.gz"
@@ -42,10 +42,6 @@ class Bam(Node):
 class Counts(Node):
     filename = "counts.txt"
 
-@symlink_file
-def raw_fastq(path: str):
-    fastq = outputs(Fastq)
-    return fastq
 
 @command
 def align(fastq: Fastq, ref: str, threads: Resource[int] = 4):
@@ -61,14 +57,14 @@ def count(bam: Bam, gene_model: str):
 
 @workflow
 def rna_pipeline(P: Pipeline, config: dict) -> None:
-    P.fastq = raw_fastq(path=config["path"])
+    P.fastq = symlink(Fastq, config["path"])
     P.bam = align(P.fastq, ref=config["ref"])
     P.counts = count(P.bam, gene_model=config["gene_model"])
 ```
 
 ### Why bring an existing file into the pipeline?
 
-`raw_fastq` creates a symlink to the original file and exposes it as a typed
+`symlink(Fastq, path)` creates a symlink to the original file and exposes it as a typed
 `Fastq` Node, without copying the dataset. This makes the file a tracked
 dependency: necroflow hashes its contents and records which hash `align`
 consumed. If the reads change at the same path, the next run detects the changed
@@ -108,7 +104,7 @@ from necroflow import workflow
 
 @workflow
 def sample_pipeline(P: Pipeline, reference, sample: dict) -> None:
-    P.fastq = raw_fastq(path=sample["reads"])
+    P.fastq = symlink(Fastq, sample["reads"])
     P.bam = align(P.fastq, ref=reference)
     P.counts = count(P.bam, gene_model=sample["gene_model"])
 
@@ -177,7 +173,7 @@ from necroflow import workflow
 
 @workflow
 def add_alignment(P, config):
-    P.fastq = raw_fastq(path=config["path"])
+    P.fastq = symlink(Fastq, config["path"])
     P.bam = align(P.fastq, ref=config["ref"])
 
 @workflow

@@ -38,7 +38,7 @@ Current hashes trust `.rip/{filename}.hash` only while output mtime is no newer 
 - Missing consumed hash: legacy or malformed dependency metadata forces safe replay.
 - Parent rebuilt, child cached: `--reuse-unchanged` was enabled and output bytes were identical.
 - Parent rebuilt, child replayed: default cascading policy, changed output bytes, or another child cache check required replay.
-- Bare external path string: fingerprint includes path text, not external bytes. Ingest with `@symlink_file`, use an invalidator, or include content in config.
+- Bare external path string: fingerprint includes path text, not external bytes. Ingest with `symlink(Type, path)`, use an invalidator, or include content in config.
 - Leftover `.rip/state = running`: compromised call reruns (a crash or kill; a failure elsewhere no longer leaves running siblings unrecorded).
 - Constraints and `repeat`: execution policy, excluded from identity.
 

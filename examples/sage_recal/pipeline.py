@@ -25,7 +25,7 @@ from necroflow import (
     Node,
     Pipeline,
     command,
-    symlink_file,
+    symlink,
     text_file,
     outputs,
     workflow,
@@ -101,7 +101,7 @@ class RecalibrationTolerance(Node):
 
 
 # --- source rules ---
-# Built-in symlink_file registrar (see docs/caching.md#external-dataset-ingestion),
+# Built-in symlink helper (see docs/caching.md#external-dataset-ingestion),
 # not hand-written `ln -s` rules: symlinking (not copying) an external path in means
 # Path.stat() follows through to the real file, so necroflow's normal mtime/content-hash
 # STALE machinery notices if you edit your own spectra.mzml/fasta.fasta in place and
@@ -109,37 +109,21 @@ class RecalibrationTolerance(Node):
 # (necroflow only ever sees the path text, never the file's bytes, so an in-place edit
 # would silently leave every downstream node marked UP_TO_DATE forever).
 #
-# Two rules, not one with a runtime-chosen filename -- Node output filenames are
+# Two concrete artifact types keep the correct filename -- Node output filenames are
 # fixed per class (see SpectraFile above), so the extension has to be picked at the
 # call site (see raw_spectra() below) rather than inside a single templated command.
-@symlink_file
-def raw_mzml(path: str):
-    raw_mzml = outputs(MzMlSpectra)
-    return raw_mzml
-
-
-@symlink_file
-def raw_mgf(path: str):
-    raw_mgf = outputs(MgfSpectra)
-    return raw_mgf
-
-
-@symlink_file
-def raw_fasta(path: str):
-    raw_fasta = outputs(Fasta)
-    return raw_fasta
 
 
 @workflow
 def raw_spectra(P: Pipeline, path: str):
-    """Dispatch to raw_mzml/raw_mgf by the real file's extension -- see the comment
+    """Choose the concrete artifact type by the real file's extension -- see the comment
     above SpectraFile's definition for why a mismatched extension is a silent,
     zero-spectra Sage failure."""
     lower = str(path).lower()
     if lower.endswith(".mgf"):
-        return raw_mgf(path=path)
+        return symlink(MgfSpectra, path)
     if lower.endswith(".mzml") or lower.endswith(".mzml.gz"):
-        return raw_mzml(path=path)
+        return symlink(MzMlSpectra, path)
     raise ValueError(
         f"unsupported spectra file extension: {path!r} (expected .mzml or .mgf)"
     )
@@ -250,7 +234,7 @@ def recalibrated_sage_search(P: Pipeline, config: dict) -> None:
     made things worse, because the calibration sample never saw the full error range
     to correct for. A wide calibration-only tolerance fixes that."""
     P.spectra = raw_spectra(P, config["spectra_path"])
-    P.fasta = raw_fasta(path=config["fasta_path"])
+    P.fasta = symlink(Fasta, config["fasta_path"])
     P.sage_config = write_sage_config(
         text=json.dumps(config["sage"], sort_keys=True, indent=2) + "\n"
     )

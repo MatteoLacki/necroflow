@@ -20,6 +20,10 @@ dry runs can refresh stored hashes. See the usage skill for these boundaries.
 
 ## Work on the framework
 
+Before version 1.0.0, prefer simpler APIs over backwards compatibility. Breaking
+API changes are allowed; migrate affected callers, examples, docs, and tests
+together rather than adding compatibility wrappers solely to preserve old syntax.
+
 **Code is authoritative.** Read the relevant docstrings and focused docs before
 asserting behavior. Detailed invariants, module map, scheduler/run protocols,
 testing conventions, and human review markers live in `docs/agent-internals.md`.
@@ -27,6 +31,7 @@ testing conventions, and human review markers live in `docs/agent-internals.md`.
 | Task | Read |
 |---|---|
 | Add/edit a workflow rule | `.claude/skills/add-a-rule/SKILL.md`, `docs/rules.md` |
+| Migrate a legacy Rules-container pipeline | `skills/update.md` |
 | Debug cache classification | `.claude/skills/debug-stale-classification/SKILL.md`, `docs/caching.md` |
 | Edit/refactor framework source | `.claude/skills/necroflow-style/SKILL.md`, `docs/agent-internals.md` |
 | Write a scheduler | `.claude/skills/write-a-scheduler/SKILL.md`, `docs/schedulers.md` |

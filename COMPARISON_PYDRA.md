@@ -350,7 +350,7 @@ next two sections.
 | Gathering results | Connect ordered collections of Nodes to a variadic rule; construct grouping with Python. | `.combine(...)` gathers selected split dimensions; a downstream task can perform the reduction. Combining alone is not a numeric reducer. |
 | Shared work | Equivalent calls immediately intern to canonical Nodes/RuleCalls across Pipelines in one DAG. | Equivalent task definitions and inputs can reuse checksum results in a shared cache; `cache_locations` adds other cache search locations. This is different from Necroflow's eager object interning. |
 | Cache keys | Recipe plus parameter values, shell policy, declared I/O, and parent lineage. Constraints/retry count are excluded. | Task/input hashing includes the serialized callable for `FunctionTask`; workflows account for their graph. Actual typed file inputs contribute file data hashes. |
-| Input file tracking | Use an ingested Node, e.g. `@symlink_file`, to track external bytes. A string path parameter tracks only its text. | Use a typed `File`/`FileSet`; a `str` or ordinary `Path` is not a substitute for content-tracked file input. |
+| Input file tracking | Use an ingested Node, e.g. `symlink(Type, path)`, to track external bytes. A string path parameter tracks only its text. | Use a typed `File`/`FileSet`; a `str` or ordinary `Path` is not a substitute for content-tracked file input. |
 | Hash optimization | Mtime-gated stored content hashes; BLAKE3 default, SHA-256 or custom hasher available. | FileSet hashing has a persistent path/mtime keyed hash cache; object hashes use BLAKE2b. Neither should be presented as detecting arbitrary edits with preserved timestamps. |
 | Rebuild propagation | Active descendants rerun by default after a rebuild. `reuse_unchanged=True` / `--reuse-unchanged` permits content-based preservation. | Content-based task caching plus `rerun` and workflow `propagate_rerun` controls. These are not a one-to-one replacement for Necroflow's rebuild policy. |
 | Cache validation | Records consumed parent hashes and failed/interrupted/running state; executor classifies missing, stale, and compromised calls. | Successful cached result loading is the main fast path. It does not implement Necroflow's consumed-parent-hash/state classifier. Do not infer equal detection of edited/deleted cached products from support for input hashing. |
@@ -395,7 +395,7 @@ There is one deliberate ingestion improvement: the original canonical rule
 accepts `path: str` and copies it with `cp`, so editing that source at the same
 path does not itself invalidate Necroflow's cached import. The port uses
 `source: File` so those edits change its cache identity. Necroflow can provide
-content tracking by ingesting with `@symlink_file`; this is an example modeling
+content tracking by ingesting with `symlink(Type, path)`; this is an example modeling
 difference, not a missing Necroflow capability. See
 [external dataset ingestion](docs/caching.md#external-dataset-ingestion).
 

@@ -3,7 +3,7 @@
 from necroflow.rules import Constraints, Inputs, Outputs, Command
 from necroflow import (
     command,
-    symlink_file,
+    symlink,
     symlink_file_rule,
     text_file,
     text_file_rule,
@@ -1059,7 +1059,7 @@ def test_text_file_decorator_matches_factory_fingerprint():
 
 def test_text_file_rule_accepts_encoding(tmp_path):
     """text_file_rule(..., encoding=...) is the only way to select a non-default
-    encoding now that @text_file is bare-only, matching @symlink_file's shape."""
+    encoding because @text_file is bare-only."""
 
     class ConfigFile(Node):
         filename = "config.txt"
@@ -1133,38 +1133,21 @@ def test_symlink_file_preserves_paths_with_spaces(
     assert pipeline.raw.path.read_text() == "reads\n"
 
 
-def test_symlink_file_decorator_matches_factory_and_links(tmp_path):
+def test_symlink_matches_factory_and_links(tmp_path):
+    """The shorthand preserves factory execution, identity, and canonicalization."""
+
     class RawData(Node):
         filename = "raw.txt"
 
-    @symlink_file
-    def ingest_raw(path: str):
-        """Ingest raw data."""
-        raw = outputs(RawData)
-        return raw
-
-    explicit = symlink_file_rule(
-        "ingest_raw",
-        RawData,
-        path_arg="path",
-        output_name="raw",
-    )
-    fingerprint_pipeline = Pipeline(DAG(tmp_path / "fingerprint"))
-    assert (
-        ingest_raw(fingerprint_pipeline, path="source").provenance_hash
-        == explicit(fingerprint_pipeline, path="source").provenance_hash
-    )
-    assert ingest_raw.info == "Ingest raw data."
-
+    explicit = symlink_file_rule("symlink_RawData", RawData, output_name="file")
+    P = Pipeline(DAG(tmp_path / "nodes"))
     source = tmp_path / "source.txt"
-    source.write_text("decorated\n")
-    P = Pipeline(DAG(tmp_path))
-    P = Pipeline(DAG(tmp_path / "out"))
-    P.raw = ingest_raw(P, path=str(source))
+    source.write_text("linked\n")
+    P.raw = symlink(RawData, source, pipeline=P)
+    assert P.raw is explicit(P, path=str(source))
     run_pipeline(P)
-
     assert P.raw.path.is_symlink()
-    assert P.raw.path.read_text() == "decorated\n"
+    assert P.raw.path.read_text() == "linked\n"
 
 
 def test_symlink_file_change_reruns_downstream_consumer(tmp_path):

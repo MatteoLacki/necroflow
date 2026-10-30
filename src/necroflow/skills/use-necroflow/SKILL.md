@@ -19,7 +19,7 @@ Linux/macOS, or WSL). The example uses the POSIX `tr` utility.
 In a new working directory, save this as `pipeline.py`:
 
 ```python
-from necroflow import Node, Pipeline, command, outputs, shell, symlink_file, workflow
+from necroflow import Node, Pipeline, command, outputs, shell, symlink, workflow
 
 
 class Source(Node):
@@ -28,12 +28,6 @@ class Source(Node):
 
 class Uppercase(Node):
     filename = "uppercase.txt"
-
-
-@symlink_file
-def source(path: str):
-    text = outputs(Source)
-    return text
 
 
 @command
@@ -45,7 +39,7 @@ def uppercase(text: Source):
 
 @workflow
 def build(P: Pipeline, config: dict) -> None:
-    P.source = source(path=config["input"])
+    P.source = symlink(Source, config["input"])
     P.uppercase = uppercase(P.source)
 ```
 
@@ -86,7 +80,7 @@ generated README. Use `necroflow run --help` for runtime options.
   and return every declared output exactly once. Write every output at runtime;
   exit status zero with a missing output still fails.
 - Node inputs form dependencies. Plain config values enter call identity.
-  A file path string tracks only its text: ingest files with `@symlink_file`
+  A file path string tracks only its text: ingest files with `symlink(Type, path)`
   when their contents must invalidate consumers. Symlinks preserve no snapshot;
   timestamp-preserving external edits are unsupported.
 - `@workflow` supplies rule ownership. Publish outputs with `P.name = node` or

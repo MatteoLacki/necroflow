@@ -5,7 +5,16 @@ from necroflow import shell
 import json
 from pathlib import Path
 
-from necroflow import Node, Pipeline, Resource, command, text_file, outputs, workflow
+from necroflow import (
+    Node,
+    Pipeline,
+    Resource,
+    command,
+    symlink,
+    text_file,
+    outputs,
+    workflow,
+)
 
 
 class RawText(Node):
@@ -31,13 +40,6 @@ def write_tool_config(text: str):
 
 
 @command
-def import_text(path: str):
-    raw_text = outputs(RawText)
-    shell("cp {path} {raw_text}")
-    return raw_text
-
-
-@command
 def process_text(
     raw_text: RawText, tool_config: ToolConfig, threads: Resource[int] = 1
 ):
@@ -55,7 +57,7 @@ def summarize(processed_text: ProcessedText):
 
 @workflow
 def canonical_pipeline(P: Pipeline, config: dict) -> None:
-    P.raw = import_text(path=str(config["input"]))
+    P.raw = symlink(RawText, config["input"])
     P.tool_config = write_tool_config(
         text=json.dumps(config.get("tool", {}), sort_keys=True, indent=2) + "\n",
     )

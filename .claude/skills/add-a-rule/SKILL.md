@@ -35,7 +35,7 @@ def align(fastq: Fastq, ref: str, threads: Resource[int] = 4,
 
 Allowed: declared input names, declared output names, and built-ins:
 
-- `{workdir}` — the rule-call output directory (`nodes/{rule}/{hash16}`), created before
+- `{workdir}` — the rule-call output directory (`nodes/{rule}/{provenance_hash}`), created before
   execution and reserved as an input/output name.
 - `{threads}` (defaults to 1), `{ram}`, other declared constraints; `{constraint:name}`
   is an explicit, self-documenting alternative to the plain form.
@@ -61,28 +61,30 @@ input/output, or the constraint.
 - Constraints are scheduling metadata and do not affect fingerprints. `repeat=N` retries failed commands up to N attempts,
   stopping at the first success; retry policy stays outside fingerprints.
 - Config values are fingerprinted by value. A file path string does not hash that file.
-  Ingest external datasets with `@symlink_file` or
+  Ingest external datasets with `symlink(Type, path)` or
   `symlink_file_rule(name, OutputType)` so source edits enter stale detection.
 - Subtypes satisfy parent Node inputs; declare the most general true contract.
 
 ## Built-in file rules
 
-Use decorator sugar for the common case:
+Ingest files directly in workflows; declare text generation with `@text_file`:
 
 ```python
-from necroflow import symlink_file, text_file, outputs
+from necroflow import symlink, text_file, outputs, workflow
 
-@symlink_file
-def raw_fastq(path: str):
-    fastq = outputs(Fastq)
-    return fastq
 @text_file
 def sage_config(text: str):
-    sage_config = outputs(SageConfig)
-    return sage_config
+    config = outputs(SageConfig)
+    return config
+
+@workflow
+def build(P, config):
+    P.fastq = symlink(Fastq, config["reads"])
+    P.config = sage_config(text=config["sage_config"])
 ```
 
-Use `symlink_file_rule(...)` or `text_file_rule(...)` for explicit names or a non-default
-encoding (`text_file_rule(name, output, encoding="utf-16")`) — both `@symlink_file` and
-`@text_file` are bare-decorator-only. Text content participates in normal config hashing;
-neither built-in requires a user-authored shell command.
+Outside workflows, use `symlink(Fastq, path, pipeline=P)`. The old
+`@symlink_file` decorator is removed. `symlink_file_rule(...)` supports explicit
+rule/input/output names; `text_file_rule(name, Type, encoding="utf-16")` supports
+non-default text encodings. `@text_file` is bare-decorator-only. Text content
+participates in normal config hashing; neither built-in needs a user shell command.

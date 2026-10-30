@@ -42,7 +42,7 @@ dag.run()
 
 `config` is undefined in the snippet; assume a dict with `reference`, `annotation`, and
 `samples` keys. The seven rules are likewise undefined; assume module-level `Rule` objects
-built by `@command` / `symlink_file` / `text_file`, with `align` declaring two outputs.
+built by `@command` / `symlink(Type, path)` / `text_file`, with `align` declaring two outputs.
 `raw_fastq(S, path=...)` takes no Node inputs and one config kwarg — the shape of
 `symlink_file_rule`.
 

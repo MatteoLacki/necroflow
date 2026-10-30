@@ -166,7 +166,7 @@ assert_type(annotated_source(pipeline, text="hello"), Source)
 
 
 from pathlib import Path
-from necroflow import text_file, symlink_file
+from necroflow import text_file, symlink
 
 
 class SubSource(Source):
@@ -175,12 +175,6 @@ class SubSource(Source):
 
 @text_file
 def text_source(text: str) -> Source:
-    source = outputs(Source)
-    return source
-
-
-@symlink_file
-def external_source(path: str) -> Source:
     source = outputs(Source)
     return source
 
@@ -202,7 +196,8 @@ def check_precise_calls(source: Source, sub: SubSource) -> None:
     assert_type(precise(source, count=2), Left)
     assert_type(precise(pipeline, sub, threads=2), Left)
     assert_type(text_source("hello"), Source)
-    assert_type(external_source(pipeline, "/tmp/input"), Source)
+    assert_type(symlink(SubSource, Path("/tmp/input")), SubSource)
+    assert_type(symlink(Source, "/tmp/input", pipeline=pipeline), Source)
 
 
 @command

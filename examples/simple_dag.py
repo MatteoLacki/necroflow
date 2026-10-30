@@ -15,7 +15,7 @@ from necroflow import (
     Pipeline,
     command,
     outputs,
-    symlink_file,
+    symlink,
     workflow,
 )
 
@@ -46,13 +46,6 @@ class Vcf(Node):
 
 class AnnotatedVcf(Node):
     filename = "annotated.vcf.gz"
-
-
-@symlink_file
-def raw_fastq(path: str):
-    """Expose a source FASTQ as a typed artifact."""
-    fastq = outputs(Fastq)
-    return fastq
 
 
 @command
@@ -102,7 +95,7 @@ def annotate(vcf: Vcf, database: str):
 @workflow
 def aligned_reads(P: Pipeline, config) -> None:
     """Construct the import, alignment, and sorting prefix."""
-    P.fastq = raw_fastq(path=config.path)
+    P.fastq = symlink(Fastq, config.path)
     P.bam, P.align_log = align(P.fastq, reference=config.reference)
     P.sorted_bam = sort_bam(P.bam)
 

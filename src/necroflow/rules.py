@@ -1077,19 +1077,31 @@ def symlink_file_rule(
     )
 
 
-def symlink_file(fn: Callable[_Params, _ReturnT], /) -> Command[_Params, _ReturnT]:
-    """Declare a built-in external-file symlink rule."""
-    name, path_arg, output_name, output_type, info = _validate_builtin_declaration(
-        fn, "symlink_file"
-    )
-    return cast(
-        Command[_Params, _ReturnT],
-        _make_symlink_file_rule(
-            name,
-            output_type,
-            path_arg=path_arg,
-            output_name=output_name,
-            info=info,
-            signature=inspect.signature(fn),
-        ),
-    )
+def symlink(
+    output: type[_OutputT],
+    path: str | os.PathLike[str],
+    *,
+    pipeline: Pipeline | None = None,
+) -> _OutputT:
+    """Ingest an external path as a typed artifact in the active workflow.
+
+    Use ``symlink(Fastq, path)`` inside a workflow, or supply ``pipeline=P``
+    explicitly. A generated ``symlink_<TypeName>`` rule uses the existing symlink
+    execution and content tracking. Type identity and path determine the call;
+    labels and call sites do not. Construction creates no filesystem entries.
+    """
+    from necroflow.pipeline import Pipeline
+
+    if not _is_nodetype(output):
+        raise TypeError(f"symlink output must be a Node subclass, got {output!r}")
+    if pipeline is None:
+        pipeline = _active_pipeline.get()
+    if pipeline is None:
+        raise RuntimeError("symlink requires an active @workflow or pipeline=P")
+    if not isinstance(pipeline, Pipeline):
+        raise TypeError("symlink pipeline must be a Pipeline")
+    value = os.fspath(path)
+    if not isinstance(value, str):
+        raise TypeError("symlink path must be a string or a text PathLike")
+    rule = symlink_file_rule(f"symlink_{output.__name__}", output, output_name="file")
+    return cast(_OutputT, rule(pipeline, path=value))

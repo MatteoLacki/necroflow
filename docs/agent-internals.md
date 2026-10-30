@@ -151,7 +151,7 @@ src/necroflow/
   contexts.py        — immutable NamedValues and CommandArgs public views
   containers.py      — Docker config value, `{env}:` command prefix, docker run argv
   fingerprints.py    — canonical v4 rule/provenance hashes and callable AST identity
-  rules.py           — Command internals plus command, text-file, and symlink-file declarations,
+  rules.py           — Command internals plus command, text-file declarations and typed symlink ingestion,
                        parse_resource with SI/binary suffixes, threads="all" resolution
   schedulers.py      — RuleCall Scheduler protocol and fifo_scheduler
   fs.py              — node-store locking, path/shell validation, and output mtimes
@@ -227,3 +227,7 @@ logs. Source hashing does not discover arbitrary helper/global/environment state
 Existing dynamic factories, external CommandArgs callbacks, and text/symlink
 materializers retain their separate lifecycle and identities. Old inline command
 assignments/nested command functions are replaced by shell registration.
+
+External-file ingestion uses `symlink(Type, path)` in workflows or
+`symlink(Type, path, pipeline=P)` directly. `@symlink_file` is removed; see
+`docs/rules.md` and `docs/caching.md` for generated identity and content tracking.

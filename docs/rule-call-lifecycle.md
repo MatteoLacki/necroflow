@@ -27,7 +27,7 @@ cohort with shared reference data, one subpipeline per sample, and a nested
 quality-control subpipeline. The second is the simple sorting Pipeline:
 
 ```python
-from necroflow import DAG, Pipeline, workflow
+from necroflow import DAG, Pipeline, symlink, workflow
 
 @workflow
 def qc_pipeline(Q: Pipeline, bam) -> None:
@@ -37,7 +37,7 @@ def qc_pipeline(Q: Pipeline, bam) -> None:
 
 @workflow
 def sample_pipeline(S: Pipeline, reference, annotation, sample: dict) -> None:
-    S.fastq = raw_fastq(path=sample["reads"])
+    S.fastq = symlink(Fastq, sample["reads"])
     S.bam, S.align_log = align(S.fastq, reference)
     qc_pipeline(S.subpipeline("qc"), S.bam)
     S.counts = count_reads(S.bam, annotation)
@@ -162,13 +162,13 @@ therefore receive external Nodes such as `reference` explicitly.
 ```python
 S.fastq.rule_hash       # 64 lowercase hexadecimal characters
 S.fastq.provenance_hash # 64 lowercase hexadecimal characters
-S.fastq.relative_path   # Path("raw_fastq/<provenance_hash>/reads.fastq.gz")
+S.fastq.relative_path   # Path("symlink_Fastq/<provenance_hash>/reads.fastq.gz")
 S.fastq.path            # S.dag.nodes_dir / S.fastq.relative_path
 ```
 
 Their output files may not exist yet. A known address and a materialized
 artifact are separate facts. External values such as `sample["reads"]` are
-ordinary configuration values on the `raw_fastq` call; by the time `align` is
+ordinary configuration values on the `symlink_Fastq` call; by the time `align` is
 compiled, the resulting FASTQ is a parent Node.
 
 ## 4. Inputs and configuration are validated
@@ -362,8 +362,8 @@ evaluation:
 ```python
 first = P.subpipeline("aliases/first")
 second = P.subpipeline("aliases/second")
-first.fastq = raw_fastq(first, path="shared.fastq.gz")
-second.fastq = raw_fastq(second, path="shared.fastq.gz")
+first.fastq = symlink(Fastq, "shared.fastq.gz", pipeline=first)
+second.fastq = symlink(Fastq, "shared.fastq.gz", pipeline=second)
 
 assert first.fastq is second.fastq
 ```
@@ -545,3 +545,16 @@ logs. Source hashing does not discover arbitrary helper/global/environment state
 Existing dynamic factories, external CommandArgs callbacks, and text/symlink
 materializers retain their separate lifecycle and identities. Old inline command
 assignments/nested command functions are replaced by shell registration.
+
+## Typed external-file shorthand
+
+`symlink(Type, path)` compiles through the existing symlink-file rule factory.
+It selects the active workflow Pipeline, or an explicit `pipeline=P`, and invokes
+`symlink_<TypeName>` with one string config input `path` and one typed output
+`file`. Type identity and filename already enter the ordinary rule hash; path
+text enters provenance. String and PathLike spellings with identical text intern
+together. No global rule registry or label-derived identity is introduced.
+Construction, owner validation, interning, resource policy, and execution follow
+the normal Command lifecycle. The helper creates no files during construction;
+the shell command creates the symlink during execution, retaining consumed-hash
+tracking of external contents. The former `@symlink_file` decorator is removed.
