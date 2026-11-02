@@ -24,6 +24,20 @@ Before version 1.0.0, prefer simpler APIs over backwards compatibility. Breaking
 API changes are allowed; migrate affected callers, examples, docs, and tests
 together rather than adding compatibility wrappers solely to preserve old syntax.
 
+Commands (details in `docs/development.md`):
+
+```bash
+make venv            # .venv via uv, editable install + dev extra
+make test            # full suite (pytest.ini: xdist -n auto, coverage on)
+make typecheck       # pyright on tests/typing + two example pipelines only
+.venv/bin/pytest tests/test_x.py::test_name -p no:cacheprovider --no-cov -n0   # single test
+make check-dist      # build + twine check
+```
+
+Pre-commit hook (`.githooks/pre-commit`, needs `core.hooksPath`) runs Black and
+the full pytest suite when Python files are staged. Keep `tomlkit`; do not
+propose replacing it (see `docs/development.md`).
+
 Examples use `import necroflow as nf` and qualify framework names with `nf.`.
 
 **Code is authoritative.** Read the relevant docstrings and focused docs before

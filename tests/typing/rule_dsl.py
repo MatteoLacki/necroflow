@@ -226,3 +226,17 @@ def merge_list(sources: list[Source]) -> Left:
 
 
 assert_type(merge_list(pipeline, [source_node]), Left)
+
+
+@command
+def merge_star(*sources: Source, threads: Resource[int] = 1) -> Left:
+    left = outputs(Left)
+    assert_type(sources, tuple[Source, ...])
+    shell("cat {sources} > {left}")
+    return left
+
+
+assert_type(merge_star(source_node, threads=2), Left)
+assert_type(merge_star(pipeline, source_node, source_node, threads=2), Left)
+assert_type(merge_star(pipeline, *[source_node]), Left)
+assert_type(merge_star(pipeline), Left)

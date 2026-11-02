@@ -8,7 +8,7 @@ import inspect
 import textwrap
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Any, cast, get_args
+from typing import Annotated, Any, cast, get_args, get_origin
 
 from necroflow.construction import Executable
 from necroflow.resources import is_resource, resource_value
@@ -78,12 +78,9 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
         )
 
     for parameter in inspect.signature(fn).parameters.values():
-        if parameter.kind in (
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        ):
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
             raise TypeError(
-                f"rule {rule_name!r}: *args and **kwargs declarations are unsupported; use explicit parameters and tuple-valued inputs"
+                f"rule {rule_name!r}: **kwargs declarations are unsupported; use explicit parameters"
             )
 
     raw_anns = fn.__annotations__
@@ -95,6 +92,22 @@ def parse_declaration(fn, *, inline=False) -> Declaration:
             continue
         if isinstance(ann, str):
             ann = eval(ann, namespace)  # noqa: PGH001
+        if (
+            inspect.signature(fn).parameters[pname].kind
+            is inspect.Parameter.VAR_POSITIONAL
+        ):
+            from necroflow.rules import _is_nodetype_union
+
+            base, metadata = ann, ()
+            if get_origin(ann) is Annotated:
+                base, *metadata = get_args(ann)
+            if not (_is_nodetype(base) or _is_nodetype_union(base)):
+                raise TypeError(
+                    f"rule {rule_name!r}: *{pname} must annotate each argument with a Node type or Node union"
+                )
+            ann = tuple[base, ...]
+            if metadata:
+                ann = Annotated[ann, *metadata]
         if is_resource(ann):
             kind = get_args(ann)[0]
             if kind not in (int, float, str):

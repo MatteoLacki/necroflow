@@ -575,3 +575,10 @@ the body and snapshot their dependencies into canonical tuples before hashing.
 Executable bodies receive lists for list annotations. Parent grouping, callbacks,
 and shell expansion operate on immutable tuple snapshots. List contract type names
 include their element types; existing tuple identity encodings are unchanged.
+
+A VAR_POSITIONAL parameter annotated with a Node type (or Node-only union) is
+analysed as one tuple dependency group; its original signature remains intact.
+Binding collects *arguments into that tuple, and BoundArguments expands it again
+when executing the declaration. Scalar/resource parameters after it are keyword-only.
+Annotated per-element Node types may carry Many bounds for the whole group.
+Non-Node varargs and VAR_KEYWORD declarations are rejected at decoration time.

@@ -12,6 +12,8 @@ from necroflow import (
     DAG,
     Inputs,
     Many,
+    Resource,
+    workflow,
     Node,
     outputs,
     Outputs,
@@ -586,3 +588,138 @@ def test_list_validation_bounds_order_and_identity(tmp_path):
             Outputs(merged=Merged),
             "touch {merged}",
         )
+
+
+@command
+def star_merge(*bams: Bam, threads: Resource[int] = 1) -> Merged:
+    merged = outputs(Merged)
+    assert isinstance(bams, tuple)
+    shell("cat {bams} > {merged}")
+    return merged
+
+
+@text_file
+def bam_text(text: str):
+    bam = outputs(Bam)
+    return bam
+
+
+def test_star_inputs_execute_and_preserve_order(tmp_path):
+    """Expanded positional artifacts bind as a tuple, with keyword-only resources."""
+    pipeline = Pipeline(DAG(tmp_path / "star {braces} 'quotes' spaces"))
+    a = bam_text(pipeline, text="a\n")
+    b = bam_text(pipeline, text="b\n")
+    pipeline.result = star_merge(pipeline, b, a, b, threads=2)
+    assert star_merge(pipeline, *[b, a, b], threads=2) is pipeline.result
+    assert pipeline.result.parents == [b, a, b]
+    assert pipeline.result.rule_call.resources["threads"] == 2
+    pipeline.finish()
+    pipeline.dag.require([pipeline.result])
+    run(pipeline.dag)
+    assert pipeline.result.path.read_text() == "b\na\nb\n"
+
+
+def test_star_inputs_validation_and_empty_group(tmp_path):
+    """Python binding and artifact validation reject scalars, packed lists and foreign nodes."""
+    pipeline = Pipeline(DAG(tmp_path))
+    empty = star_merge(pipeline)
+    assert empty.parents == []
+    assert empty.rule_call.inputs.bams == ()
+    a = _source(pipeline, "a")
+    with pytest.raises(TypeError, match="expected Node"):
+        star_merge(pipeline, a, 2)
+    with pytest.raises(TypeError, match="expected Node"):
+        star_merge(pipeline, [a])
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        star_merge(pipeline, bams=(a,))
+    foreign = _source(Pipeline(DAG(tmp_path / "foreign")), "other")
+    with pytest.raises(ValueError, match="different DAG"):
+        star_merge(pipeline, foreign)
+
+
+def test_star_inputs_scoped_fixed_and_union(tmp_path):
+    """A fixed dependency precedes star arguments; scalars after them are keyword-only."""
+
+    @command
+    def mixed(first: Bam, *more: Bam | OtherBam, label: str = "all"):
+        merged = outputs(Merged)
+        shell("echo {label} {first} {more} > {merged}")
+        return merged
+
+    @workflow
+    def build(P):
+        P.first = bam_text(text="first")
+        P.other = _source(P, "other", OtherBam)
+        P.merged = mixed(P.first, P.other, P.first, label="scoped")
+
+    pipeline = Pipeline(DAG(tmp_path))
+    build(pipeline)
+    assert pipeline.merged.parents == [pipeline.first, pipeline.other, pipeline.first]
+    assert pipeline.merged.config == {"label": "scoped"}
+
+
+def test_star_inputs_many_bounds(tmp_path):
+    """Annotated per-argument Node types can carry group size bounds."""
+
+    @command
+    def bounded(*bams: Annotated[Bam, Many(min=1, max=2)]):
+        merged = outputs(Merged)
+        shell("cat {bams} > {merged}")
+        return merged
+
+    pipeline = Pipeline(DAG(tmp_path))
+    a = _source(pipeline, "a")
+    with pytest.raises(ValueError, match="between"):
+        bounded(pipeline)
+    assert bounded(pipeline, a).parents == [a]
+    with pytest.raises(ValueError, match="between"):
+        bounded(pipeline, a, a, a)
+
+
+@pytest.mark.parametrize("spec", ["", ":flag=-f", ":sep=,"])
+def test_star_inputs_render_all_formats(tmp_path, spec):
+    """Star arguments use exactly the same quoting/formatting as named groups."""
+
+    @command
+    def formatted(*bams: Bam, spec: str):
+        merged = outputs(Merged)
+        shell("consume {bams" + spec + "} > {merged}")
+        return merged
+
+    pipeline = Pipeline(DAG(tmp_path / "star {braces} 'quotes' spaces"))
+    a, b = _source(pipeline, "a"), _source(pipeline, "b")
+    result = formatted(pipeline, b, a, b, spec=spec)
+    args = shlex.split(result.rule_call.resolve())
+    paths = [str(n.path) for n in [b, a, b]]
+    expected = paths
+    if spec == ":flag=-f":
+        expected = [part for path in paths for part in ("-f", path)]
+    elif spec == ":sep=,":
+        expected = [",".join(paths)]
+    assert args == ["consume", *expected, ">", str(result.path)]
+
+
+@pytest.mark.parametrize(
+    "signature",
+    [
+        "*items: str",
+        "*items: Resource[int]",
+        "*items: list[Bam]",
+        "*items: Bam | None",
+        "**items: int",
+    ],
+)
+def test_invalid_star_declarations_rejected(tmp_path, signature):
+    """Only per-argument artifact contracts are supported; arbitrary kwargs stay explicit."""
+    import importlib.util
+
+    path = tmp_path / "invalid_star.py"
+    path.write_text(
+        "from necroflow import command, outputs, shell, Resource\nfrom test_variadic_inputs import Bam, Merged\n@command\ndef invalid("
+        + signature
+        + "):\n    merged = outputs(Merged)\n    shell('touch {merged}')\n    return merged\n"
+    )
+    spec = importlib.util.spec_from_file_location("invalid_star", path)
+    module = importlib.util.module_from_spec(spec)
+    with pytest.raises(TypeError, match="Node type|kwargs"):
+        spec.loader.exec_module(module)

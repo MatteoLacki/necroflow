@@ -241,8 +241,8 @@ dependency groups.
 
 Use `list[Node]` or `tuple[Node, ...]` for an ordered number of artifact inputs.
 A list annotation requires a list; a tuple annotation requires a tuple. Order and
-duplicates are preserved. Sets, generators, and expanded positional arguments are
-not supported. The collection kind and element contract participate in recipe identity.
+duplicates are preserved. Sets and generators are not supported as named dependency collections.
+Expanded positional artifact inputs are available through the star-argument form below. The collection kind and element contract participate in recipe identity.
 
 ```python
 @command
@@ -253,6 +253,28 @@ def merge(bams: list[Bam]) -> MergedBam:
 
 P.merged = merge(P, sample_bams)
 ```
+
+Alternatively, annotate each expanded argument with its artifact type:
+
+```python
+@command
+def merge(*bams: Bam, threads: Resource[int] = 1) -> MergedBam:
+    merged = outputs(MergedBam)
+    shell("samtools merge -@ {threads} {merged} {bams}")
+    return merged
+
+P.merged = merge(P, bam0, bam1, threads=4)
+P.other = merge(P, *sample_bams, threads=4)
+```
+
+Inside the body, `bams` is `tuple[Bam, ...]`, following ordinary Python rules.
+Fixed inputs may precede it; later config/resource parameters are keyword-only.
+An empty star group is allowed unless bounded with
+`*bams: Annotated[Bam, Many(min=1)]` or rejected explicitly in the body.
+Node unions are supported. Scalar/mixed varargs and `**kwargs` declarations are
+rejected. Group ordering, duplicates, DAG validation, and all template formats
+behave identically to a named tuple input. The original Python signature is
+preserved for static checking and runtime binding.
 
 Both plain forms accept zero or more artifacts. Use
 `Annotated[list[Bam], Many(min=1, max=10)]` (or the tuple equivalent) for inclusive
