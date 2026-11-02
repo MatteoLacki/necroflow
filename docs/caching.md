@@ -76,7 +76,7 @@ directories are not probed, migrated, or reused.
 
 During path resolution, necroflow validates generated paths against the filesystem's `NAME_MAX` and `PATH_MAX` limits. If a rule name, filename, output directory, or complete generated path would exceed those limits, path resolution fails before execution starts.
 
-Rules that may run in Docker (a `{env}:` template prefix, or a callback with a
+Rules that may run in Docker (a `{env}:` template prefix, or an executable declaration with a
 `Docker` input) add a `container_policy` version to the provenance execution
 context. It is bumped when framework-owned launch semantics change. Host-only
 calls keep their payload unchanged. `dependencies.toml` records the selected
@@ -89,9 +89,10 @@ Commands may use the built-in `{workdir}` placeholder to refer to the rule-call
 output directory: `nodes/{rule}/{provenance_hash}` by default.
 
 ```python
-@command("dosomething --tmp {workdir}/scratch -o {result}")
+@command
 def compute(input: Input):
     result = outputs(Result)
+    shell('dosomething --tmp {workdir}/scratch -o {result}')
     return result
 ```
 
@@ -234,8 +235,9 @@ filesystem failures during the eventual metadata write can still occur.
 
 Resource annotations, defaults, call overrides, and resource-file contents are
 excluded from both identity hashes. Ordinary scalar settings still participate.
-Inline literal commands reuse the existing shell-template identity exactly;
-nested builders hash their canonical function AST and Python identity. Changing
-from an external callback to a nested builder may change that individual recipe.
+All executable declarations hash their normalized body AST and Python identity,
+including bodies containing only outputs and a literal shell call. The constructed
+shell string is not the recipe identity. Migrating from removed template/callback
+APIs changes recipe hashes; existing executable hashes remain stable.
 Executed resource quantities are recorded separately as `resources` in
 `dependencies.toml`. Cache reuse never rewrites historical execution resources.

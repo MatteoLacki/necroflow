@@ -16,7 +16,7 @@ import necroflow.cli as cli_core
 from necroflow.planning import plan_execution
 from necroflow.tgf import render_dot
 from pathlib import Path
-from necroflow import Node, Pipeline, DAG, command, outputs
+from necroflow import Node, Pipeline, DAG, command, outputs, shell
 from necroflow.cli import (
     _materialize_results,
     _graph_payload,
@@ -33,8 +33,10 @@ class Log(Node):
     filename = "run.log"
 
 
-R_step1 = Command("step1", Inputs(v=str), Outputs(out=Out), "echo {v} > {out}")
-R_step2 = Command("step2", Inputs(out=Out), Outputs(log=Log), "cat {out} > {log}")
+R_step1 = Command._create("step1", Inputs(v=str), Outputs(out=Out), "echo {v} > {out}")
+R_step2 = Command._create(
+    "step2", Inputs(out=Out), Outputs(log=Log), "cat {out} > {log}"
+)
 
 
 def _make_pipeline_with_outputs(tmp_path) -> tuple[Pipeline, Path]:
@@ -265,20 +267,24 @@ def test_manifest_values_are_visible_result_paths(tmp_path):
 # ── main() integration ───────────────────────────────────────────────────────
 
 FACTORY_SRC = textwrap.dedent("""\
-    from necroflow import Pipeline, Node, command, outputs
-    class A(Node): filename = "a.txt"
-    class B(Node): filename = "b.txt"
-    @command("touch {a}")
-    def make_a(v: str):
-        a = outputs(A)
-        return a
-    @command("touch {b}")
-    def make_b(a: A):
-        b = outputs(B)
-        return b
-    def factory(P, cfg):
-        P.a = make_a(P, v=cfg["v"])
-        P.b = make_b(P, P.a)
+
+from necroflow import shell
+from necroflow import Pipeline, Node, command, outputs
+class A(Node): filename = "a.txt"
+class B(Node): filename = "b.txt"
+@command
+def make_a(v: str):
+    a = outputs(A)
+    shell("touch {a}")
+    return a
+@command
+def make_b(a: A):
+    b = outputs(B)
+    shell("touch {b}")
+    return b
+def factory(P, cfg):
+    P.a = make_a(P, v=cfg["v"])
+    P.b = make_b(P, P.a)
 """)
 
 
@@ -1615,16 +1621,16 @@ def test_main_execution_summary_counts_cooutput_rule_once(tmp_path):
 
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import Node
-        from necroflow.rules import Inputs, Outputs, Command
-        class A(Node): filename = "a.txt"
-        class B(Node): filename = "b.txt"
-        make_pair = Command(
-            "make_pair", Inputs(v=str), Outputs(a=A, b=B), "touch {a} {b}"
-        )
-        def factory(P, cfg):
-            P.a, P.b = make_pair(P, v=cfg["v"])
-    """))
+from necroflow import Node
+from necroflow.rules import Inputs, Outputs, Command
+class A(Node): filename = "a.txt"
+class B(Node): filename = "b.txt"
+make_pair = Command._create(
+    "make_pair", Inputs(v=str), Outputs(a=A, b=B), "touch {a} {b}"
+)
+def factory(P, cfg):
+    P.a, P.b = make_pair(P, v=cfg["v"])
+"""))
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory}:factory"\nv = "hello"\n')
     results_dir = tmp_path / "results"
@@ -1656,21 +1662,25 @@ def test_main_execution_summary_counts_parallel_command_time_once(tmp_path):
     """
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import Node, command, outputs
-        class A(Node): filename = "a.txt"
-        class B(Node): filename = "b.txt"
-        @command("sleep 1; touch {a}")
-        def make_a(v: str):
-            a = outputs(A)
-            return a
-        @command("sleep 1; touch {b}")
-        def make_b(v: str):
-            b = outputs(B)
-            return b
-        def factory(P, cfg):
-            P.a = make_a(P, v=cfg["v"])
-            P.b = make_b(P, v=cfg["v"])
-    """))
+
+from necroflow import shell
+from necroflow import Node, command, outputs
+class A(Node): filename = "a.txt"
+class B(Node): filename = "b.txt"
+@command
+def make_a(v: str):
+    a = outputs(A)
+    shell("sleep 1; touch {a}")
+    return a
+@command
+def make_b(v: str):
+    b = outputs(B)
+    shell("sleep 1; touch {b}")
+    return b
+def factory(P, cfg):
+    P.a = make_a(P, v=cfg["v"])
+    P.b = make_b(P, v=cfg["v"])
+"""))
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory}:factory"\nv = "hello"\n')
     results_dir = tmp_path / "results"
@@ -1770,21 +1780,25 @@ def test_main_keep_going_failure_writes_execution_summary(tmp_path):
     """Failed calls stay in the execution report but never publish partial files."""
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import Pipeline, Node, command, outputs
-        class A(Node): filename = "a.txt"
-        class B(Node): filename = "b.txt"
-        @command("touch {a}; exit 1")
-        def fail_a(v: str):
-            a = outputs(A)
-            return a
-        @command("touch {b}")
-        def make_b(v: str):
-            b = outputs(B)
-            return b
-        def factory(P, cfg):
-            P.a = fail_a(P, v=cfg["v"])
-            P.b = make_b(P, v=cfg["v"])
-    """))
+
+from necroflow import shell
+from necroflow import Pipeline, Node, command, outputs
+class A(Node): filename = "a.txt"
+class B(Node): filename = "b.txt"
+@command
+def fail_a(v: str):
+    a = outputs(A)
+    shell("touch {a}; exit 1")
+    return a
+@command
+def make_b(v: str):
+    b = outputs(B)
+    shell("touch {b}")
+    return b
+def factory(P, cfg):
+    P.a = fail_a(P, v=cfg["v"])
+    P.b = make_b(P, v=cfg["v"])
+"""))
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory}:factory"\nv = "hello"\n')
     results_dir = tmp_path / "results"
@@ -1821,14 +1835,23 @@ def test_main_keep_going_removes_failed_and_blocked_prior_results(tmp_path):
     """
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import Node, command, Inputs, Outputs
+        from necroflow import Node, command, outputs, shell
         class Text(Node): filename = "out.txt"
-        source = command(
-            "if test -e {marker}; then printf partial > {out}; exit 1; fi; printf source > {out}",
-            Inputs(marker=str), Outputs(out=Text), name="source",
-        )
-        consume = command("cat {src} > {out}", Inputs(src=Text), Outputs(out=Text), name="consume")
-        write = command("printf %s {value} > {out}", Inputs(value=str), Outputs(out=Text), name="write")
+        @command
+        def source(marker: str):
+            out = outputs(Text)
+            shell("if test -e {marker}; then printf partial > {out}; exit 1; fi; printf source > {out}")
+            return out
+        @command
+        def consume(src: Text):
+            out = outputs(Text)
+            shell("cat {src} > {out}")
+            return out
+        @command
+        def write(value: str):
+            out = outputs(Text)
+            shell("printf %s {value} > {out}")
+            return out
         def factory(P, cfg):
             P.failed = source(P, marker=cfg["marker"])
             P.blocked = consume(P, P.failed)
@@ -1968,25 +1991,28 @@ def test_subpipeline_labels_are_requestable_from_cli(tmp_path, capsys):
     """The CLI must finish the root and resolve qualified subpipeline requests."""
     factory = tmp_path / "subpipelines.py"
     factory.write_text(textwrap.dedent("""\
-            from necroflow import Node, command, outputs, workflow
 
-            class Result(Node):
-                filename = "result.txt"
+from necroflow import shell
+from necroflow import Node, command, outputs, workflow
 
-            @command("touch {result}")
-            def build(value: str):
-                result = outputs(Result)
-                return result
+class Result(Node):
+    filename = "result.txt"
 
-            @workflow
-            def sample_pipeline(P, value):
-                P.result = build(value=value)
+@command
+def build(value: str):
+    result = outputs(Result)
+    shell("touch {result}")
+    return result
 
-            @workflow
-            def factory(P, config):
-                for sample in config["samples"]:
-                    sample_pipeline(P.subpipeline(f"samples/{sample}"), sample)
-            """))
+@workflow
+def sample_pipeline(P, value):
+    P.result = build(value=value)
+
+@workflow
+def factory(P, config):
+    for sample in config["samples"]:
+        sample_pipeline(P.subpipeline(f"samples/{sample}"), sample)
+"""))
     job = tmp_path / "job.toml"
     job.write_text(
         f'".pipeline" = "{factory}:factory"\n'
@@ -2064,16 +2090,16 @@ def test_graph_output_writes_rendered_dag(tmp_path, factory_file):
 
 
 _COOUTPUT_FACTORY_SRC = textwrap.dedent("""\
-    from necroflow.rules import Inputs, Outputs, Command
-    from necroflow import Node
-    class A(Node): filename = "a.txt"
-    class B(Node): filename = "b.txt"
-    class C(Node): filename = "c.txt"
-    make_pair = Command("make_pair", Inputs(v=str), Outputs(a=A, b=B), "touch {a} {b}")
-    use_a = Command("use_a", Inputs(a=A), Outputs(c=C), "cp {a} {c}")
-    def factory(P, cfg):
-        P.a, P.b = make_pair(P, v=cfg["v"])
-        P.c = use_a(P, P.a)
+from necroflow.rules import Inputs, Outputs, Command
+from necroflow import Node
+class A(Node): filename = "a.txt"
+class B(Node): filename = "b.txt"
+class C(Node): filename = "c.txt"
+make_pair = Command._create("make_pair", Inputs(v=str), Outputs(a=A, b=B), "touch {a} {b}")
+use_a = Command._create("use_a", Inputs(a=A), Outputs(c=C), "cp {a} {c}")
+def factory(P, cfg):
+    P.a, P.b = make_pair(P, v=cfg["v"])
+    P.c = use_a(P, P.a)
 """)
 
 
@@ -2408,27 +2434,32 @@ def test_explain_leaves_consumers_of_unhashed_parents_undecided(tmp_path, capsys
     """
     factory = tmp_path / "pipe.py"
     factory.write_text(textwrap.dedent("""\
-        from necroflow import Node, command, outputs
-        class A(Node): filename = "a.txt"
-        class B(Node): filename = "b.txt"
-        class C(Node): filename = "c.txt"
-        @command("echo {v} > {a}")
-        def make_a(v: str):
-            a = outputs(A)
-            return a
-        @command("cat {a} > {b}")
-        def make_b(a: A):
-            b = outputs(B)
-            return b
-        @command("cat {b} > {c}")
-        def make_c(b: B):
-            c = outputs(C)
-            return c
-        def factory(P, cfg):
-            P.a = make_a(P, v=cfg["v"])
-            P.b = make_b(P, P.a)
-            P.c = make_c(P, P.b)
-    """))
+
+from necroflow import shell
+from necroflow import Node, command, outputs
+class A(Node): filename = "a.txt"
+class B(Node): filename = "b.txt"
+class C(Node): filename = "c.txt"
+@command
+def make_a(v: str):
+    a = outputs(A)
+    shell("echo {v} > {a}")
+    return a
+@command
+def make_b(a: A):
+    b = outputs(B)
+    shell("cat {a} > {b}")
+    return b
+@command
+def make_c(b: B):
+    c = outputs(C)
+    shell("cat {b} > {c}")
+    return c
+def factory(P, cfg):
+    P.a = make_a(P, v=cfg["v"])
+    P.b = make_b(P, P.a)
+    P.c = make_c(P, P.b)
+"""))
     hash_log = tmp_path / "hashes.log"
     plugin = tmp_path / "logging_hasher.py"
     plugin.write_text(textwrap.dedent(f"""\
@@ -2537,17 +2568,13 @@ def test_cli_run_prints_progress_through_the_necroflow_logger(tmp_path, factory_
         log.setLevel(saved_level)
 
 
-def test_node_json_resources_follow_the_bound_thread_cap(tmp_path):
-    """Node entries must report the same thread count as their owning call.
+def test_node_json_resources_match_call_resources(tmp_path):
+    """Node entries must report the owning call's declared thread count."""
 
-    `threads="all"` means the run's thread cap. Node entries used to read the
-    Command's CPU-count default while call entries used the bound cap, so
-    `explain -c N` could show two thread counts for one call.
-    """
-
-    @command("touch {result}", threads="all")
+    @command(threads=3)
     def use_all():
         result = outputs(Out)
+        shell("touch {result}")
         return result
 
     dag = DAG(tmp_path)

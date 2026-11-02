@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
-from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Generic, TypeVar
+from typing import Generic, TypeVar
 
 _T = TypeVar("_T")
 
@@ -41,14 +39,3 @@ class NamedValues(Mapping[str, _T], Generic[_T]):
     def __repr__(self) -> str:
         values = ", ".join(f"{k}={v!r}" for k, v in self._values.items())
         return f"NamedValues({values})"
-
-
-@dataclass(frozen=True)
-class CommandArgs:
-    """Resolved values supplied to a Python command callback."""
-
-    inputs: NamedValues[Any]
-    config: NamedValues[Any]
-    outputs: NamedValues[Path]
-    constraints: NamedValues[Any]
-    workdir: Path

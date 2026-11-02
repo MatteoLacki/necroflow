@@ -18,7 +18,7 @@ class Result(Node):
     filename = "result.txt"
 
 
-SOURCE = Command(
+SOURCE = Command._create(
     "source", Inputs(value=str), Outputs(out=Result), "echo {value} > {out}"
 )
 
@@ -142,14 +142,7 @@ def test_publication_failure_leaves_completed_nodes_cached(tmp_path, monkeypatch
     """Retrying publication reuses successful nodes after a copy error."""
     factory = tmp_path / "pipeline.py"
     factory.write_text(
-        "from necroflow import Node, command, outputs\n"
-        "class Result(Node): filename = 'result.txt'\n"
-        "@command('echo result > {out}')\n"
-        "def source():\n"
-        "    out = outputs(Result)\n"
-        "    return out\n"
-        "def build(pipeline, config):\n"
-        "    pipeline.result = source(pipeline)\n"
+        "\nfrom necroflow import shell\nfrom necroflow import Node, command, outputs\nclass Result(Node): filename = 'result.txt'\n@command\ndef source():\n    out = outputs(Result)\n    shell('echo result > {out}')\n    return out\ndef build(pipeline, config):\n    pipeline.result = source(pipeline)\n"
     )
     job = tmp_path / "job.toml"
     job.write_text(f'".pipeline" = "{factory}:build"\n')

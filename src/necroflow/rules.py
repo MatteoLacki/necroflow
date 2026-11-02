@@ -23,11 +23,10 @@ from typing import (
 )
 
 from necroflow.containers import docker_input_names, split_prefix
-from necroflow.contexts import NamedValues, CommandArgs
+from necroflow.contexts import NamedValues
 from necroflow.nodes import Node, _is_nodetype
-from necroflow.fingerprints import validate_command_callback
 from necroflow.workflow import _active_pipeline
-from necroflow.declarations import parse_declaration, is_inline_declaration
+from necroflow.declarations import parse_declaration
 from necroflow.resources import resource_value
 from necroflow.construction import (
     Executable,
@@ -337,12 +336,22 @@ def outputs(*node_types: type[Node]) -> Node | tuple[Node, ...]:
 class Command(Generic[_Params, _ReturnT]):
     """A declared rule: validates inputs and produces output Nodes when called."""
 
-    def __init__(
+    def __init__(self):
+        raise TypeError("Use @command with outputs(...) and shell(...) in the body")
+
+    @classmethod
+    def _create(cls, *args, **kwargs):
+        """Construct framework declarations without exposing a second public DSL."""
+        declaration = object.__new__(cls)
+        declaration._initialize(*args, **kwargs)
+        return declaration
+
+    def _initialize(
         self,
         name: str,
         inputs: Inputs,
         outputs: Outputs,
-        command: str | Callable | None,
+        command: Executable | str | None,
         constraints: Constraints | None = None,
         info: str | None = None,
         repeat: int = 1,
@@ -413,27 +422,21 @@ class Command(Generic[_Params, _ReturnT]):
         self._return_type = (
             namedtuple(f"{name}_outputs", output_names) if self._multi else None
         )
-        if isinstance(command, list):
+        if command is not None and not isinstance(command, (str, Executable)):
             raise TypeError(
-                f"Command {name!r}: argv list commands are unsupported; "
-                "use a shell string or a Python callback returning a shell string"
+                "internal command must be an Executable, shell string, or None"
             )
         self.docker_inputs = docker_input_names(inputs.specs)
         container_input = None
         if isinstance(command, Executable):
             pass
-        elif callable(command):
-            validate_command_callback(command)
         elif command is not None:
             self._validate_command(name, inputs, outputs, command, self.constraints)
             container_input, body = split_prefix(command, self.docker_inputs)
             if container_input is not None and not body.strip():
                 raise ValueError(f"Command {name!r}: container command body is empty")
-        # Callbacks may select a Docker input only once they run, so any
-        # callback with a Docker input must carry the container policy.
         self.container_capable = container_input is not None or bool(
-            (callable(command) or isinstance(command, Executable))
-            and self.docker_inputs
+            isinstance(command, Executable) and self.docker_inputs
         )
 
     @staticmethod
@@ -815,10 +818,6 @@ class Command(Generic[_Params, _ReturnT]):
         return self._shape_outputs(nodes)
 
 
-# Historical import path; both names denote the same declaration class.
-Rule = Command
-
-
 def _parse_rule_fn(fn) -> tuple:
     """Keep built-in declarations restricted to output assignments."""
     parsed = parse_declaration(fn)
@@ -841,121 +840,43 @@ def _decorated_input_defaults(fn: Callable, input_names: set[str]) -> dict[str, 
 
 @overload
 def command(
-    cmd: str | Callable,
-    inputs: Inputs,
-    outputs: Outputs,
-    constraints: Constraints | None = None,
-    *,
-    name: str,
-    doc: str | None = None,
-    repeat: int = 1,
-    **options,
-) -> Command[..., Any]: ...
-
-
-@overload
-def command(
-    cmd: str | Callable[[CommandArgs], str] | None = None,
-    *,
-    repeat: int = 1,
-    **constraints,
-) -> Callable[[Callable[_Params, _ReturnT]], Command[_Params, _ReturnT]]: ...
-
-
-@overload
-def command(
-    cmd: Callable[_Params, _ReturnT], *, repeat: int = 1, **constraints
+    fn: Callable[_Params, _ReturnT], /, *, repeat: int = 1, **constraints
 ) -> Command[_Params, _ReturnT]: ...
 
 
+@overload
 def command(
-    cmd: str | Callable | None = None,
-    *declarations,
-    name: str | None = None,
-    doc: str | None = None,
-    repeat: int = 1,
-    **constraints,
-) -> Any:
-    """Create a factory rule or return the decorator-sugar adapter.
+    fn: None = None, /, *, repeat: int = 1, **constraints
+) -> Callable[[Callable[_Params, _ReturnT]], Command[_Params, _ReturnT]]: ...
 
-    ``repeat`` is the maximum number of command attempts, including the first.
-    Decorated scalar/config and mixed-value defaults come from the Python
-    signature. Factory rules may declare them with
-    ``input_defaults={name: value}``.
-    """
-    if callable(cmd) and not declarations and is_inline_declaration(cmd):
-        return command(None, repeat=repeat, **constraints)(cmd)
-    if isinstance(cmd, list):
+
+def command(fn=None, /, *, repeat: int = 1, **constraints):
+    """Declare executable Python with a fixed outputs prefix and one shell call."""
+    removed_options = {"cmd", "name", "doc"} & constraints.keys()
+    if removed_options:
         raise TypeError(
-            "argv list commands are unsupported; use a shell "
-            "string or a Python callback returning a shell string"
+            f"removed command options: {sorted(removed_options)}; use @command"
         )
-    if cmd is not None and not isinstance(cmd, str) and not callable(cmd):
-        raise TypeError(
-            f"command requires a shell string or Python callback, got {type(cmd).__name__}"
-        )
-    if declarations:
-        if len(declarations) not in (2, 3):
-            raise TypeError(
-                "factory command requires Inputs, Outputs, and optional Constraints"
-            )
-        if name is None:
-            raise TypeError("factory command requires an explicit name=")
-        input_defaults = constraints.pop("input_defaults", None)
-        if constraints:
-            raise TypeError(
-                "factory command declarations cannot use constraint keywords"
-            )
-        inputs, outputs = declarations[:2]
-        factory_constraints = declarations[2] if len(declarations) == 3 else None
-        if not isinstance(inputs, Inputs) or not isinstance(outputs, Outputs):
-            raise TypeError("factory command requires Inputs and Outputs declarations")
-        if factory_constraints is not None and not isinstance(
-            factory_constraints, Constraints
-        ):
-            raise TypeError("factory command constraints must be a Constraints object")
-        return Command[..., Any](
-            name=name,
-            inputs=inputs,
-            outputs=outputs,
-            command=cmd,
-            constraints=factory_constraints,
-            info=doc,
+    if fn is not None and not inspect.isfunction(fn):
+        raise TypeError("Use @command with outputs(...) and shell(...) in the body")
+
+    def decorate(fn):
+        parsed = parse_declaration(fn, inline=True)
+        return Command._create(
+            name=parsed.name,
+            inputs=Inputs(**parsed.inputs),
+            outputs=Outputs(**parsed.outputs),
+            command=parsed.command,
+            resource_defaults=parsed.resources,
+            resource_types=parsed.resource_types,
+            constraints=Constraints(**constraints) if constraints else None,
+            info=parsed.info,
             repeat=repeat,
-            input_defaults=input_defaults,
-        )
-    if name is not None or doc is not None:
-        raise TypeError("name= and doc= are only valid for factory commands")
-
-    def decorator(fn: Callable[_Params, _ReturnT]) -> Command[_Params, _ReturnT]:
-        """Build a Command from a decorated declaration and captured command policy."""
-        inline = cmd is None
-        parsed = parse_declaration(fn, inline=inline)
-        rule_name, inputs, outputs, info = (
-            parsed.name,
-            parsed.inputs,
-            parsed.outputs,
-            parsed.info,
-        )
-        input_defaults = _decorated_input_defaults(fn, set(inputs))
-        return cast(
-            Command[_Params, _ReturnT],
-            Command[..., Any](
-                name=rule_name,
-                inputs=Inputs(**inputs),
-                outputs=Outputs(**outputs),
-                command=parsed.command if inline else cmd,
-                resource_defaults=parsed.resources,
-                resource_types=parsed.resource_types,
-                constraints=Constraints(**constraints) if constraints else None,
-                info=info,
-                repeat=repeat,
-                input_defaults=input_defaults,
-                signature=inspect.signature(fn),
-            ),
+            input_defaults=_decorated_input_defaults(fn, set(parsed.inputs)),
+            signature=inspect.signature(fn),
         )
 
-    return decorator
+    return decorate if fn is None else decorate(fn)
 
 
 def _validate_builtin_declaration(fn: Callable, kind: str) -> tuple:
@@ -1012,7 +933,7 @@ def _make_text_file_rule(
             call.config[input_name], encoding=encoding
         )
 
-    return Command(
+    return Command._create(
         name=name,
         inputs=Inputs(**{input_name: str}),
         outputs=Outputs(**{oname: output}),
@@ -1077,7 +998,7 @@ def _make_symlink_file_rule(
     if not _is_nodetype(output):
         raise TypeError(f"symlink_file output must be a Node, got {output!r}")
     oname = output_name or _pascal_to_snake(output.__name__)
-    return Command(
+    return Command._create(
         name=name,
         inputs=Inputs(**{path_arg: str}),
         outputs=Outputs(**{oname: output}),

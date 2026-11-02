@@ -5,7 +5,7 @@ import inspect
 import os
 import shlex
 import shutil
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -13,20 +13,20 @@ from typing import Any, TYPE_CHECKING
 import tomlkit
 
 from necroflow.containers import CONTAINER_POLICY, Docker, split_prefix
-from necroflow.contexts import CommandArgs, NamedValues
+from necroflow.contexts import NamedValues
 from necroflow.hashers import OutputHashes, load_hasher
 from necroflow.fingerprints import (
     IDENTITY_FORMAT,
     PROVENANCE_HASH_DOMAIN,
     _rule_identity,
     canonical_bytes,
-    command_ast,
     hash_rule_identity,
     python_identity,
 )
 
 if TYPE_CHECKING:
     from necroflow.nodes import Node
+    from necroflow.construction import Executable
 
 
 # Values `.rip/state` may hold. Only "up_to_date" is trusted; any other value,
@@ -150,7 +150,7 @@ class RuleCall:
     inputs: NamedValues[Node | tuple[Node, ...]]
     input_values: NamedValues[Any]
     config: dict[str, Any]
-    command: str | Callable | None
+    command: str | Executable | None
     shellpath: str | None = None
     output_nodes: dict[str, Node] = field(default_factory=dict)
     resource_requests: dict[str, Any] | None = None
@@ -234,7 +234,7 @@ class RuleCall:
         return parents
 
     def _positional_input_order(self) -> list[str]:
-        """Return callback-visible positional input names in declaration order."""
+        """Return declaration-visible positional input names in declaration order."""
         return [
             name
             for name in self.rule.inputs.specs
@@ -483,23 +483,17 @@ class RuleCall:
                 "template": self.command,
                 "realized": self.resolve(),
             }
-        record = {
-            "kind": "python" if callable(self.command) else "shell",
+        return {
+            "kind": "shell",
             "realized": self.resolve(),
+            "template": self.command,
         }
-        if callable(self.command):
-            _tree, source_path = command_ast(self.command)
-            record["source"] = os.path.relpath(source_path, self.dag.nodes_dir)
-            record["python"] = python_identity()
-        else:
-            record["template"] = self.command
-        return record
 
     @property
     def outputs(self) -> tuple[Node, ...]:
         return tuple(self.output_nodes.values())
 
-    def command_args(self) -> CommandArgs:
+    def _input_paths(self) -> dict[str, Any]:
         named_inputs = {}
         for name in self.rule.inputs.specs:
             if name in self.inputs:
@@ -511,14 +505,7 @@ class RuleCall:
                 )
             elif name in self.input_values:
                 named_inputs[name] = self.input_values[name]
-        outputs = {name: node.path for name, node in self.output_nodes.items()}
-        return CommandArgs(
-            inputs=NamedValues(named_inputs),
-            config=NamedValues(self.config),
-            outputs=NamedValues(outputs),
-            constraints=NamedValues(self._constraints()),
-            workdir=self.workdir,
-        )
+        return named_inputs
 
     def resolve(self) -> str | None:
         """Resolve this call command from input, output, config, and resources."""
@@ -527,23 +514,9 @@ class RuleCall:
         return self._realize()[1]
 
     def _realize(self) -> tuple[str | None, str]:
-        """Return (selected Docker input or None, command body), cached.
-
-        A template's `{name}:` Docker prefix is split off before formatting;
-        a Python callback's prefix is split off the string it returns.
-        """
+        """Split the Docker prefix and render the constructed shell template once."""
         if self._realized is None:
-            template = (
-                self._call_command_callback()
-                if callable(self.command)
-                else self.command
-            )
-            container_input, body = split_prefix(template, self.rule.docker_inputs)
-            if callable(self.command) and not body.strip():
-                raise TypeError(
-                    f"Python command callback {self.command.__qualname__!r} returned "
-                    "an empty container command body"
-                )
+            container_input, body = split_prefix(self.command, self.rule.docker_inputs)
             self.rule._validate_command(
                 self.rule.__name__,
                 self.rule.inputs,
@@ -557,19 +530,9 @@ class RuleCall:
             )
         return self._realized
 
-    def _call_command_callback(self) -> str:
-        """Invoke a builder and validate its returned, still-unrendered template."""
-        result = self.command(self.command_args())
-        if not isinstance(result, str) or not result.strip():
-            raise TypeError(
-                f"Python command callback {self.command.__qualname__!r} must return "
-                f"a non-empty shell string, got {result!r}"
-            )
-        return result
-
     def _template_substitutions(self) -> dict[str, Any]:
         """Return shell-quoted values for every string-template placeholder."""
-        command_inputs = self.command_args().inputs
+        command_inputs = self._input_paths()
         substitutions: dict[str, Any] = {
             name: _ShellArguments(value) if isinstance(value, tuple) else value
             for name, value in command_inputs.items()

@@ -5,13 +5,9 @@ from necroflow import shell
 from typing import Annotated, assert_type
 
 from necroflow import (
-    CommandArgs,
-    Constraints,
     DAG,
-    Inputs,
     Many,
     Node,
-    Outputs,
     Pipeline,
     command,
     outputs,
@@ -31,47 +27,38 @@ class Right(Node):
     filename = "right.txt"
 
 
-@command("printf %s {text} > {source}")
+@command
 def make_source(text: str):
     source = outputs(Source)
+    shell("printf %s {text} > {source}")
     return source
 
 
-@command("printf %s {text} > {source}")
+@command
 def make_default_source(text: str = "default"):
     source = outputs(Source)
+    shell("printf %s {text} > {source}")
     return source
 
 
-@command("cp {source} {left} && cp {source} {right}")
+@command
 def split_source(source: Source):
     left, right = outputs(Left, Right)
+    shell("cp {source} {left} && cp {source} {right}")
     return left, right
 
 
-factory_rule = command(
-    "cp {source} {factory_left}",
-    Inputs(source=Source),
-    Outputs(factory_left=Left),
-    Constraints(threads=2),
-    name="factory_rule",
-    doc="Factory rule.",
-)
-
-
-def callback_command(args: CommandArgs) -> str:
-    return f"cp {args.inputs.source} {args.outputs.callback_left}"
-
-
-@command(callback_command)
+@command
 def callback_rule(source: Source):
     callback_left = outputs(Left)
+    shell("cp {source} {callback_left}")
     return callback_left
 
 
-@command("cat {sources} > {left}")
+@command
 def merge_sources(sources: Annotated[tuple[Source, ...], Many()]):
     left = outputs(Left)
+    shell("cat {sources} > {left}")
     return left
 
 

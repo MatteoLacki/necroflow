@@ -24,7 +24,7 @@ Three deliberate deviations from Snakemake, all forced by necroflow's model:
 1. **Priority.** Snakemake has a `priority:` directive. necroflow has no such
    concept, so this reads `priority` out of a rule's constraints. Constraints
    that are never given a cap are ignored by the executor's resource admission,
-   so `Constraints(priority=10)` is inert as a resource and usable as a rank.
+   so `@command(priority=10)` is inert as a resource and usable as a rank.
 
 2. **temp_size.** Snakemake sizes only inputs explicitly marked `temp()`.
    necroflow has no `temp()` marker — under `autoclean` *any* intermediate
@@ -46,7 +46,6 @@ from necroflow import shell
 from pathlib import Path
 
 from necroflow import DAG, Node, Pipeline, command, outputs
-from necroflow.rules import Constraints, Inputs, Outputs, Command
 
 
 def _output_size(node) -> int:
@@ -144,20 +143,18 @@ def make_raw(tag: str):
 
 
 # Two consumers of the same parent, distinguished only by declared priority.
-r_low = Command(
-    "consume_low",
-    Inputs(raw=Raw),
-    Outputs(small=Small),
-    "wc -c < {raw} > {small}",
-    Constraints(threads=2, priority=1),
-)
-r_high = Command(
-    "consume_high",
-    Inputs(raw=Raw),
-    Outputs(big=Big),
-    "wc -c < {raw} > {big}",
-    Constraints(threads=2, priority=100),
-)
+@command(threads=2, priority=1)
+def consume_low(raw: Raw):
+    small = outputs(Small)
+    shell("wc -c < {raw} > {small}")
+    return small
+
+
+@command(threads=2, priority=100)
+def consume_high(raw: Raw):
+    big = outputs(Big)
+    shell("wc -c < {raw} > {big}")
+    return big
 
 
 if __name__ == "__main__":
@@ -165,8 +162,8 @@ if __name__ == "__main__":
     dag = DAG(outdir)
     pipeline = Pipeline(dag)
     pipeline.raw = make_raw(pipeline, tag="demo")
-    pipeline.low = r_low(pipeline, pipeline.raw)
-    pipeline.high = r_high(pipeline, pipeline.raw)
+    pipeline.low = consume_low(pipeline, pipeline.raw)
+    pipeline.high = consume_high(pipeline, pipeline.raw)
     pipeline.finish()
     dag.require(pipeline.sinks())
 

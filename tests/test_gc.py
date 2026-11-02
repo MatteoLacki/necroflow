@@ -17,14 +17,14 @@ class Source(Node):
     filename = "source.txt"
 
 
-CURRENT_CONSUMER = Command(
+CURRENT_CONSUMER = Command._create(
     "consume",
     Inputs(source=Source),
     Outputs(result=Result),
     "cp {source} {result}",
 )
 
-CURRENT_PRODUCER = Command(
+CURRENT_PRODUCER = Command._create(
     "produce",
     Inputs(value=str),
     Outputs(result=Result),
@@ -33,7 +33,7 @@ CURRENT_PRODUCER = Command(
 
 
 def _run_cached_rule(nodes_dir, command="printf old > {result}"):
-    rule = Command(
+    rule = Command._create(
         "produce",
         Inputs(value=str),
         Outputs(result=Result),
@@ -49,7 +49,7 @@ def _run_cached_rule(nodes_dir, command="printf old > {result}"):
 
 def _run_source_and_consumer(nodes_dir):
     """Build an obsolete-capable parent rule feeding the current consumer."""
-    old_source = Command(
+    old_source = Command._create(
         "source",
         Inputs(value=str),
         Outputs(source=Source),
@@ -66,12 +66,13 @@ def _run_source_and_consumer(nodes_dir):
 
 def _write_gc_scope(path, command="printf new > {result}"):
     path.write_text(
-        "from necroflow import Node, command, outputs\n"
+        "from necroflow import Node, command, outputs, shell\n"
         "class Result(Node):\n"
         "    filename = 'result.txt'\n"
-        f"@command({command!r})\n"
+        "@command\n"
         "def produce(value: str):\n"
         "    result = outputs(Result)\n"
+        f"    shell({command!r})\n"
         "    return result\n"
         "rules = [produce]\n"
     )
@@ -109,12 +110,7 @@ def test_gc_recursively_deletes_descendants_of_obsolete_rules(tmp_path):
 
     scope = tmp_path / "gc_rules.py"
     scope.write_text(
-        "from test_gc import CURRENT_CONSUMER, Source\n"
-        "from necroflow import Inputs, Outputs\n"
-        "from necroflow.rules import Command\n"
-        "CURRENT_SOURCE = Command('source', Inputs(value=str), Outputs(source=Source), "
-        "'printf new > {source}')\n"
-        "rules = [CURRENT_SOURCE, CURRENT_CONSUMER]\n"
+        "from test_gc import CURRENT_CONSUMER, Source\nfrom necroflow import Inputs, Outputs\nfrom necroflow.rules import Command\nCURRENT_SOURCE = Command._create('source', Inputs(value=str), Outputs(source=Source), 'printf new > {source}')\nrules = [CURRENT_SOURCE, CURRENT_CONSUMER]\n"
     )
 
     _gc(nodes_dir, scope, "-y")
@@ -130,12 +126,7 @@ def test_gc_preserves_current_child_when_parent_directory_is_missing(tmp_path):
     shutil.rmtree(source_call)
     scope = tmp_path / "gc_rules.py"
     scope.write_text(
-        "from test_gc import CURRENT_CONSUMER, Source\n"
-        "from necroflow import Inputs, Outputs\n"
-        "from necroflow.rules import Command\n"
-        "CURRENT_SOURCE = Command('source', Inputs(value=str), Outputs(source=Source), "
-        "'printf new > {source}')\n"
-        "rules = [CURRENT_SOURCE, CURRENT_CONSUMER]\n"
+        "from test_gc import CURRENT_CONSUMER, Source\nfrom necroflow import Inputs, Outputs\nfrom necroflow.rules import Command\nCURRENT_SOURCE = Command._create('source', Inputs(value=str), Outputs(source=Source), 'printf new > {source}')\nrules = [CURRENT_SOURCE, CURRENT_CONSUMER]\n"
     )
 
     _gc(nodes_dir, scope, "-y")
@@ -223,14 +214,7 @@ def test_gc_accepts_rules_held_in_a_module_level_container(tmp_path):
     call_dir = _run_cached_rule(nodes_dir, command="printf current > {result}")
     scope = tmp_path / "gc_rules.py"
     scope.write_text(
-        "from test_gc import Result\n"
-        "from necroflow import Inputs, Outputs\n"
-        "from necroflow.rules import Command\n"
-        "REGISTRY = {\n"
-        "    'produce': Command('produce', Inputs(value=str), Outputs(result=Result), "
-        "'printf current > {result}'),\n"
-        "}\n"
-        "rules = list(REGISTRY.values())\n"
+        "from test_gc import Result\nfrom necroflow import Inputs, Outputs\nfrom necroflow.rules import Command\nREGISTRY = {\n    'produce': Command._create('produce', Inputs(value=str), Outputs(result=Result), 'printf current > {result}'),\n}\nrules = list(REGISTRY.values())\n"
     )
 
     _gc(nodes_dir, scope, "-y")

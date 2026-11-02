@@ -50,7 +50,7 @@ class Node:
         return self.rule_call.rule
 
     @property
-    def command(self) -> str | Callable | None:
+    def command(self) -> str | None:
         return self.rule_call.command
 
     @property

@@ -148,7 +148,7 @@ src/necroflow/
   nodes.py           — Node and Node typed output concepts
   rule_call.py       — concrete invocation: identity, command realization, `.rip/` state and
                        dependency metadata
-  contexts.py        — immutable NamedValues and CommandArgs public views
+  contexts.py        — immutable NamedValues mapping
   containers.py      — Docker config value, `{env}:` command prefix, docker run argv
   fingerprints.py    — canonical v4 rule/provenance hashes and callable AST identity
   rules.py           — Command internals plus command, text-file declarations and typed symlink ingestion,
@@ -224,9 +224,10 @@ Artifact arguments stay typed; .path is available without implying file existenc
 Inspection also executes bodies: prints go to the Python process, not subprocess
 logs. Source hashing does not discover arbitrary helper/global/environment state.
 
-Existing dynamic factories, external CommandArgs callbacks, and text/symlink
-materializers retain their separate lifecycle and identities. Old inline command
-assignments/nested command functions are replaced by shell registration.
+The generic command factory, template/callback decorators, direct public
+Command construction, Rule alias, and CommandArgs are removed. Built-in text/symlink
+recipes retain private construction and their identities. User commands share
+the executable body AST identity path.
 
 External-file ingestion uses `symlink(Type, path)` in workflows or
 `symlink(Type, path, pipeline=P)` directly. `@symlink_file` is removed; see

@@ -1,5 +1,7 @@
 """Explicit Docker integration checks; run after `make compare`."""
 
+from necroflow import shell
+
 import csv
 import json
 import os
@@ -18,21 +20,24 @@ class Probe(Node):
     filename = "probe.txt"
 
 
-@command("{env}:printf hello > {probe}", threads=1)
+@command(threads=1)
 def success(env: Docker):
     probe = outputs(Probe)
+    shell("{env}:printf hello > {probe}")
     return probe
 
 
-@command("{env}:exit 7", threads=1)
+@command(threads=1)
 def failure(env: Docker):
     probe = outputs(Probe)
+    shell("{env}:exit 7")
     return probe
 
 
-@command("{env}:true", threads=1)
+@command(threads=1)
 def missing(env: Docker):
     probe = outputs(Probe)
+    shell("{env}:true")
     return probe
 
 

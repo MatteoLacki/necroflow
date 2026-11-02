@@ -36,23 +36,25 @@ class Bundle(Node):
     filename = "bundle"
 
 
-SOURCE = Command("source", Inputs(), Outputs(source=Source), "printf stable > {source}")
-CONSUME = Command(
+SOURCE = Command._create(
+    "source", Inputs(), Outputs(source=Source), "printf stable > {source}"
+)
+CONSUME = Command._create(
     "consume", Inputs(source=Source), Outputs(result=Result), "cp {source} {result}"
 )
-PAIR = Command(
+PAIR = Command._create(
     "pair",
     Inputs(),
     Outputs(result=Result, log=Log),
     "touch {result} {log}",
 )
-BUNDLE_SOURCE = Command(
+BUNDLE_SOURCE = Command._create(
     "bundle_source",
     Inputs(),
     Outputs(bundle=Bundle),
     "mkdir {bundle}; printf a > {bundle}/a; printf b > {bundle}/b",
 )
-BUNDLE_CONSUME = Command(
+BUNDLE_CONSUME = Command._create(
     "bundle_consume",
     Inputs(bundle=Bundle),
     Outputs(result=Result),

@@ -71,9 +71,9 @@ def test_output_lookup_does_not_execute_object_properties():
             pytest.fail("declaration lookup executed a property")
 
     impostor = Impostor()
-    with pytest.raises(ValueError, match="body may contain only"):
+    with pytest.raises(TypeError, match="captures undeclared closure"):
 
-        @nf.command("touch {result}")
+        @nf.command
         def bad():
             result = impostor.outputs(Text)
             return result

@@ -177,8 +177,7 @@ The rule validates Node inputs (positional or by name) against declared
 Node subclasses and config values against their declared Python types. A fixed mixed
 union works the same way: a Node selects its Node arm, while any other
 value selects a matching non-Node arm. Decorated command rules derive scalar/config and mixed
-value defaults from their Python signature; explicit Command and factory
-construction use ``input_defaults``. Command construction rejects unknown or
+value defaults from their Python signature. Command construction rejects unknown or
 wrongly typed defaults, defaults on pure fixed or variadic Node inputs, managed
 Node defaults, and non-trailing positional defaults.
 Every decorated-rule parameter must have a type annotation; an unannotated
@@ -236,7 +235,7 @@ input_values = {
 declaration order and each tuple’s element order. Mixed plain values never enter
 `parents` and therefore create no DAG edge. Command resolution reunites both
 mappings in declaration order: Nodes become paths, while plain values remain
-unchanged under `CommandArgs.inputs`.
+unchanged in the internal template input mapping.
 
 ## 5. A candidate RuleCall receives v4 recipe and provenance identity
 
@@ -265,7 +264,7 @@ config or DAG.
 It then hashes one configured invocation into `provenance_hash` from the local
 `rule_hash`, effective config, selected shell, ordered parent identities, and
 any named mixed plain values. Container-capable rules (`Command.container_capable`:
-a `{name}:` template prefix naming a `Docker` input, or a callback with a `Docker`
+a `{name}:` template prefix naming a `Docker` input, or an executable declaration with a `Docker`
 input) also add `container_policy` to the execution context; `Docker` values
 themselves are ordinary config.
 The framework-owned hasher reads those values directly from the freshly built
@@ -281,16 +280,16 @@ retain the hash associated with that explicit value.
 The same effective-value rule applies to mixed positional defaults. A Node arm
 contributes its parent provenance and output name. A non-Node arm contributes a
 conditionally present `input_values` mapping encoded by the canonical v4 value
-encoder plus the callback-visible positional input order. Existing calls without
+encoder plus the declaration-visible positional input order. Existing calls without
 mixed plain values retain their previous v4 identity payload. Persisted dependency
 metadata records mixed plain values as named diagnostic type/value representations;
 those representations are not the identity encoding.
 
 Parent Nodes contribute provenance hash and output name. Parent recipe identity is
 already contained by that provenance hash. A variadic input remains one named
-tuple, so group boundaries and order remain part of provenance. Static commands contribute their strings to the
-local recipe. Supported Python callbacks contribute canonical AST plus Python
-implementation/version identity. Both hashes are exactly 64 lowercase
+tuple, so group boundaries and order remain part of provenance. Executable declarations contribute normalized body AST plus Python
+implementation/version identity. Internal symlink commands contribute their shell
+template; text-file materializers use an explicit versioned recipe identity. Both hashes are exactly 64 lowercase
 hexadecimal characters. The policy is framework-owned; there is no custom
 fingerprint provider.
 
@@ -371,7 +370,8 @@ assert first.fastq is second.fastq
 Both framework hashes are computed for each candidate: rule hash feeds the
 provenance hash, which supplies the lookup key. The two labels differ, but the
 prefixes never enter either hash.
-The command callback does not run during lookup.
+Executable bodies run during construction before interning, including cache hits.
+The shell command runs only when execution is required.
 
 ## 8. The rule returns canonical Node values
 
@@ -546,9 +546,10 @@ Artifact arguments stay typed; .path is available without implying file existenc
 Inspection also executes bodies: prints go to the Python process, not subprocess
 logs. Source hashing does not discover arbitrary helper/global/environment state.
 
-Existing dynamic factories, external CommandArgs callbacks, and text/symlink
-materializers retain their separate lifecycle and identities. Old inline command
-assignments/nested command functions are replaced by shell registration.
+The generic command factory, template/callback decorators, direct public
+Command construction, Rule alias, and CommandArgs are removed. Built-in text/symlink
+recipes retain private construction and their identities. User commands share
+the executable body AST identity path.
 
 Variadic shell placeholders preserve tuple order and duplicates. `{files}` emits
 independently quoted paths, `{files:flag=-f}` repeats the flag for each path, and
@@ -572,8 +573,7 @@ tracking of external contents. The former `@symlink_file` decorator is removed.
 List artifact inputs use list[Node] contracts alongside tuple[Node, ...]. Validate
 the declared container and element types; copy caller-owned lists before running
 the body and snapshot their dependencies into canonical tuples before hashing.
-Executable bodies receive lists for list annotations. Parent grouping, callbacks,
-and shell expansion operate on immutable tuple snapshots. List contract type names
+Executable bodies receive lists for list annotations. Parent grouping and shell expansion operate on immutable tuple snapshots. List contract type names
 include their element types; existing tuple identity encodings are unchanged.
 
 A VAR_POSITIONAL parameter annotated with a Node type (or Node-only union) is

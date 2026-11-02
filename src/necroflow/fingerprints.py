@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import ast
 from collections.abc import Mapping, Sequence, Set
 from datetime import date, datetime, time
 import hashlib
-import inspect
 from pathlib import Path
 import platform
 import sys
-import textwrap
 from types import UnionType
-from typing import Annotated, Any, Callable, get_args, get_origin, Union
+from typing import Annotated, Any, get_args, get_origin, Union
 
 # Stamped into .rip/dependencies.toml by RuleCall.write_dependencies and required back by
 # any reader of stored provenance, and carried in both hash domains so a format
@@ -25,7 +22,7 @@ class FingerprintValueError(TypeError):
 
 
 def python_identity() -> str:
-    """Return the implementation and exact version for callback identity."""
+    """Return the implementation and exact version for executable identity."""
     version = sys.version_info
     return f"{platform.python_implementation()}-{version.major}.{version.minor}.{version.micro}"
 
@@ -141,97 +138,6 @@ def _type_name(annotation: Any) -> str:
     return repr(annotation)
 
 
-def _unwrapped_function(callback: Callable) -> Callable:
-    """Return an inspectable module-level callback with no captured state."""
-    callback = inspect.unwrap(callback)
-    if not inspect.isfunction(callback):
-        raise TypeError(
-            "Python command callbacks must be source-inspectable functions or lambdas, "
-            f"got {type(callback).__name__}"
-        )
-    if callback.__closure__ or callback.__code__.co_freevars:
-        captured = sorted(callback.__code__.co_freevars)
-        raise TypeError(
-            f"Python command callback {callback.__qualname__!r} must not close over "
-            f"values; captured names: {captured}"
-        )
-    if "<locals>" in callback.__qualname__:
-        raise TypeError(
-            f"Python command callback {callback.__qualname__!r} must be defined at module scope"
-        )
-    return callback
-
-
-def command_ast(callback: Callable) -> tuple[str, Path]:
-    """Return a canonical AST dump and defining source path for a command callback."""
-
-    callback = _unwrapped_function(callback)
-    try:
-        lines, start_line = inspect.getsourcelines(callback)
-        source_path = inspect.getsourcefile(callback)
-    except (OSError, TypeError) as exc:
-        raise TypeError(
-            f"Python command callback {callback.__qualname__!r} has no inspectable source"
-        ) from exc
-    if source_path is None:
-        raise TypeError(
-            f"Python command callback {callback.__qualname__!r} has no source file"
-        )
-    source = textwrap.dedent("".join(lines))
-    try:
-        tree = ast.parse(source)
-    except SyntaxError as exc:
-        raise TypeError(
-            f"cannot parse source for Python command callback {callback.__qualname__!r}"
-        ) from exc
-
-    if callback.__name__ == "<lambda>":
-        absolute_line = callback.__code__.co_firstlineno
-        candidates = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Lambda)
-            and start_line + node.lineno - 1 == absolute_line
-        ]
-        if len(candidates) != 1:
-            raise TypeError(
-                f"Python command lambda at {source_path}:{absolute_line} is ambiguous; "
-                "place it on its own source line"
-            )
-        selected: ast.AST = candidates[0]
-    else:
-        candidates = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == callback.__name__
-        ]
-        if len(candidates) != 1:
-            raise TypeError(
-                f"cannot uniquely locate AST for Python command callback {callback.__qualname__!r}"
-            )
-        selected = candidates[0]
-    return (
-        ast.dump(selected, annotate_fields=True, include_attributes=False),
-        Path(source_path).resolve(),
-    )
-
-
-def validate_command_callback(callback: Callable) -> None:
-    """Require a source-inspectable callback with one CommandArgs parameter."""
-    callback = _unwrapped_function(callback)
-    parameters = list(inspect.signature(callback).parameters.values())
-    if len(parameters) != 1 or parameters[0].kind not in (
-        inspect.Parameter.POSITIONAL_ONLY,
-        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-    ):
-        raise TypeError(
-            f"Python command callback {callback.__qualname__!r} must accept exactly "
-            "one positional CommandArgs argument"
-        )
-    command_ast(callback)
-
-
 def _command_identity(command: Any, recipe_identity: str | None) -> Any:
     """Return the canonical identity payload for one rule recipe."""
     if recipe_identity is not None:
@@ -248,9 +154,6 @@ def _command_identity(command: Any, recipe_identity: str | None) -> Any:
             "python": python_identity(),
             "ast": command.tree,
         }
-    if callable(command):
-        tree, _source_path = command_ast(command)
-        return {"kind": "python-template-v1", "python": python_identity(), "ast": tree}
     raise TypeError(f"unsupported command identity {type(command).__name__}")
 
 

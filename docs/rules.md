@@ -2,18 +2,27 @@
 
 [Previous: Config Validation](config-validation.md) | [README](../README.md) | [Next: Command-Call Lifecycle](rule-call-lifecycle.md)
 
-The primary API is executable `@command` declarations with `shell`. The explicit factory form is also available. Factory rules require a stable `name=` and may include `doc=`; `Inputs` and `Outputs` preserve declaration order.
+Use executable `@command` declarations with `outputs(...)` and `shell(...)` in
+the body. `@command(template)`, `@command(callback)`, the generic command
+factory, direct `Command(...)` construction, and the `Rule` alias have been
+removed. `CommandArgs` is removed too. Move old template text or callback logic
+into the declaration body and register its template with `shell(...)`.
 
 ```python
-run_sage = command(
-    "sage {config} -f {fasta} -o {workdir} {spectra}",
-    Inputs(spectra=SpectraFile, fasta=Fasta, config=SageConfig),
-    Outputs(results_json=SageResultsJson, results_pin=SageResultsPin),
-    Constraints(threads=4),
-    name="run_sage",
-    doc="Run Sage.",
-)
+from necroflow import Resource, command, outputs, shell
+
+@command
+def run_sage(spectra: SpectraFile, fasta: Fasta, config: SageConfig,
+             threads: Resource[int] = 4):
+    results_json, results_pin = outputs(SageResultsJson, SageResultsPin)
+    shell("sage {config} -f {fasta} -o {workdir} {spectra}")
+    return results_json, results_pin
 ```
+
+Existing executable declarations keep their hashes. Migrating old syntax changes
+recipe and provenance hashes: executable declarations hash their Python body,
+not the old template or callback representation. Built-in text-file and symlink
+helpers retain their internal recipes and remain supported.
 
 The decorator form executes ordinary Python during graph construction.
 
@@ -76,10 +85,8 @@ are not automatically dependency-tracked. Represent result-affecting external
 state explicitly as inputs/config.
 
 Recipe identity includes normalized body source and Python identity, not resource
-defaults or the constructed shell string. This new recipe kind changes hashes for
-migrated declarations. Existing factory recipes retain their hashes. Resource
-branches must preserve dependencies, output schema, and semantic results.
-External CommandArgs callbacks retain their existing separate callback lifecycle.
+defaults or the constructed shell string. Migrating old declarations changes hashes. Resource branches must preserve
+dependencies, output schema, and semantic results.
 
 Python evaluates f-strings first. Write `f"tool {options} {{reads}}"` to
 interpolate the local `options` value while preserving `{reads}` for necroflow.
@@ -107,12 +114,12 @@ Use `from necroflow import memory_bytes` and
 `ram: Resource[int] = memory_bytes("16G")` for integer byte counts
 (`G` is decimal, `Gi` is binary). Runtime resource parsing also accepts unit strings
 for integer quantities. Executable declarations require concrete integer threads;
-`threads="all"` remains supported only by factory/callback commands. Scheduling
-caps do not change arguments after the body has executed.
+`threads="all"` is unsupported. Scheduling caps do not change arguments after
+the body has executed.
 
 Resource requests are attached to each call. New Resource declarations with
 conflicting requests for the same canonical call raise a compilation error;
-a common resource-file override can resolve the conflict. Legacy-only constraints
+a common resource-file override can resolve the conflict. Decorator keyword constraints
 retain their previous first-declaration deduplication behavior.
 
 Use `--resources workstation.toml` to override declared resources automatically;
@@ -126,25 +133,10 @@ existing explicitly declared constraints as well as Resource parameters.
 `threads: Resource[int]` is a resource declaration and is allowed.
 An ordinary input or output name may not collide with the built-in placeholders `workdir` and `constraint`, with a constraint the rule
 declares, or with the implicit `threads` default every rule carries even without
-`Constraints(...)`. `Command`/`@command` raises `ValueError` at declaration time, not
+an explicit resource declaration. `@command` raises `ValueError` at declaration time, not
 at call time, naming the colliding names. `{constraint:name}` is an explicit,
 self-documenting alternative to the plain placeholder form — not a way to
 disambiguate a shadowed name, since shadowing is rejected outright.
-
-## All available threads
-
-Use `threads="all"` in a decorated command or `Constraints(threads="all")`
-in a factory rule. The executor reserves its full thread cap for that call,
-and `{threads}`, `{constraint:threads}`, and Python command callbacks receive
-the effective number. For example, with `-c 8` the following rule runs with
-eight threads; with `-c all` it uses the machine's detected core count.
-
-```python
-@command("samtools sort -@ {threads} {bam} -o {sorted_bam}", threads="all")
-def sort_bam(bam: Bam):
-    sorted_bam = outputs(SortedBam)
-    return sorted_bam
-```
 
 ## Command input defaults
 
@@ -153,7 +145,7 @@ defaults. Pure Node inputs remain explicit dependencies and must not have
 defaults; mixed Node/value inputs may default to one of their value arms:
 
 ```python
-@command("sage --train-fdr {train_fdr} --test-fdr {test_fdr} {spectra} -o {results}")
+@command
 def run_sage(
     spectra: SpectraFile,
     train_fdr: float = 0.05,
@@ -161,30 +153,10 @@ def run_sage(
     plugin: str | None = None,
 ):
     results = outputs(SageResults)
+    shell('sage --train-fdr {train_fdr} --test-fdr {test_fdr} {spectra} -o {results}')
     return results
 
 P.results = run_sage(P, P.spectra)
-```
-
-Explicit factory rules declare the same policy with ``input_defaults``:
-
-```python
-run_sage = command(
-    "sage --train-fdr {train_fdr} --test-fdr {test_fdr} {spectra} -o {results}",
-    Inputs(
-        spectra=SpectraFile,
-        train_fdr=float,
-        test_fdr=float,
-        plugin=str | None,
-    ),
-    Outputs(results=SageResults),
-    name="run_sage",
-    input_defaults={
-        "train_fdr": 0.05,
-        "test_fdr": 0.01,
-        "plugin": None,
-    },
-)
 ```
 
 Defaults are validated when the Command is declared. A config default must satisfy
@@ -207,9 +179,10 @@ A fixed union may combine one or more `Node` contracts with ordinary Python
 types. It remains one positional logical input:
 
 ```python
-@command(select_command)
+@command
 def consume(source: Bam | str | None = None):
     result = outputs(Result)
+    shell("touch {result}" if source is None else "tool {source} > {result}")
     return result
 
 P.managed = consume(P, P.bam)   # P.bam is a parent dependency
@@ -227,11 +200,9 @@ does not track or hash the external file's contents.
 
 Mixed inputs may be passed positionally or by keyword, whichever value arm is
 selected: `consume(P, value)` and `consume(P, source=value)` intern to the same
-call. In `CommandArgs`, the value remains under `args.inputs.source`: managed
-Nodes resolve to `Path`; plain values remain unchanged. Static command templates
-stringify and shell-quote the selected value with the normal substitution
-policy. In particular, `None` renders as the literal `None`; use a Python
-command callback when absence should omit an argument.
+call. The body receives typed Nodes or unchanged plain values. Templates render
+Nodes as paths and shell-quote substitutions. `None` renders as literal `None`;
+branch in the body when absence should omit an argument.
 
 Mixed element unions inside variadic tuples, such as
 `tuple[Bam | str, ...]`, remain invalid. Variadic inputs model only ordered Node
@@ -289,8 +260,7 @@ rendered arguments. The template's collection binding refers to that original
 snapshot, even if the body modifies its private list. Build the intended dependency
 list in the workflow before calling the command.
 
-Several groups can coexist with fixed artifact inputs. External CommandArgs callbacks
-continue receiving canonical tuples of paths regardless of the original container.
+Several groups can coexist with fixed artifact inputs.
 The normal template renderer expands `{bams}` to independently quoted paths;
 `flag=` and `sep=` formats below apply equally to lists and tuples.
 See `examples/simple_dag.py` for a cohort workflow that collects logs in a list.
@@ -315,41 +285,12 @@ A path containing the separator is ambiguous to the tool's list parser; shell
 quoting preserves argument boundaries but cannot escape its internal format.
 In f-strings, double the outer braces: `f"analyse {options} {{files:flag=-f}}"`.
 
-## Python command callbacks
+## Building commands in Python
 
-When a command must be assembled from resolved values, pass a module-level
-Python function instead of a static template:
-
-```python
-from necroflow import CommandArgs
-
-def merge_command(args: CommandArgs) -> str:
-    return "samtools merge --threads {threads} {merged} {first} {second}"
-
-merge = command(
-    merge_command,
-    Inputs(first=Bam, second=Bam),
-    Outputs(merged=MergedBam),
-    Constraints(threads=8),
-    name="merge",
-)
-```
-
-`CommandArgs` contains read-only named `inputs`, `config`, `outputs`, and
-`constraints` collections plus `workdir`. Names support both attribute and
-mapping access, such as `args.outputs.merged` and `args.outputs["merged"]`.
-`inputs` contains resolved Node paths, Node-path tuples, and selected plain
-values from mixed inputs; `config` contains keyword scalar/config inputs.
-
-Callbacks return templates. Necroflow substitutes and shell-quotes placeholders,
-just as for literal commands. Keep dynamic arguments as placeholders
-when interpolated values require shell escaping. Argv-list commands are not
-supported in fingerprint v4.
-
-External command callbacks must be module-level, closure-free functions or unambiguous
-source-file lambdas accepting exactly one argument. Their canonical AST and
-the running Python implementation/version participate in the default
-fingerprint.
+Use ordinary Python inside the declaration. Inputs and outputs remain typed
+artifacts; use `.path` or `.quoted_path()` when constructing explicit paths.
+Nested helpers are allowed. Register the resulting shell template exactly once
+with `shell(...)`. Prefer placeholders for values needing shell quoting.
 
 ## Docker execution
 
@@ -367,9 +308,10 @@ platform = "linux/amd64"
 ```python
 from necroflow import Docker, command, outputs
 
-@command("{env}:salmon index --threads {threads} -t {fasta} -i {index}", threads=1)
+@command(threads=1)
 def index(fasta: Reference, env: Docker):
     index = outputs(Index)
+    shell('{env}:salmon index --threads {threads} -t {fasta} -i {index}')
     return index
 
 def pipeline(p, cfg):
@@ -389,8 +331,8 @@ Prefix rules:
 
 - A leading `{x}:` whose `x` is not a `Docker` input is left unchanged.
 - A `Docker` input without a prefix is plain config; the command runs on the host.
-- Python callbacks select Docker by returning the literal prefix, e.g.
-  `return "{env}:" + body`. The remainder is not formatted again.
+- Constructed commands select Docker with `shell("{env}:" + body)`.
+  The template is rendered once after removing the prefix.
 - The prefix covers the complete shell command, including pipes and redirections.
   The container shell is `/bin/sh -c`; `shellpath` applies to host commands only.
   Multi-line commands that should stop on the first error need `set -e`.
@@ -405,10 +347,10 @@ containing `,`, `"`, or newlines are rejected.
 
 ## Declaring rule outputs
 
-Import `output` with the decorator and bind every output to a real local name:
+Import `outputs` and `shell` with the decorator and bind every output to a real local name:
 
 ```python
-from necroflow import Node, command, outputs
+from necroflow import Node, command, outputs, shell
 
 class Bam(Node):
     filename = "aligned.bam"
@@ -416,14 +358,14 @@ class Bam(Node):
 class Log(Node):
     filename = "align.log"
 
-@command("aligner {reads} > {bam} 2> {log}")
+@command
 def align(reads: str):
     bam, log = outputs(Bam, Log)
+    shell('aligner {reads} > {bam} 2> {log}')
     return bam, log
 ```
 
-For the explicit `@command(template)` form shown above, the body stays declaration-only.
-Bare `@command` instead executes the body and requires a registered shell. After an optional
+`@command` executes the body and requires a registered shell. After an optional
 docstring it contains one or more top-level `name = outputs(ConcreteNode)`
 assignments (or `a, b = outputs(A, B)` for multiple artifacts) and a final return of each declared name exactly once. The return order
 defines the rule call's single-node or tuple shape. This is ordinary valid Python, so
@@ -568,15 +510,17 @@ class SortedBam(Bam):
     """Coordinate-sorted BAM."""
     filename = "sorted.bam"
 
-@command("samtools sort {bam} -o {sorted_bam}")
+@command
 def sort(bam: Bam):
     """Sort BAM by coordinate with samtools."""
     sorted_bam = outputs(SortedBam)
+    shell('samtools sort {bam} -o {sorted_bam}')
     return sorted_bam
-@command("featureCounts -a {gene_model} {bam} -o {counts}")
+@command
 def quantify(bam: SortedBam, gene_model: str):  # only accepts sorted bam
     """Count reads per gene using featureCounts."""
     counts = outputs(Counts)
+    shell('featureCounts -a {gene_model} {bam} -o {counts}')
     return counts
 ```
 
@@ -612,25 +556,30 @@ class IndexedFilteredPrecursors(FilteredPrecursors, IndexedDataset):
     filename = "indexed-filtered.mmappet"
 
 
-@command("filter-mmappet {precursors} > {filtered_precursors}")
+@command
 def filter_precursors(precursors: PrecursorTable):
     filtered_precursors = outputs(FilteredPrecursors)
+    shell('filter-mmappet {precursors} > {filtered_precursors}')
     return filtered_precursors
-@command("index-mmappet {dataset} > {indexed_filtered_precursors}")
+@command
 def index(dataset: FilteredPrecursors):
     indexed_filtered_precursors = outputs(IndexedFilteredPrecursors)
+    shell('index-mmappet {dataset} > {indexed_filtered_precursors}')
     return indexed_filtered_precursors
-@command("score-mmappet {dataset} > {scores}")
+@command
 def score(dataset: MmappetDataset):
     scores = outputs(Scores)
+    shell('score-mmappet {dataset} > {scores}')
     return scores
-@command("query-index {dataset} > {report}")
+@command
 def query(dataset: IndexedDataset):
     report = outputs(Report)
+    shell('query-index {dataset} > {report}')
     return report
-@command("import-mmappet {dataset} > {precursor_table}")
+@command
 def import_any_mmappet(dataset: PrecursorTable | FilteredPrecursors):
     precursor_table = outputs(PrecursorTable)
+    shell('import-mmappet {dataset} > {precursor_table}')
     return precursor_table
 ```
 
@@ -696,10 +645,11 @@ Generated rule identities can change existing cache addresses.
 A rule with multiple declared outputs is one atomic RuleCall. Requesting either output activates, executes, validates, hashes, reports, retains, and cleans all co-outputs together; CLI results still copy only requested Nodes:
 
 ```python
-@command("bwa mem {ref} {fastq} > {bam} 2> {log}", threads=4)
+@command(threads=4)
 def align(fastq: Fastq, ref: str):
     """Align reads with BWA-MEM, capturing the log."""
     bam, log = outputs(Bam, Log)
+    shell('bwa mem {ref} {fastq} > {bam} 2> {log}')
     return bam, log
 dag = DAG("nodes")
 P = Pipeline(dag)
@@ -713,12 +663,11 @@ dag.require(P.sinks())
 
 ## Command declaration class
 
-`Command` is the declaration class returned by `@command`, `command(...)`,
+`Command` is the declaration class returned by `@command`,
 `@text_file`, and `symlink_file_rule(...)`. It is available as `from necroflow import Command`.
 Calling a Command compiles output Nodes; `RuleCall` remains the invocation/execution
-object. Existing `from necroflow.rules import Rule` imports remain supported:
-`Rule` is an alias of `Command`, not a separate type. The rename does not alter
-recipe or provenance identity.
+object. Use `Command` for type checks, not direct construction. The `Rule` alias
+and generic factory are removed.
 
 ## Generic output typing
 
@@ -742,5 +691,5 @@ Dynamic Pipeline labels have no static subtype information; keep the direct
 command result when precise typing matters.
 
 Outputs are instances of their declared subclasses. Executable declarations use
-a source-based construction recipe; existing factory fingerprints remain stable. Return
+a source-based construction recipe. Return
 annotations do not replace explicit `outputs(...)` declarations.

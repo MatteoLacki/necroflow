@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from necroflow import shell
+
 import hashlib
 import json
 import os
@@ -21,9 +23,10 @@ def pipeline(P, config):
     class Text(Node):
         filename = "text.txt"
 
-    @command("printf 'necroflow {phase}\\n' > {text}")
+    @command
     def write_text(phase: str):
         text = outputs(Text)
+        shell("printf 'necroflow {phase}\\n' > {text}")
         return text
 
     P.result = write_text(P, phase=config["phase"])

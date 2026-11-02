@@ -6,9 +6,10 @@ des chemins.
 ## Un pipeline est un simple script Python
 
 ```python
-@command("tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}")
+@command
 def process_text(raw_text: RawText, tool_config: ToolConfig):
-    processed_text = output(ProcessedText)
+    processed_text = outputs(ProcessedText)
+    shell("tr '[:lower:]' '[:upper:]' < {raw_text} > {processed_text}")
     return processed_text
 
 def my_pipeline(P: Pipeline, config: dict) -> None:

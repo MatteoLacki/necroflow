@@ -20,10 +20,10 @@ class D(Node):
     filename = "d.txt"
 
 
-MAKE_A = Command("make_a", Inputs(value=str), Outputs(a=A), "touch {a}")
-MAKE_B = Command("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
-MAKE_C = Command("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
-MAKE_D = Command("make_d", Inputs(b=B, c=C), Outputs(d=D), "touch {d}")
+MAKE_A = Command._create("make_a", Inputs(value=str), Outputs(a=A), "touch {a}")
+MAKE_B = Command._create("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
+MAKE_C = Command._create("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
+MAKE_D = Command._create("make_d", Inputs(b=B, c=C), Outputs(d=D), "touch {d}")
 
 
 def _diamond(nodes_dir):
@@ -66,7 +66,9 @@ def test_success_writes_ancestor_tgf_only(tmp_path):
     assert not (rip / "graph.txt").exists()
 
 
-MAKE_PAIR = Command("make_pair", Inputs(a=A), Outputs(b=B, c=C), "touch {b} {c}")
+MAKE_PAIR = Command._create(
+    "make_pair", Inputs(a=A), Outputs(b=B, c=C), "touch {b} {c}"
+)
 
 
 def test_ancestor_tgf_lists_every_co_output(tmp_path):
@@ -94,7 +96,7 @@ def test_graph_labels_show_resource_overrides(tmp_path):
     from necroflow import Constraints
     from necroflow.tgf import render_dot
 
-    rule = Command(
+    rule = Command._create(
         "override", Inputs(), Outputs(a=A), "touch {a}", Constraints(threads=1)
     )
     pipeline = Pipeline(DAG(tmp_path, resources={"override": {"threads": 7}}))

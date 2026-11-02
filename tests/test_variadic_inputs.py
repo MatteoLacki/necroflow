@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from necroflow import shell
+
 from pathlib import Path
 import shlex
 from typing import Annotated, Union
@@ -8,7 +10,6 @@ import pytest
 
 from necroflow import (
     command,
-    CommandArgs,
     DAG,
     Inputs,
     Many,
@@ -42,20 +43,11 @@ class Merged(Node):
     filename = "merged.bam"
 
 
-@command("merge {bams} > {merged}")
+@command
 def decorated_merge(bams: Annotated[tuple[Bam, ...], Many()]):
     merged = outputs(Merged)
+    shell("merge {bams} > {merged}")
     return merged
-
-
-LAST_COMMAND_ARGS: CommandArgs | None = None
-
-
-def variadic_command(args: CommandArgs) -> str:
-    global LAST_COMMAND_ARGS
-    LAST_COMMAND_ARGS = args
-    inputs = " ".join(shlex.quote(str(path)) for path in args.inputs.bams)
-    return f"merge {inputs} > {shlex.quote(str(args.outputs.merged))}"
 
 
 def _source(
@@ -63,7 +55,7 @@ def _source(
     label: str,
     node_type: type[Node] = Bam,
 ):
-    return Command(
+    return Command._create(
         "source",
         Inputs(label=str),
         Outputs(source=node_type),
@@ -75,7 +67,7 @@ def test_plain_variadic_tuple_accepts_zero_or_more_nodes(tmp_path):
     pipeline = Pipeline(DAG(tmp_path))
     first = _source(pipeline, "first")
     second = _source(pipeline, "second")
-    merge = Command(
+    merge = Command._create(
         "merge",
         Inputs(bams=tuple[Bam, ...]),
         Outputs(merged=Merged),
@@ -119,7 +111,7 @@ def test_variadic_static_command_quotes_each_path_independently(tmp_path):
     pipeline = Pipeline(DAG(tmp_path / "root with spaces"))
     first = _source(pipeline, "first")
     second = _source(pipeline, "second")
-    merge = Command(
+    merge = Command._create(
         "merge",
         Inputs(bams=tuple[Bam, ...]),
         Outputs(merged=Merged),
@@ -134,37 +126,16 @@ def test_variadic_static_command_quotes_each_path_independently(tmp_path):
     )
 
 
-def test_callable_command_receives_tuple_of_resolved_paths(tmp_path):
-    global LAST_COMMAND_ARGS
-    LAST_COMMAND_ARGS = None
-    pipeline = Pipeline(DAG(tmp_path))
-    first = _source(pipeline, "first")
-    second = _source(pipeline, "second")
-    merge = Command(
-        "merge_callback",
-        Inputs(bams=tuple[Bam, ...]),
-        Outputs(merged=Merged),
-        variadic_command,
-    )
-
-    result = merge(pipeline, (first, second))
-    result.rule_call.resolve()
-
-    assert LAST_COMMAND_ARGS is not None
-    assert LAST_COMMAND_ARGS.inputs.bams == (first.path, second.path)
-    assert isinstance(LAST_COMMAND_ARGS.inputs.bams, tuple)
-
-
 def test_many_default_and_inclusive_bounds(tmp_path):
     pipeline = Pipeline(DAG(tmp_path))
     nodes = tuple(_source(pipeline, str(index)) for index in range(3))
-    at_least_one = Command(
+    at_least_one = Command._create(
         "at_least_one",
         Inputs(bams=Annotated[tuple[Bam, ...], Many()]),
         Outputs(merged=Merged),
         "merge {bams} > {merged}",
     )
-    bounded = Command(
+    bounded = Command._create(
         "bounded",
         Inputs(bams=Annotated[tuple[Bam, ...], Many(min=2, max=3)]),
         Outputs(merged=Merged),
@@ -203,7 +174,7 @@ def test_variadic_input_rejects_non_tuple_wrong_elements_and_foreign_dag(tmp_pat
     bam = _source(pipeline, "bam")
     reference = _source(pipeline, "reference", Reference)
     foreign = _source(foreign_pipeline, "foreign")
-    merge = Command(
+    merge = Command._create(
         "merge",
         Inputs(bams=tuple[Bam, ...]),
         Outputs(merged=Merged),
@@ -219,7 +190,7 @@ def test_variadic_input_rejects_non_tuple_wrong_elements_and_foreign_dag(tmp_pat
 
 
 def test_invalid_variadic_annotations_are_rejected():
-    accepted_union = Command(
+    accepted_union = Command._create(
         "accepted_union",
         Inputs(bams=tuple[Union[Bam, OtherBam], ...]),
         Outputs(merged=Merged),
@@ -227,35 +198,35 @@ def test_invalid_variadic_annotations_are_rejected():
     )
     assert accepted_union is not None
     with pytest.raises(TypeError, match="tuple element union"):
-        Command(
+        Command._create(
             "mixed",
             Inputs(bams=tuple[Bam | str, ...]),
             Outputs(merged=Merged),
             "touch {merged}",
         )
     with pytest.raises(TypeError, match="fixed-length Node tuple"):
-        Command(
+        Command._create(
             "fixed",
             Inputs(bams=tuple[Bam, Bam]),
             Outputs(merged=Merged),
             "touch {merged}",
         )
     with pytest.raises(TypeError, match="element type is not a Node"):
-        Command(
+        Command._create(
             "strings",
             Inputs(values=Annotated[tuple[str, ...], Many()]),
             Outputs(merged=Merged),
             "touch {merged}",
         )
     with pytest.raises(TypeError, match="non-variadic Node tuple"):
-        Command(
+        Command._create(
             "scalar",
             Inputs(bam=Annotated[Bam, Many()]),
             Outputs(merged=Merged),
             "touch {merged}",
         )
     with pytest.raises(TypeError, match="more than one Many"):
-        Command(
+        Command._create(
             "duplicate",
             Inputs(bams=Annotated[tuple[Bam, ...], Many(), Many()]),
             Outputs(merged=Merged),
@@ -268,7 +239,7 @@ def test_multiple_groups_and_fixed_inputs_keep_logical_and_flat_order(tmp_path):
     left = tuple(_source(pipeline, f"left-{index}") for index in range(2))
     reference = _source(pipeline, "reference", Reference)
     right = tuple(_source(pipeline, f"right-{index}") for index in range(2))
-    rule = Command(
+    rule = Command._create(
         "compare",
         Inputs(
             left=tuple[Bam, ...],
@@ -291,7 +262,7 @@ def test_variadic_union_accepts_each_declared_node_type(tmp_path):
     pipeline = Pipeline(DAG(tmp_path))
     bam = _source(pipeline, "bam")
     other = _source(pipeline, "other", OtherBam)
-    merge = Command(
+    merge = Command._create(
         "union_merge",
         Inputs(bams=tuple[Bam | OtherBam, ...]),
         Outputs(merged=Merged),
@@ -310,25 +281,25 @@ def test_variadic_fingerprint_tracks_order_grouping_and_many_bounds(tmp_path):
         _source(pipeline, "second"),
         _source(pipeline, "third"),
     )
-    plain = Command(
+    plain = Command._create(
         "merge",
         Inputs(bams=tuple[Bam, ...]),
         Outputs(merged=Merged),
         "merge {bams} > {merged}",
     )
-    at_least_one = Command(
+    at_least_one = Command._create(
         "merge",
         Inputs(bams=Annotated[tuple[Bam, ...], Many()]),
         Outputs(merged=Merged),
         "merge {bams} > {merged}",
     )
-    at_least_two = Command(
+    at_least_two = Command._create(
         "merge",
         Inputs(bams=Annotated[tuple[Bam, ...], Many(min=2)]),
         Outputs(merged=Merged),
         "merge {bams} > {merged}",
     )
-    grouped = Command(
+    grouped = Command._create(
         "grouped",
         Inputs(left=tuple[Bam, ...], right=tuple[Bam, ...]),
         Outputs(merged=Merged),
@@ -356,10 +327,10 @@ def test_variadic_fingerprint_tracks_order_grouping_and_many_bounds(tmp_path):
 
 
 def test_fixed_input_v4_hashes_are_deterministic(tmp_path):
-    source_rule = Command(
+    source_rule = Command._create(
         "source", Inputs(text=str), Outputs(source=Bam), "touch {source}"
     )
-    consume_rule = Command(
+    consume_rule = Command._create(
         "consume", Inputs(source=Bam), Outputs(result=Merged), "cp {source} {result}"
     )
 
@@ -533,7 +504,7 @@ def test_list_validation_bounds_order_and_identity(tmp_path):
     """List contracts validate members and retain collection kind/order in identity."""
     pipeline = Pipeline(DAG(tmp_path))
     a, b = _source(pipeline, "a"), _source(pipeline, "b")
-    rule = Command(
+    rule = Command._create(
         "merge_list",
         Inputs(files=Annotated[list[Bam], Many(min=1, max=3)]),
         Outputs(merged=Merged),
@@ -553,7 +524,7 @@ def test_list_validation_bounds_order_and_identity(tmp_path):
         rule(pipeline, [])
     with pytest.raises(ValueError, match="between"):
         rule(pipeline, [a] * 4)
-    other_type = Command(
+    other_type = Command._create(
         "merge_list",
         Inputs(files=list[OtherBam]),
         Outputs(merged=Merged),
@@ -561,20 +532,20 @@ def test_list_validation_bounds_order_and_identity(tmp_path):
     )
     other = _source(pipeline, "other", OtherBam)
     assert other_type(pipeline, [other]).rule_hash != forward.rule_hash
-    plain_list = Command(
+    plain_list = Command._create(
         "kind",
         Inputs(files=list[Bam]),
         Outputs(merged=Merged),
         "cat {files} > {merged}",
     )
-    plain_tuple = Command(
+    plain_tuple = Command._create(
         "kind",
         Inputs(files=tuple[Bam, ...]),
         Outputs(merged=Merged),
         "cat {files} > {merged}",
     )
     assert plain_list(pipeline, [a]).rule_hash != plain_tuple(pipeline, (a,)).rule_hash
-    union = Command(
+    union = Command._create(
         "union",
         Inputs(files=list[Bam | OtherBam]),
         Outputs(merged=Merged),
@@ -582,7 +553,7 @@ def test_list_validation_bounds_order_and_identity(tmp_path):
     )
     assert union(pipeline, [a, other]).parents == [a, other]
     with pytest.raises(TypeError, match="mixes"):
-        Command(
+        Command._create(
             "bad",
             Inputs(files=list[Bam | str]),
             Outputs(merged=Merged),

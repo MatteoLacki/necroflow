@@ -25,7 +25,7 @@ from necroflow.executor import Phase, run
 from necroflow.report import RuleCallExecution
 from necroflow.schedulers import fifo_scheduler
 from necroflow.config import JobConfig, iter_job_configs
-from necroflow.contexts import CommandArgs, NamedValues
+from necroflow.contexts import NamedValues
 from necroflow.workflow import workflow
 
 __all__ = [
@@ -57,6 +57,5 @@ __all__ = [
     "fifo_scheduler",
     "JobConfig",
     "iter_job_configs",
-    "CommandArgs",
     "NamedValues",
 ]

@@ -111,12 +111,12 @@ def test_scoped_subtype_and_keyword_only_input(tmp_path):
 def test_template_identity_matches_pre_merge_fixture(tmp_path):
     """Changing the artifact base/layout does not invalidate template identities."""
     pipeline = Pipeline(DAG(tmp_path))
-    raw = Command("source", Inputs(text=str), Outputs(raw=Raw), "echo {text} > {raw}")(
-        pipeline, text="hello"
-    )
-    done = Command("copy", Inputs(raw=Raw), Outputs(done=Done), "cp {raw} {done}")(
-        pipeline, raw
-    )
+    raw = Command._create(
+        "source", Inputs(text=str), Outputs(raw=Raw), "echo {text} > {raw}"
+    )(pipeline, text="hello")
+    done = Command._create(
+        "copy", Inputs(raw=Raw), Outputs(done=Done), "cp {raw} {done}"
+    )(pipeline, raw)
     assert [(node.rule_hash, node.provenance_hash) for node in (raw, done)] == [
         (
             "321ecc00d6c5addbb06e1a1017c2c2ad8376046903cb0a8f28cc1b19e0184b28",
@@ -127,26 +127,6 @@ def test_template_identity_matches_pre_merge_fixture(tmp_path):
             "3ec01bb1900a96977c1edaca4d4259fb030a1501e91d76499c0d776a6eb284d4",
         ),
     ]
-
-
-def external_builder(args):
-    assert isinstance(args.inputs.raw, Path)
-    assert isinstance(args.outputs.done, Path)
-    return (
-        f"cp {shlex.quote(str(args.inputs.raw))} {shlex.quote(str(args.outputs.done))}"
-    )
-
-
-def test_builder_binding_identity_is_local_to_nested_commands(tmp_path):
-    """Both callback forms identify template semantics; external args keep Paths."""
-    external = Command(
-        "external", Inputs(raw=Raw), Outputs(done=Done), external_builder
-    )
-    pipeline = Pipeline(DAG(tmp_path))
-    raw = make(pipeline)
-    assert external(pipeline, raw).rule_call.resolve().startswith("cp ")
-    assert _command_identity(external_builder, None)["kind"] == "python-template-v1"
-    assert _command_identity(process.command, None)["kind"] == "python-construction-v1"
 
 
 def test_unpack_outputs_in_nested_builder(tmp_path):

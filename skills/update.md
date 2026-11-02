@@ -111,8 +111,8 @@ the source remains a dependency in the node store.
    then register exactly one `shell(template)`, and return all declared artifacts
    exactly once in declaration order. Move command text from `@R.command(...)`,
    `@command("...")`, or old local command assignments into `shell(...)`.
-   Singular `output(...)` is not the current API. Existing command-string and
-   factory forms remain supported, but are not this guide's migration target.
+   Singular `output(...)`, command-string decorators, generic factories, direct
+   `Command(...)` construction, and the `Rule` alias are removed.
 4. Annotate every input. Node annotations create dependencies; ordinary types
    describe config. Use `Resource[int]`, `Resource[float]`, or `Resource[str]`
    with positive defaults for execution quantities. Executable declarations require concrete integer
@@ -137,8 +137,8 @@ the source remains a dependency in the node store.
    Reusable fragments can use `P.subpipeline(prefix)` to qualify labels.
 9. For argv lists, register a shell string with the same command behavior.
    Keep dynamic values as placeholders so Necroflow can quote substitutions;
-   double literal shell braces. Complex existing `CommandArgs -> str` callbacks
-   can retain their supported callback/factory form; they have a separate lifecycle.
+   double literal shell braces. Move existing `CommandArgs -> str` callback logic into the declaration body;
+   use typed inputs/outputs directly and register the template with `shell(...)`.
 10. Run Black, configured type checks, focused pipeline tests, and inspection
     against a representative job. Verify requested filenames/content, resource
     requests, initial execution, and a second cached run. Search remaining legacy

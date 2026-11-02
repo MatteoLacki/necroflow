@@ -1,5 +1,7 @@
 """Tests for Docker config values, `{env}:` command prefixes, and native launch."""
 
+from necroflow import shell
+
 import copy
 import hashlib
 import json
@@ -43,81 +45,80 @@ class Tree(Node):
     filename = "tree"
 
 
-@command("printf hello > {text}")
+@command
 def host_text():
     text = outputs(Text)
+    shell("printf hello > {text}")
     return text
 
 
-@command("{env}:cat {source} > {copy}")
+@command
 def docker_copy(source: Text, env: Docker):
     copy = outputs(Copy)
+    shell("{env}:cat {source} > {copy}")
     return copy
 
 
-@command("cat {source} > {copy}")
+@command
 def host_copy_with_env(source: Text, env: Docker):
     copy = outputs(Copy)
+    shell("cat {source} > {copy}")
     return copy
 
 
-@command("{label}:cat {source} > {copy}")
+@command
 def label_prefix(source: Text, label: str):
     copy = outputs(Copy)
+    shell("{label}:cat {source} > {copy}")
     return copy
 
 
-@command("cat {source} > {copy}")
+@command
 def plain_copy(source: Copy):
     copy = outputs(Text)
+    shell("cat {source} > {copy}")
     return copy
 
 
-@command("{env}:cat {sources} > {copy}")
+@command
 def docker_concat(sources: tuple[Text, ...], env: Docker):
     copy = outputs(Copy)
+    shell("{env}:cat {sources} > {copy}")
     return copy
 
 
-@command("{env}:exit 7")
+@command
 def docker_failure(env: Docker):
     text = outputs(Text)
+    shell("{env}:exit 7")
     return text
 
 
-def callback_command(args):
-    return "{env}:" + f"cat {shlex.quote(str(args.inputs.source))} > copy.txt"
-
-
-@command(callback_command)
+@command
 def docker_callback(source: Text, env: Docker):
     copy = outputs(Copy)
+    shell("{env}:cat {source} > copy.txt")
     return copy
 
 
-def host_callback_command(args):
-    return f"cat {shlex.quote(str(args.inputs.source))} > copy.txt"
-
-
-@command(host_callback_command)
+@command
 def host_callback(source: Text, env: Docker):
     copy = outputs(Copy)
+    shell("cat {source} > copy.txt")
     return copy
 
 
-@command(host_callback_command)
+@command
 def plain_callback(source: Text):
     copy = outputs(Copy)
+    shell("cat {source} > copy.txt")
     return copy
 
 
-def empty_callback_command(args):
-    return "{env}:  "
-
-
-@command(empty_callback_command)
+@command
 def empty_callback(env: Docker):
     text = outputs(Text)
+    shell("{env}:  ")
     return text
 
 
@@ -217,7 +218,7 @@ def test_prefix_only_selects_docker_inputs(tmp_path):
     docker = Docker(IMAGE, platform="linux/amd64")
     assert docker_copy.container_capable
     assert not label_prefix.container_capable
-    assert not host_copy_with_env.container_capable
+    assert host_copy_with_env.container_capable
     p = Pipeline(DAG(tmp_path / "label"))
     call = label_prefix(p, host_text(p), label="x").rule_call
     assert call.container is None
@@ -226,19 +227,12 @@ def test_prefix_only_selects_docker_inputs(tmp_path):
     assert p.out.rule_call.container is None
 
 
-def test_empty_container_body_is_rejected():
-    """A prefix alone is not a command."""
-    with pytest.raises(ValueError, match="body is empty"):
-        command("{env}:   ", Inputs(env=Docker), Outputs(text=Text), name="empty")
-
-
 def test_empty_container_callback_body_is_rejected(tmp_path):
     """Callbacks may only select Docker with a non-empty remaining command."""
     dag = DAG(tmp_path / "nodes")
     p = Pipeline(dag)
-    node = empty_callback(p, env=Docker(IMAGE, platform="linux/amd64"))
-    with pytest.raises(TypeError, match="empty container command body"):
-        node.rule_call.resolve()
+    with pytest.raises(ValueError, match="body is empty"):
+        empty_callback(p, env=Docker(IMAGE, platform="linux/amd64"))
 
 
 def test_docker_settings_change_consumer_and_descendant_paths(tmp_path):

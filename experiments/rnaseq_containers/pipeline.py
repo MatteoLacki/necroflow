@@ -1,5 +1,7 @@
 """Host Python port of the pinned nextflow-io/rnaseq-nf workflow."""
 
+from necroflow import shell
+
 import json
 import re
 import shlex
@@ -55,92 +57,71 @@ class ReportConfig(Node):
     filename = "multiqc_config"
 
 
-@command("ln -s -- {path} {reads}")
+@command
 def read1(path: str):
     reads = outputs(Read1)
+    shell("ln -s -- {path} {reads}")
     return reads
 
 
-@command("ln -s -- {path} {reads}")
+@command
 def read2(path: str):
     reads = outputs(Read2)
+    shell("ln -s -- {path} {reads}")
     return reads
 
 
-@command("ln -s -- {path} {fasta}")
+@command
 def reference(path: str):
     fasta = outputs(Reference)
+    shell("ln -s -- {path} {fasta}")
     return fasta
 
 
-@command("ln -s -- {path} {config}")
+@command
 def report_config(path: str):
     config = outputs(ReportConfig)
+    shell("ln -s -- {path} {config}")
     return config
 
 
-@command(
-    "{env}:salmon index --threads {threads} -t {fasta} -i {index}",
-    threads=1,
-    ram="2Gi",
-)
+@command(threads=1, ram="2Gi")
 def index(fasta: Reference, env: Docker):
     index = outputs(Index)
+    shell("{env}:salmon index --threads {threads} -t {fasta} -i {index}")
     return index
 
 
-def fastqc_command(args):
-    sample = args.config.sample
-    r1, r2 = f"{sample}_1.fq", f"{sample}_2.fq"
-    return "{env}:" + "\n".join(
-        [
-            "set -eu",
-            f"ln -sf {shlex.quote(str(args.inputs.r1))} {shlex.quote(r1)}",
-            f"ln -sf {shlex.quote(str(args.inputs.r2))} {shlex.quote(r2)}",
-            f"mkdir -p {shlex.quote(str(args.outputs.qc))}",
-            f"fastqc -o {shlex.quote(str(args.outputs.qc))} -f fastq -q {shlex.quote(r1)} {shlex.quote(r2)}",
-        ]
-    )
-
-
-@command(fastqc_command, threads=1, ram="2Gi")
+@command(threads=1, ram="2Gi")
 def fastqc(r1: Read1, r2: Read2, sample: str, env: Docker):
     qc = outputs(FastQC)
+    first, second = f"{sample}_1.fq", f"{sample}_2.fq"
+    shell(
+        "{env}:"
+        + "\n".join(
+            [
+                "set -eu",
+                f"ln -sf {{r1}} {shlex.quote(first)}",
+                f"ln -sf {{r2}} {shlex.quote(second)}",
+                "mkdir -p {qc}",
+                f"fastqc -o {{qc}} -f fastq -q {shlex.quote(first)} {shlex.quote(second)}",
+            ]
+        )
+    )
     return qc
 
 
-@command(
-    "{env}:salmon quant --threads {threads} --libType=U "
-    "-i {index} -1 {r1} -2 {r2} -o {quant}",
-    threads=1,
-    ram="2Gi",
-)
+@command(threads=1, ram="2Gi")
 def quantify(index: Index, r1: Read1, r2: Read2, sample: str, env: Docker):
     quant = outputs(Quant)
+    shell(
+        "{env}:salmon quant --threads {threads} --libType=U "
+        "-i {index} -1 {r1} -2 {r2} -o {quant}"
+    )
     return quant
 
 
-def multiqc_command(args):
-    commands = ["set -eu"]
-    staged = []
-    for sample, qc, quant in zip(
-        args.config.samples,
-        args.inputs.reports[::2],
-        args.inputs.reports[1::2],
-        strict=True,
-    ):
-        for label, path in [(f"fastqc_{sample}_logs", qc), (f"quant_{sample}", quant)]:
-            commands.append(f"ln -sfn {shlex.quote(str(path))} {shlex.quote(label)}")
-            staged.append(shlex.quote(label))
-    commands += [
-        f"cp {shlex.quote(str(args.inputs.config))}/* .",
-        'echo "custom_logo: $PWD/nextflow_logo.png" >> multiqc_config.yaml',
-        f"multiqc --force -n multiqc_report.html -o {shlex.quote(str(args.outputs.report))} {' '.join(staged)}",
-    ]
-    return "{env}:" + "\n".join(commands)
-
-
-@command(multiqc_command, threads=1, ram="2Gi")
+@command(threads=1, ram="2Gi")
 def multiqc(
     reports: tuple[ReportInput, ...],
     config: ReportConfig,
@@ -148,6 +129,18 @@ def multiqc(
     env: Docker,
 ):
     report = outputs(Report)
+    commands = ["set -eu"]
+    staged = []
+    for sample, qc, quant in zip(samples, reports[::2], reports[1::2], strict=True):
+        for label, node in [(f"fastqc_{sample}_logs", qc), (f"quant_{sample}", quant)]:
+            commands.append(f"ln -sfn {node.quoted_path()} {shlex.quote(label)}")
+            staged.append(shlex.quote(label))
+    commands += [
+        "cp {config}/* .",
+        'echo "custom_logo: $PWD/nextflow_logo.png" >> multiqc_config.yaml',
+        f"multiqc --force -n multiqc_report.html -o {{report}} {' '.join(staged)}",
+    ]
+    shell("{env}:" + "\n".join(commands))
     return report
 
 

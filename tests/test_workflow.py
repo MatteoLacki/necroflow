@@ -1,5 +1,7 @@
 """Workflow context must preserve explicit ownership and label semantics."""
 
+from necroflow import shell
+
 from concurrent.futures import ThreadPoolExecutor
 import inspect
 from threading import Barrier
@@ -40,25 +42,26 @@ def write_text(text: str):
     return result
 
 
-@command("cp {source} {left} && cp {source} {right}")
+@command
 def split(source: Text):
     left = outputs(Left)
     right = outputs(Right)
+    shell("cp {source} {left} && cp {source} {right}")
     return left, right
 
 
-@command("cat {sources} > {result}")
+@command
 def merge(sources: Annotated[tuple[Left | Right, ...], Many(min=2)]):
     result = outputs(Text)
+    shell("cat {sources} > {result}")
     return result
 
 
-source_rule = command(
-    "printf %s {value} > {result}",
-    Inputs(value=str),
-    Outputs(result=Text),
-    name="source_rule",
-)
+@command
+def source_rule(value: str):
+    result = outputs(Text)
+    shell("printf %s {value} > {result}")
+    return result
 
 
 def test_workflow_rules_and_file_helpers_execute_with_explicit_labels(tmp_path):

@@ -36,27 +36,6 @@ def _resolve_reference(expr, namespace):
     return None
 
 
-def is_inline_declaration(fn) -> bool:
-    """Distinguish bare declarations from legacy one-argument callbacks."""
-    if not inspect.isfunction(fn) or fn.__name__ == "<lambda>":
-        return False
-    try:
-        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
-        body = next(n.body for n in tree.body if isinstance(n, ast.FunctionDef))
-    except (OSError, TypeError, SyntaxError, StopIteration):
-        return False
-    # A callback may itself use a local variable called command. Only an
-    # actual output declaration distinguishes bare @command from that callback.
-    from necroflow.rules import outputs
-
-    namespace = {**fn.__globals__, **inspect.getclosurevars(fn).nonlocals}
-    return any(
-        isinstance(n, ast.Call) and _resolve_reference(n.func, namespace) is outputs
-        for statement in body
-        for n in ast.walk(statement)
-    )
-
-
 def parse_declaration(fn, *, inline=False) -> Declaration:
     """Parse a typed rule signature and assignment-based output declarations."""
     from necroflow.rules import outputs

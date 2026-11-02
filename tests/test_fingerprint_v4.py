@@ -13,7 +13,7 @@ class Result(Node):
 def test_config_variants_share_rule_hash_and_have_distinct_provenance_paths(tmp_path):
     """Configuration selects an invocation below one stable local recipe identity."""
 
-    rule = Command(
+    rule = Command._create(
         "produce",
         Inputs(value=str),
         Outputs(result=Result),
@@ -38,10 +38,10 @@ def test_config_variants_share_rule_hash_and_have_distinct_provenance_paths(tmp_
 
 def test_command_change_changes_rule_hash(tmp_path):
     pipeline = Pipeline(DAG(tmp_path))
-    first = Command(
+    first = Command._create(
         "produce", Inputs(value=str), Outputs(result=Result), "touch {result}"
     )(pipeline, value="same")
-    second = Command(
+    second = Command._create(
         "produce",
         Inputs(value=str),
         Outputs(result=Result),
@@ -55,13 +55,13 @@ def test_success_metadata_records_outputs_and_exact_parent_keys(tmp_path):
     class State(Node):
         filename = "state.sqlite3"
 
-    source_rule = Command(
+    source_rule = Command._create(
         "state",
         Inputs(value=str),
         Outputs(state=State),
         "touch {state}",
     )
-    consume_rule = Command(
+    consume_rule = Command._create(
         "consume", Inputs(state=State), Outputs(result=Result), "touch {result}"
     )
     dag = DAG(tmp_path)
@@ -93,12 +93,7 @@ def test_success_metadata_records_outputs_and_exact_parent_keys(tmp_path):
 def test_rule_hash_is_stable_across_loader_purposes(tmp_path):
     pipeline_file = tmp_path / "pipeline.py"
     pipeline_file.write_text(
-        "from necroflow import Inputs, Node, Outputs\n"
-        "from necroflow.rules import Command\n"
-        "class Result(Node):\n"
-        "    filename = 'result.txt'\n"
-        "produce = Command('produce', Inputs(value=str), Outputs(result=Result), "
-        "'touch {result}')\n"
+        "from necroflow import Inputs, Node, Outputs\nfrom necroflow.rules import Command\nclass Result(Node):\n    filename = 'result.txt'\nproduce = Command._create('produce', Inputs(value=str), Outputs(result=Result), 'touch {result}')\n"
     )
 
     runtime = load_module(pipeline_file, kind="pipeline")

@@ -5,7 +5,7 @@ import json
 import pytest
 import tomlkit
 
-from necroflow import DAG, Node, Pipeline, command, outputs, run
+from necroflow import shell, DAG, Node, Pipeline, command, outputs, run
 from necroflow.cli import _provenance_payload, main
 from necroflow.rules import Inputs, Outputs, Command
 
@@ -14,13 +14,10 @@ class Out(Node):
     filename = "out.txt"
 
 
-def _cmd(args):
-    return f"echo {args.config.plugin!r} > {args.outputs.out}"
-
-
-@command(_cmd)
+@command
 def nullable(plugin: str | None = None):
     out = outputs(Out)
+    shell(f"echo {plugin!r} > {{out}}")
     return out
 
 
@@ -29,7 +26,9 @@ def test_nullable_command_and_descendant_cache(tmp_path, plugin):
     """Null settings survive commands, ancestor merging, readers, and cached reruns."""
     pipeline = Pipeline(DAG(tmp_path / "nodes"))
     pipeline.parent = nullable(pipeline, plugin=plugin)
-    copy = Command("copy", Inputs(source=Out), Outputs(out=Out), "cp {source} {out}")
+    copy = Command._create(
+        "copy", Inputs(source=Out), Outputs(out=Out), "cp {source} {out}"
+    )
     pipeline.child = copy(pipeline, pipeline.parent)
     pipeline.finish()
     pipeline.dag.require(pipeline.sinks())
@@ -55,7 +54,9 @@ def test_nested_null_config_and_cli_json(tmp_path, capsys):
     """Null paths distinguish keys from indices and preserve real marker-like values."""
     value = {"a.b": [None, "", "None", {"0": None}], "tuple": (None, "x")}
     pipeline = Pipeline(DAG(tmp_path / "nodes"))
-    rule = Command("nested", Inputs(settings=dict), Outputs(out=Out), "touch {out}")
+    rule = Command._create(
+        "nested", Inputs(settings=dict), Outputs(out=Out), "touch {out}"
+    )
     pipeline.result = rule(pipeline, settings=value)
     pipeline.finish()
     pipeline.dag.require(pipeline.sinks())
@@ -70,7 +71,9 @@ def test_nested_null_config_and_cli_json(tmp_path, capsys):
 def test_unserializable_provenance_fails_before_runner_or_cleanup(tmp_path):
     """Fingerprint-supported but TOML-unsupported values fail before side effects."""
     pipeline = Pipeline(DAG(tmp_path / "nodes"))
-    rule = Command("unsupported", Inputs(setting=set), Outputs(out=Out), "touch {out}")
+    rule = Command._create(
+        "unsupported", Inputs(setting=set), Outputs(out=Out), "touch {out}"
+    )
     pipeline.result = rule(pipeline, setting={1, 2})
     pipeline.finish()
     pipeline.dag.require(pipeline.sinks())
@@ -91,7 +94,9 @@ def test_default_and_mixed_none_values(tmp_path):
     """Omitted scalar defaults and explicit non-Node None inputs remain distinct metadata."""
     pipeline = Pipeline(DAG(tmp_path / "nodes"))
     pipeline.default = nullable(pipeline)
-    mixed = Command("mixed", Inputs(source=Out | None), Outputs(out=Out), "touch {out}")
+    mixed = Command._create(
+        "mixed", Inputs(source=Out | None), Outputs(out=Out), "touch {out}"
+    )
     pipeline.mixed = mixed(pipeline, None)
     pipeline.finish()
     pipeline.dag.require(pipeline.sinks())

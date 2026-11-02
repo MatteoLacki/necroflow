@@ -49,8 +49,7 @@ Built-in placeholders:
 
 Decorated `@command` rules honor Python defaults on scalar/config parameters;
 fixed mixed Node/value inputs may also default to one of their non-Node arms.
-Explicit factory and direct `Command` construction use `input_defaults`. Defaults
-are type-checked when the `Command` is declared and expanded before call validation.
+Defaults are type-checked when the `Command` is declared and expanded before call validation.
 Omitted and explicitly equal values intern to the same Node. Pure fixed and
 variadic Node inputs, plus managed Node values themselves, must not be defaults.
 Built-in `text_file` inputs remain explicit; `symlink(Type, path)` ingests external files.
@@ -60,18 +59,16 @@ Built-in `text_file` inputs remain explicit; `symlink(Type, path)` ingests exter
 A fixed union such as `Bam | str | None` is one positional logical input. A
 managed Node selects a Node arm, creates a parent edge, and contributes
 lineage. A matching plain value creates no edge and contributes a named canonical
-`input_values` entry plus positional order to provenance. `CommandArgs.inputs`
-exposes a resolved Path for the Node branch or the unchanged plain value for the
-value branch. Mixed variadic element unions remain unsupported.
+`input_values` entry plus positional order to provenance. Executable bodies
+receive typed Nodes or unchanged plain values. Mixed variadic element unions remain unsupported.
 
-## Callable commands and fingerprint v4
+## Executable commands and fingerprint v4
 
-`command()` accepts a static shell string or a module-level, closure-free,
-source-inspectable Python function/lambda with one `CommandArgs` argument.
-Callbacks receive resolved named input paths or mixed values, output paths,
-config, constraints, and `workdir`; they return a shell template.
-Returned templates use the same placeholder expansion and shell quoting as literal commands. List
-commands are rejected.
+`@command` parses a typed declaration with a fixed `outputs(...)` prefix,
+ordinary Python logic, exactly one `shell(template)` registration, and a final
+return of its output artifacts. Generic factories, template/callback decorators,
+direct public `Command(...)` construction, `Rule`, and `CommandArgs` are removed.
+The body runs during graph construction. Templates use shell-quoted placeholders.
 
 Every canonical rule invocation owns one shared `RuleCall`; co-outputs share
 its 64-hex rule hash, 64-hex provenance hash, and once-per-output-root realized
@@ -81,7 +78,7 @@ Pipelines sharing a DAG return the same RuleCall and Node objects immediately.
 The rule hash covers local recipe structure and declared contracts. The
 provenance hash covers rule hash, effective config, shell, exact parent lineage,
 and any selected mixed plain values. Both
-use framed canonical serialization. Callable command identity uses canonical
+use framed canonical serialization. Executable command identity uses normalized body
 AST plus Python implementation/version. Fingerprinting is framework-owned.
 
 ## Variadic Node inputs
@@ -91,9 +88,8 @@ actual tuple as one positional rule argument. `Annotated[tuple[Node, ...],
 Many()]` defaults to at least one element; `min` and `max` are inclusive and
 `max=None` is unbounded. Several groups may coexist with fixed Node inputs.
 RuleCall and fingerprint contexts retain named tuples, while `RuleCall.parents`
-flattens them in declaration/element order for graph traversal. `CommandArgs`
-contains tuples of resolved Paths. Static placeholders quote every group path
-separately; callable commands control custom layouts. Grouping, order, names,
+flattens them in declaration/element order for graph traversal. Templates quote
+every group path separately; executable bodies can construct custom layouts. Grouping, order, names,
 and `Many` bounds affect the default fingerprint.
 
 ## Abstract Node contracts
@@ -280,9 +276,8 @@ Artifact arguments stay typed; .path is available without implying file existenc
 Inspection also executes bodies: prints go to the Python process, not subprocess
 logs. Source hashing does not discover arbitrary helper/global/environment state.
 
-Existing dynamic factories, external CommandArgs callbacks, and text/symlink
-materializers retain their separate lifecycle and identities. Old inline command
-assignments/nested command functions are replaced by shell registration.
+Built-in text/symlink recipes retain private construction and their identities.
+All public user commands use executable declarations and body AST hashing.
 
 ## Typed external-file shorthand
 

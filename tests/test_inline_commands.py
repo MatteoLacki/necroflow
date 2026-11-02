@@ -53,7 +53,7 @@ def load_rule(tmp_path, body, name="definition"):
 
 def test_executable_recipe_has_distinct_identity(tmp_path):
     """Executing declaration bodies has its own recipe format, distinct from templates."""
-    legacy = Command(
+    legacy = Command._create(
         "inline",
         Inputs(text=str),
         Outputs(result=Result),
@@ -247,23 +247,6 @@ def test_nested_inputs_outputs_and_failure_preflight(tmp_path):
     assert not other.dag.nodes_dir.exists()
 
 
-def callback_with_command_local(args):
-    command = f"touch {args.outputs.result}"
-    return command
-
-
-def test_legacy_callback_with_command_local(tmp_path):
-    """A callback's local command variable must not dispatch as an inline declaration."""
-
-    @command(callback_with_command_local)
-    def legacy():
-        result = outputs(Result)
-        return result
-
-    node = legacy(Pipeline(DAG(tmp_path)))
-    assert node.rule_call.resolve() == f"touch {node.path}"
-
-
 def test_nested_recipe_hash_and_resource_default_independence(tmp_path):
     """Nested source/config edits alter identity; resource defaults do not."""
     body = 'from necroflow import shell\n@command\ndef build(label: str = "a", threads: Resource[int] = DEFAULT):\n    result = outputs(Result)\n    def build_command():\n        return f"echo {label} > {result.path}"\n    shell(build_command())\n    return result\n'
@@ -316,14 +299,14 @@ def test_scheduler_sees_overridden_resources(tmp_path):
 def test_same_named_resource_contracts_rejected(tmp_path):
     """A file table cannot silently target incompatible declarations sharing a name."""
     dag = DAG(tmp_path, resources={"same": {"threads": 2}})
-    a = Command(
+    a = Command._create(
         "same",
         Inputs(),
         Outputs(result=Result),
         "touch {result}",
         Constraints(threads=1),
     )
-    b = Command(
+    b = Command._create(
         "same",
         Inputs(),
         Outputs(result=Result),
@@ -412,24 +395,15 @@ def returned_template(text: str, threads: Resource[int] = 2):
     return result
 
 
-def external_template(args):
-    return "printf %s {text} > {result}"
-
-
 def test_callable_templates_quote_values_once(tmp_path):
-    """Both callable forms quote placeholders, including values containing braces."""
+    """Constructed templates quote placeholders, including values containing braces."""
     text = "spaces {literal} $HOME; 'quoted'"
-    external = Command(
-        "external_template", Inputs(text=str), Outputs(result=Result), external_template
-    )
     pipeline = Pipeline(DAG(tmp_path / "nodes {literal} with spaces"))
     pipeline.nested = returned_template(pipeline, text)
-    pipeline.external = external(pipeline, text=text)
     pipeline.finish()
     pipeline.dag.require(pipeline.sinks())
     run(pipeline.dag)
     assert pipeline.nested.path.read_text() == text
-    assert pipeline.external.path.read_text() == text
 
 
 def test_callable_template_literal_shell_braces(tmp_path):

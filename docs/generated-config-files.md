@@ -23,9 +23,10 @@ all the downstream command needs:
 ```python
 from necroflow import workflow
 
-@command("sage --config {sage_config_path} --mzml {spectra} --out {sage_out}")
+@command
 def run_sage(spectra: Mzml, sage_config_path: str):
     sage_out = outputs(SageOut)
+    shell('sage --config {sage_config_path} --mzml {spectra} --out {sage_out}')
     return sage_out
 @workflow
 def pipeline(P: Pipeline, config: dict) -> None:
@@ -54,13 +55,15 @@ class SageConfig(Node):
 
 class SageOut(Node):
     filename = "results.sage.tsv"
-@command("cp {path} {sage_config}")
+@command
 def import_sage_config(path: str):
     sage_config = outputs(SageConfig)
+    shell('cp {path} {sage_config}')
     return sage_config
-@command("sage --config {sage_config} --mzml {spectra} --out {sage_out}")
+@command
 def run_sage(spectra: Mzml, sage_config: SageConfig):
     sage_out = outputs(SageOut)
+    shell('sage --config {sage_config} --mzml {spectra} --out {sage_out}')
     return sage_out
 @workflow
 def pipeline(P: Pipeline, config: dict) -> None:
@@ -91,10 +94,11 @@ class SageConfig(Node):
 def write_sage_config(text: str):
     sage_config = outputs(SageConfig)
     return sage_config
-@command("necromerge2-run-sage {spectra} {fasta} {outdir} {run_info} --config {sage_config}")
+@command
 def run_sage(spectra: SageInputStaged, fasta: Fasta, sage_config: SageConfig):
     outdir = outputs(SageRawOutdir)
     run_info = outputs(SageRunInfo)
+    shell('necromerge2-run-sage {spectra} {fasta} {outdir} {run_info} --config {sage_config}')
     return outdir, run_info
 ```
 

@@ -1,5 +1,7 @@
 """Tests for Pipeline and DAG."""
 
+from necroflow import shell
+
 from necroflow.rules import Constraints, Inputs, Outputs, Command
 
 import pytest
@@ -33,12 +35,14 @@ class E(Node):
     filename = "e.txt"
 
 
-R_make_a = Command("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
-R_make_b = Command("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
-R_make_c = Command("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
-R_make_d = Command("make_d", Inputs(b=B, c=C), Outputs(d=D), "touch {d}")
-R_make_c_from_b = Command("make_c_from_b", Inputs(b=B), Outputs(c=C), "touch {c}")
-R_make_e_from_ac = Command(
+R_make_a = Command._create("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
+R_make_b = Command._create("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
+R_make_c = Command._create("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
+R_make_d = Command._create("make_d", Inputs(b=B, c=C), Outputs(d=D), "touch {d}")
+R_make_c_from_b = Command._create(
+    "make_c_from_b", Inputs(b=B), Outputs(c=C), "touch {c}"
+)
+R_make_e_from_ac = Command._create(
     "make_e_from_ac", Inputs(a=A, c=C), Outputs(e=E), "touch {e}"
 )
 TEST_NODES_DIR = "/tmp/necroflow-test-pipeline"
@@ -433,7 +437,7 @@ def test_rule_rejects_cooutputs_with_the_same_realized_filename(tmp_path, same_t
         filename = "a.txt"
 
     second_type = A if same_type else AlsoA
-    rule = Command(
+    rule = Command._create(
         "duplicate_outputs",
         Inputs(value=str),
         Outputs(first=A, second=second_type),
@@ -463,7 +467,7 @@ def test_rule_allows_matching_input_and_output_basenames_in_distinct_workdirs(tm
     pipeline = Pipeline(DAG(tmp_path / "nodes"))
     first = R_make_a(pipeline, x="first")
     second = R_make_a(pipeline, x="second")
-    consume = Command(
+    consume = Command._create(
         "consume",
         Inputs(first=A, second=A),
         Outputs(result=A),
@@ -474,10 +478,10 @@ def test_rule_allows_matching_input_and_output_basenames_in_distinct_workdirs(tm
 
     assert first.path.name == second.path.name == result.path.name == "a.txt"
     assert len({first.path.parent, second.path.parent, result.path.parent}) == 3
-    args = result.rule_call.command_args()
-    assert args.inputs.first == first.path
-    assert args.inputs.second == second.path
-    assert args.outputs.result == result.path
+    paths = result.rule_call._input_paths()
+    assert paths["first"] == first.path
+    assert paths["second"] == second.path
+    assert result.rule_call.output_nodes["result"].path == result.path
 
 
 def test_pipeline_requires_a_dag_owner():
@@ -558,16 +562,18 @@ def test_pipeline_save(tmp_path):
 def test_workdir_is_reserved_input_output_name():
     with pytest.raises(ValueError, match="reserved command placeholder"):
 
-        @command("touch {a}")
+        @command
         def bad_input(workdir: str):
             a = outputs(A)
+            shell("touch {a}")
             return a
 
     with pytest.raises(ValueError, match="reserved command placeholder"):
 
-        @command("touch {workdir}")
+        @command
         def bad_output(x: str):
             workdir = outputs(A)
+            shell("touch {workdir}")
             return workdir
 
 
@@ -575,16 +581,18 @@ def test_constraint_is_reserved_input_output_name():
     """An input/output named `constraint` would be masked by the {constraint:...} formatter."""
     with pytest.raises(ValueError, match="reserved command placeholder"):
 
-        @command("echo {constraint} > {a}")
+        @command
         def bad_input(constraint: str):
             a = outputs(A)
+            shell("echo {constraint} > {a}")
             return a
 
     with pytest.raises(ValueError, match="reserved command placeholder"):
 
-        @command("touch {constraint}")
+        @command
         def bad_output(x: str):
             constraint = outputs(A)
+            shell("touch {constraint}")
             return constraint
 
 
@@ -612,7 +620,7 @@ def test_dag_deduplicates_shared_nodes():
 
 
 def test_dag_interns_multioutput_rule_calls_atomically():
-    rule = Command(
+    rule = Command._create(
         "make_ab",
         Inputs(x=str),
         Outputs(a=A, b=B),

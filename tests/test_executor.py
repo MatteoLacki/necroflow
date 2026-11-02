@@ -1,5 +1,7 @@
 """Tests for run(), schedulers, and thread budget."""
 
+from necroflow import shell
+
 from necroflow.rules import Constraints, Inputs, Outputs, Command
 from necroflow import (
     command,
@@ -53,43 +55,49 @@ class ShellOut(Node):
     filename = "shell.txt"
 
 
-R_make_a = Command("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
-R_make_a_exclusive = Command(
+R_make_a = Command._create("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
+R_make_a_exclusive = Command._create(
     "make_a_exclusive", Inputs(x=str), Outputs(a=A), "[ ! -e {a} ] && touch {a}"
 )
-R_make_a_workdir = Command(
+R_make_a_workdir = Command._create(
     "make_a_workdir",
     Inputs(x=str),
     Outputs(a=A),
     "mkdir -p {workdir}/scratch; echo {x} > {workdir}/scratch/value.txt; touch {a}",
 )
-R_make_a_from_workdir = Command(
+R_make_a_from_workdir = Command._create(
     "make_a_from_workdir",
     Inputs(x=str),
     Outputs(a=A),
     "mkdir -p {workdir}/tool-results; echo {x} > {workdir}/tool-results/a.txt; mv {workdir}/tool-results/a.txt {a}",
 )
-R_make_ab = Command("make_ab", Inputs(x=str), Outputs(a=A, b=B), "touch {a} {b}")
-R_make_only_a = Command(
+R_make_ab = Command._create(
+    "make_ab", Inputs(x=str), Outputs(a=A, b=B), "touch {a} {b}"
+)
+R_make_only_a = Command._create(
     "make_only_a", Inputs(x=str), Outputs(a=A, b=B), "touch {a} {b}; rm {b}"
 )
-R_make_b = Command("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
-R_make_c = Command("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
-R_make_c_from_b = Command("make_c_from_b", Inputs(b=B), Outputs(c=C), "touch {c}")
-R_fail_a = Command("fail_a", Inputs(x=str), Outputs(a=A), "{{ : {a}; exit 1; }}")
-R_no_output_a = Command(
+R_make_b = Command._create("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
+R_make_c = Command._create("make_c", Inputs(a=A), Outputs(c=C), "touch {c}")
+R_make_c_from_b = Command._create(
+    "make_c_from_b", Inputs(b=B), Outputs(c=C), "touch {c}"
+)
+R_fail_a = Command._create(
+    "fail_a", Inputs(x=str), Outputs(a=A), "{{ : {a}; exit 1; }}"
+)
+R_no_output_a = Command._create(
     "no_output_a", Inputs(x=str), Outputs(a=A), "{{ : {a}; true; }}"
 )  # exits 0, creates nothing
-R_make_a_heavy = Command(
+R_make_a_heavy = Command._create(
     "make_a_heavy", Inputs(x=str), Outputs(a=A), "touch {a}", Constraints(threads=4)
 )
-R_brace_shell = Command(
+R_brace_shell = Command._create(
     "brace_shell",
     Inputs(x=str),
     Outputs(out=ShellOut),
     "printf '%s\n' {{left,right}} > {out}",
 )
-R_env_shell = Command(
+R_env_shell = Command._create(
     "env_shell",
     Inputs(x=str),
     Outputs(out=ShellOut),
@@ -108,7 +116,7 @@ def test_run_creates_outputs(tmp_path):
 
 
 def test_repeat_retries_failed_command_until_success(tmp_path):
-    rule = Command(
+    rule = Command._create(
         "flaky",
         Inputs(value=str),
         Outputs(out=A),
@@ -136,7 +144,7 @@ def test_repeat_retries_failed_command_until_success(tmp_path):
 def test_repeat_retries_real_shell_command(tmp_path):
     counter = tmp_path / "attempts"
     counter.write_text("0")
-    rule = Command(
+    rule = Command._create(
         "flaky_shell",
         Inputs(counter=str),
         Outputs(out=A),
@@ -156,7 +164,7 @@ def test_repeat_retries_real_shell_command(tmp_path):
 
 
 def test_repeat_stops_after_first_success(tmp_path):
-    rule = Command(
+    rule = Command._create(
         "immediate_success",
         Inputs(value=str),
         Outputs(out=A),
@@ -179,7 +187,7 @@ def test_repeat_stops_after_first_success(tmp_path):
 
 
 def test_repeat_does_not_retry_non_process_errors(tmp_path):
-    rule = Command(
+    rule = Command._create(
         "runner_bug",
         Inputs(value=str),
         Outputs(out=A),
@@ -202,7 +210,7 @@ def test_repeat_does_not_retry_non_process_errors(tmp_path):
 
 
 def test_repeat_raises_last_command_failure_after_limit(tmp_path):
-    rule = Command(
+    rule = Command._create(
         "always_fails",
         Inputs(value=str),
         Outputs(out=A),
@@ -440,7 +448,7 @@ def test_run_failure_raises(tmp_path):
 def test_rule_without_command_or_materializer_fails_clearly(tmp_path):
     """A runnable rule must define either a shell command or a materializer."""
 
-    rule = Command("empty_recipe", Inputs(value=str), Outputs(out=A), None)
+    rule = Command._create("empty_recipe", Inputs(value=str), Outputs(out=A), None)
     pipeline = Pipeline(DAG(tmp_path))
     pipeline.out = rule(pipeline, value="x")
 
@@ -925,10 +933,10 @@ def test_parse_resource_si_ne_binary():
 def test_resource_cap_respected(tmp_path):
     """A custom resource cap is enforced: two jobs declaring ram=250Mi each cannot
     run simultaneously under a 300Mi cap."""
-    R2_make_a = Command(
+    R2_make_a = Command._create(
         "make_a", Inputs(x=str), Outputs(a=A), "touch {a}", Constraints(ram="250Mi")
     )
-    R2_make_b = Command(
+    R2_make_b = Command._create(
         "make_b", Inputs(x=str), Outputs(b=B), "touch {b}", Constraints(ram="250Mi")
     )
     P = Pipeline(DAG(tmp_path))
@@ -991,7 +999,7 @@ def test_text_file_recipe_distinguishes_from_shell_rule():
         filename = "config.txt"
 
     text_rules_write_config = text_file_rule("write_config", ConfigFile)
-    shell_rules_write_config = Command(
+    shell_rules_write_config = Command._create(
         "write_config",
         Inputs(text=str),
         Outputs(config_file=ConfigFile),
@@ -1169,7 +1177,7 @@ def test_symlink_file_change_reruns_downstream_consumer(tmp_path):
     source = tmp_path / "source.txt"
     source.write_text("v1\n")
     r_ingest_raw = symlink_file_rule("ingest_raw", RawData)
-    r_copy_raw = Command(
+    r_copy_raw = Command._create(
         "copy_raw", Inputs(raw=RawData), Outputs(copied=Copied), "cp {raw} {copied}"
     )
 
@@ -1262,7 +1270,7 @@ def test_call_duration_excludes_coordinator_hashing_of_other_calls(tmp_path):
     parallel call that finishes meanwhile must not have that hashing added to
     its runtime, or reports claim software time that never happened.
     """
-    sleep_make_b = Command(
+    sleep_make_b = Command._create(
         "sleep_make_b", Inputs(x=str), Outputs(b=B), "sleep 0.2; touch {b}"
     )
     P = Pipeline(DAG(tmp_path))
@@ -1290,69 +1298,24 @@ def test_run_report_marks_cached_nodes_and_measures_size(tmp_path):
     assert event.output_size_bytes == len("cached\n")
 
 
-def test_all_threads_tracks_execution_cap_and_rebinds_command(tmp_path):
-    @command("printf '%s' {threads} > {result}", threads="all")
+def test_executable_requires_concrete_threads(tmp_path):
+    @command(threads="all")
     def use_all():
         result = outputs(A)
+        shell("touch {result}")
         return result
 
-    pipeline = Pipeline(DAG(tmp_path))
-    pipeline.result = use_all(pipeline)
-    call = pipeline.result.rule_call
-    assert use_all.constraints["threads"] == "all"
-    assert use_all.resources["threads"] >= 1
-    assert (
-        call.resolve()
-        == f"printf '%s' {call.resources['threads']} > {pipeline.result.path}"
-    )
-
-    seen = []
-
-    def scheduler(ready, remaining, available):
-        seen.append((ready[0].resources["threads"], available["threads"]))
-        return ready
-
-    run_pipeline(pipeline, resource_caps={"threads": 2}, scheduler=scheduler)
-    assert seen == [(2, 2)]
-    assert call.command_args().constraints.threads == 2
-    assert call.resolve() == f"printf '%s' 2 > {pipeline.result.path}"
-    assert pipeline.result.path.read_text() == "2"
-
-    run_pipeline(
-        pipeline,
-        resource_caps={"threads": 3},
-        forced_stale_call_keys={call.relative_path},
-    )
-    assert call.resources["threads"] == 3
-    assert call.resolve() == f"printf '%s' 3 > {pipeline.result.path}"
-    assert pipeline.result.path.read_text() == "3"
-
-
-def all_threads_command(args):
-    return f"printf '%s' {args.constraints.threads} > {args.outputs.result}"
-
-
-def test_factory_all_threads_reaches_command_callback(tmp_path):
-    use_all = Command(
-        "factory_all_threads",
-        Inputs(),
-        Outputs(result=A),
-        all_threads_command,
-        Constraints(threads="all"),
-    )
-    pipeline = Pipeline(DAG(tmp_path))
-    pipeline.result = use_all(pipeline)
-
-    run_pipeline(pipeline, resource_caps={"threads": 4})
-    assert pipeline.result.rule_call.command_args().constraints.threads == 4
-    assert pipeline.result.path.read_text() == "4"
+    with pytest.raises(ValueError, match="require concrete threads"):
+        use_all(Pipeline(DAG(tmp_path)))
 
 
 # ── scheduling stops, fail-fast drain, resource pool ─────────────────────────
 
 
-R_make_b_root = Command("make_b_root", Inputs(x=str), Outputs(b=B), "touch {b}")
-R_slow_a = Command("slow_a", Inputs(x=str), Outputs(a=A), "sleep 0.3; touch {a}")
+R_make_b_root = Command._create("make_b_root", Inputs(x=str), Outputs(b=B), "touch {b}")
+R_slow_a = Command._create(
+    "slow_a", Inputs(x=str), Outputs(a=A), "sleep 0.3; touch {a}"
+)
 
 
 def test_scheduler_remaining_excludes_running_calls(tmp_path):

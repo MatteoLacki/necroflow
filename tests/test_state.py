@@ -20,10 +20,12 @@ class C(Node):
     filename = "c"
 
 
-R_make_a = Command("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
-R_make_b = Command("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
-R_fail_c = Command("fail_c", Inputs(x=str), Outputs(c=C), "{{ : {c}; exit 1; }}")
-R_signal_c = Command(
+R_make_a = Command._create("make_a", Inputs(x=str), Outputs(a=A), "touch {a}")
+R_make_b = Command._create("make_b", Inputs(a=A), Outputs(b=B), "touch {b}")
+R_fail_c = Command._create(
+    "fail_c", Inputs(x=str), Outputs(c=C), "{{ : {c}; exit 1; }}"
+)
+R_signal_c = Command._create(
     "signal_c", Inputs(x=str), Outputs(c=C), "{{ : {c}; kill -TERM $$; }}"
 )
 
@@ -178,11 +180,11 @@ class Y(Node):
     filename = "y"
 
 
-R2_make_x = Command("make_x", Inputs(v=str), Outputs(x=X), "touch {x}")
-R2_make_y_fail = Command(
+R2_make_x = Command._create("make_x", Inputs(v=str), Outputs(x=X), "touch {x}")
+R2_make_y_fail = Command._create(
     "make_y_fail", Inputs(x=X), Outputs(y=Y), "touch {y} && exit 1"
 )
-R2_make_y_signal = Command(
+R2_make_y_signal = Command._create(
     "make_y_signal", Inputs(x=X), Outputs(y=Y), "touch {y}; kill -TERM $$"
 )
 
@@ -252,13 +254,13 @@ def test_directory_output_content_change_invalidates_children(tmp_path):
     class Copied(Node):
         filename = "copied.txt"
 
-    make_directory = Command(
+    make_directory = Command._create(
         "make_directory",
         Inputs(value=str),
         Outputs(directory=Directory),
         "mkdir -p {directory}; printf original > {directory}/item.txt",
     )
-    copy_item = Command(
+    copy_item = Command._create(
         "copy_item",
         Inputs(directory=Directory),
         Outputs(copied=Copied),
@@ -303,7 +305,7 @@ def test_nodetype_invalidator_external_file_change_reruns_call(tmp_path):
         filename = "external.txt"
         invalidator = external_hash
 
-    r_make_external = Command(
+    r_make_external = Command._create(
         "make_external",
         Inputs(text=str, dependency=str),
         Outputs(out=ExternalInvalidated),
@@ -333,7 +335,7 @@ def test_nodetype_invalidator_output_file_change_reruns_call(tmp_path):
         filename = "output-hash.txt"
         invalidator = output_hash
 
-    r_make_output_hash = Command(
+    r_make_output_hash = Command._create(
         "make_output_hash",
         Inputs(text=str),
         Outputs(out=OutputHashInvalidated),
@@ -362,7 +364,7 @@ def test_nodetype_invalidator_missing_metadata_reruns_call(tmp_path):
         filename = "output.txt"
         invalidator = output_hash
 
-    r_make_output = Command(
+    r_make_output = Command._create(
         "make_output",
         Inputs(text=str),
         Outputs(out=OutputInvalidated),
@@ -392,7 +394,7 @@ def test_nodetype_invalidator_must_return_string_token(tmp_path):
         filename = "result"
         invalidator = lambda node: 42
 
-    rule = Command(
+    rule = Command._create(
         "invalid_token",
         Inputs(value=str),
         Outputs(result=InvalidToken),
@@ -420,7 +422,7 @@ def test_nodetype_invalidator_exception_fails_fast(tmp_path):
         filename = "raising.txt"
         invalidator = maybe_raise
 
-    r_make_raising = Command(
+    r_make_raising = Command._create(
         "make_raising",
         Inputs(text=str),
         Outputs(out=RaisingInvalidator),
@@ -454,7 +456,7 @@ def test_multi_output_invalidator_reruns_shared_command_once(tmp_path):
     class PlainB(Node):
         filename = "b.txt"
 
-    r_make_pair = Command(
+    r_make_pair = Command._create(
         "make_pair",
         Inputs(dependency=str, count=str),
         Outputs(a=InvalidatedA, b=PlainB),

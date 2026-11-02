@@ -1,9 +1,10 @@
-"""The declaration name changes without breaking old imports or identities."""
+"""Only executable declarations form the public command API."""
 
-from necroflow import shell
+import pytest
 
-from necroflow import Command, DAG, Pipeline, Node, command, outputs
-from necroflow.rules import Rule, Inputs, Outputs
+import necroflow
+from necroflow import Command, DAG, Pipeline, Node, command, outputs, shell
+from necroflow import rules
 
 
 class Result(Node):
@@ -17,24 +18,61 @@ def make():
     return result
 
 
-def test_decorators_return_public_command_class():
-    """Command is the actual runtime class, with Rule retained as the same alias."""
+def test_decorator_returns_public_command_class(tmp_path):
     assert type(make) is Command
-    assert Command.__name__ == "Command"
-    assert Rule is Command
-    assert isinstance(make, Rule)
-
-
-def test_legacy_alias_preserves_identity_and_interning(tmp_path):
-    """Legacy and new constructors produce identical recipes and canonical Nodes."""
-    old = Rule("make", Inputs(), Outputs(result=Result), "touch {result}")
-    new = Command("make", Inputs(), Outputs(result=Result), "touch {result}")
     pipeline = Pipeline(DAG(tmp_path))
-    a = old(pipeline)
-    b = new(pipeline)
-    c = make(pipeline)
-    assert a is b
-    assert c is make(pipeline)
-    assert c.rule_hash != a.rule_hash
-    assert a.rule_hash == b.rule_hash
-    assert a.provenance_hash == b.provenance_hash
+    assert make(pipeline) is make(pipeline)
+
+
+def test_removed_exports():
+    assert not hasattr(rules, "Rule")
+    assert not hasattr(necroflow, "CommandArgs")
+
+
+@pytest.mark.parametrize("template", ["touch {result}", ["touch", "{result}"], 42])
+def test_template_decorator_removed(template):
+    with pytest.raises(TypeError, match="Use @command"):
+        command(template)
+
+
+def test_factory_removed():
+    with pytest.raises(TypeError):
+        command(
+            "touch {result}", rules.Inputs(), rules.Outputs(result=Result), name="old"
+        )
+
+
+@pytest.mark.parametrize("option", ["cmd", "name", "doc"])
+def test_removed_options_cannot_become_resources(option):
+    with pytest.raises(TypeError, match="removed command options"):
+        command(**{option: "old"})
+
+
+def test_direct_constructor_removed():
+    with pytest.raises(TypeError):
+        Command("old", rules.Inputs(), rules.Outputs(result=Result), "touch {result}")
+    with pytest.raises(TypeError, match="Use @command"):
+        Command()
+
+
+def test_callback_decorator_removed():
+    def callback(args):
+        return "touch {result}"
+
+    with pytest.raises(TypeError, match="missing type annotations"):
+        command(callback)
+
+
+def test_builtins_still_work(tmp_path):
+    from necroflow import text_file_rule, symlink_file_rule, run
+
+    pipeline = Pipeline(DAG(tmp_path / "nodes"))
+    source = tmp_path / "source.txt"
+    source.write_text("source")
+    pipeline.text = text_file_rule("text", Result)(pipeline, text="hello")
+    pipeline.link = symlink_file_rule("link", Result)(pipeline, path=str(source))
+    pipeline.finish()
+    pipeline.dag.require(pipeline.sinks())
+    run(pipeline.dag)
+    assert pipeline.text.path.read_text() == "hello"
+    assert pipeline.link.path.read_text() == "source"
