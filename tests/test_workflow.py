@@ -36,12 +36,6 @@ class Right(Node):
     filename = "right.txt"
 
 
-@text_file
-def write_text(text: str):
-    result = outputs(Text)
-    return result
-
-
 @command
 def split(source: Text):
     left = outputs(Left)
@@ -71,7 +65,7 @@ def test_workflow_rules_and_file_helpers_execute_with_explicit_labels(tmp_path):
 
     @workflow
     def build(P):
-        local = write_text(text="hello\n")
+        local = text_file(Text, text="hello\n")
         left, right = split(local)
         P.result = merge((left, right))
         P.external = symlink(Text, external)
@@ -101,14 +95,14 @@ def test_nested_views_preserve_labels_deduplication_and_parent_context(tmp_path)
 
     @workflow
     def sample(P):
-        P.source = write_text(text="shared")
+        P.source = text_file(Text, text="shared")
         qc(P.subpipeline("qc"), P.source)
 
     @workflow
     def cohort(P):
         sample(P.subpipeline("samples/A"))
         sample(P.subpipeline("samples/B"))
-        P.tail = write_text(text="tail")
+        P.tail = text_file(Text, text="tail")
 
     P = Pipeline(DAG(tmp_path))
     cohort(P)
@@ -124,7 +118,7 @@ def test_nested_views_preserve_labels_deduplication_and_parent_context(tmp_path)
     assert P["samples/A/qc/left"] is P["samples/B/qc/left"]
     assert len(P.dag.calls) == 3
     with pytest.raises(RuntimeError, match="active @workflow"):
-        write_text(text="outside")
+        text_file(Text, text="outside")
 
 
 def test_nested_independent_owner_and_exceptions_restore_context(tmp_path):
@@ -134,14 +128,14 @@ def test_nested_independent_owner_and_exceptions_restore_context(tmp_path):
 
     @workflow
     def child(P, fail=False):
-        result = write_text(text="child")
+        result = text_file(Text, text="child")
         assert result.rule_call.dag is P.dag
         if fail:
             raise ValueError("child failed")
         return result
 
     def helper():
-        return write_text(text="helper")
+        return text_file(Text, text="helper")
 
     @workflow
     def parent(P):
@@ -166,19 +160,19 @@ def test_explicit_owner_wins_without_changing_active_context(tmp_path):
     """Explicit ownership remains usable anywhere and never replaces workflow context."""
     outer = Pipeline(DAG(tmp_path / "outer"))
     explicit = Pipeline(DAG(tmp_path / "explicit"))
-    before = write_text(explicit, text="explicit")
+    before = text_file(Text, pipeline=explicit, text="explicit")
 
     @workflow
     def build(P):
-        assert write_text(explicit, text="explicit") is before
-        P.result = write_text(text="implicit")
+        assert text_file(Text, pipeline=explicit, text="explicit") is before
+        P.result = text_file(Text, text="implicit")
         assert P.result.rule_call.dag is P.dag
         with pytest.raises(ValueError, match="different DAG"):
             split(before)
         explicit.finish()
         with pytest.raises(RuntimeError, match="construction has finished"):
-            write_text(explicit, text="late")
-        P.next = write_text(text="next")
+            text_file(Text, pipeline=explicit, text="late")
+        P.next = text_file(Text, text="next")
 
     build(outer)
     assert outer.next.rule_call.dag is outer.dag
@@ -228,7 +222,7 @@ def test_finishing_inside_workflow_prevents_further_rule_calls(tmp_path):
     @workflow
     def build(P):
         P.finish()
-        write_text(text="late")
+        text_file(Text, text="late")
 
     P = Pipeline(DAG(tmp_path))
     with pytest.raises(RuntimeError, match="construction has finished"):
@@ -266,14 +260,14 @@ def test_workflow_preserves_signature_metadata_and_return_value(tmp_path):
 
     def original(scope: Pipeline, value: str = "default"):
         """Original docstring."""
-        return write_text(text=value)
+        return text_file(Text, text=value)
 
     wrapped = workflow(original)
     assert inspect.signature(wrapped) == inspect.signature(original)
     assert wrapped.__name__ == original.__name__
     assert wrapped.__doc__ == original.__doc__
     P = Pipeline(DAG(tmp_path))
-    assert wrapped(P) is write_text(P, text="default")
+    assert wrapped(P) is text_file(Text, pipeline=P, text="default")
     assert P.labels == ()
 
 
@@ -284,7 +278,7 @@ def test_independent_threads_do_not_share_active_pipeline(tmp_path):
     @workflow
     def build(P):
         barrier.wait(timeout=10)
-        P.source = write_text(text="same")
+        P.source = text_file(Text, text="same")
         barrier.wait(timeout=10)
         return P.source
 
@@ -295,4 +289,4 @@ def test_independent_threads_do_not_share_active_pipeline(tmp_path):
         assert node.rule_call.dag is P.dag
     assert nodes[0].relative_path == nodes[1].relative_path
     with pytest.raises(RuntimeError, match="active @workflow"):
-        write_text(text="outside")
+        text_file(Text, text="outside")

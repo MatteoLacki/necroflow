@@ -15,12 +15,6 @@ artifacts = ModuleType("artifact_types")
 artifacts.Text = Text
 
 
-@nf.text_file
-def text_source(text: str):
-    source = nf.outputs(Text)
-    return source
-
-
 @nf.command
 def uppercase(source: Text, threads: nf.Resource[int] = 1):
     result = nf.outputs(artifacts.Text)
@@ -35,7 +29,7 @@ def test_namespace_declarations_execute_and_cache(tmp_path):
 
     @nf.workflow
     def build(P):
-        P.text = text_source(text="lowercase")
+        P.text = nf.text_file(Text, text="lowercase")
         P.upper = uppercase(P.text)
         P.external = nf.symlink(Text, external)
 

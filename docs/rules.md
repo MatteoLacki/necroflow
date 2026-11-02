@@ -164,8 +164,7 @@ its runtime-checkable annotation. A mixed-input default must satisfy one of its
 non-Node arms; a managed Node cannot be captured as a default because it belongs
 to one concrete DAG. Defaults on pure fixed or variadic Node inputs raise
 ``TypeError``. Positional mixed defaults must be trailing among positional
-inputs so omission cannot shift a later required dependency. Specialized
-``text_file`` declarations continue to require their text input explicitly;
+inputs so omission cannot shift a later required dependency. ``text_file(Type, text)`` requires its text input explicitly;
 ``symlink(Type, path)`` requires an external path.
 
 Defaults are expanded before a rule call is validated and fingerprinted. An
@@ -664,7 +663,7 @@ dag.require(P.sinks())
 ## Command declaration class
 
 `Command` is the declaration class returned by `@command`,
-`@text_file`, and `symlink_file_rule(...)`. It is available as `from necroflow import Command`.
+`text_file_rule(...)`, and `symlink_file_rule(...)`. It is available as `from necroflow import Command`.
 Calling a Command compiles output Nodes; `RuleCall` remains the invocation/execution
 object. Use `Command` for type checks, not direct construction. The `Rule` alias
 and generic factory are removed.

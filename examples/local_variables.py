@@ -9,13 +9,6 @@ class Text(Node):
     filename = "text.txt"
 
 
-@text_file
-def write_text(text: str):
-    """Write the configured source text."""
-    result = outputs(Text)
-    return result
-
-
 @command
 def uppercase(source: Text):
     """Convert the source text to uppercase."""
@@ -35,11 +28,11 @@ def add_prefix(source: Text):
 @workflow
 def local_variable_pipeline(P: Pipeline, config: dict) -> None:
     """Rebind one local name through the chain and label only its result."""
-    current = write_text(text=config["text"] + "\n")
+    current = text_file(Text, text=config["text"] + "\n")
     current = uppercase(current)
     current = add_prefix(current)
     # THIS WILL NOT WORK WITH P.current:
-    # P.current = write_text(text=config["text"] + "\n")
+    # P.current = text_file(Text, text=config["text"] + "\n")
     # P.current = uppercase(current) # BOOM!
     # second time P.current occurs as assignment against the key uniqueness principle
     # needed to assure pipeline nodes are uniquely requestable.

@@ -22,12 +22,6 @@ class Summary(nf.Node):
     filename = "summary.txt"
 
 
-@nf.text_file
-def write_tool_config(text: str):
-    tool_config = nf.outputs(ToolConfig)
-    return tool_config
-
-
 @nf.command
 def process_text(
     raw_text: RawText, tool_config: ToolConfig, threads: nf.Resource[int] = 1
@@ -47,7 +41,8 @@ def summarize(processed_text: ProcessedText):
 @nf.workflow
 def canonical_pipeline(P: nf.Pipeline, config: dict) -> None:
     P.raw = nf.symlink(RawText, config["input"])
-    P.tool_config = write_tool_config(
+    P.tool_config = nf.text_file(
+        ToolConfig,
         text=json.dumps(config.get("tool", {}), sort_keys=True, indent=2) + "\n",
     )
     P.processed = process_text(P.raw, P.tool_config)

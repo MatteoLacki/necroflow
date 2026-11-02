@@ -7,7 +7,6 @@ from necroflow import (
     command,
     symlink,
     symlink_file_rule,
-    text_file,
     text_file_rule,
 )
 
@@ -1040,34 +1039,8 @@ def test_text_file_custom_input_name(tmp_path):
     assert P.config.path.read_text() == "custom\n"
 
 
-def test_text_file_decorator_matches_factory_fingerprint():
-    class ConfigFile(Node):
-        filename = "config.txt"
-
-    @text_file
-    def write_config(text: str):
-        """Write the configuration."""
-        config_file = outputs(ConfigFile)
-        return config_file
-
-    explicit = text_file_rule(
-        "write_config",
-        ConfigFile,
-        input_name="text",
-        output_name="config_file",
-    )
-
-    P = Pipeline(DAG("/tmp/necroflow-test-text-decorator"))
-    assert (
-        write_config(P, text="same").provenance_hash
-        == explicit(P, text="same").provenance_hash
-    )
-    assert write_config.info == "Write the configuration."
-
-
 def test_text_file_rule_accepts_encoding(tmp_path):
-    """text_file_rule(..., encoding=...) is the only way to select a non-default
-    encoding because @text_file is bare-only."""
+    """Explicit text-file factories support non-default encoding."""
 
     class ConfigFile(Node):
         filename = "config.txt"
@@ -1079,18 +1052,6 @@ def test_text_file_rule_accepts_encoding(tmp_path):
     run_pipeline(P)
 
     assert P.config.path.read_text(encoding="utf-16-le") == "hello"
-
-
-def test_text_file_decorator_rejects_invalid_declaration():
-    class ConfigFile(Node):
-        filename = "config.txt"
-
-    with pytest.raises(TypeError, match="exactly one input"):
-
-        @text_file
-        def bad_text_file(first: str, second: str):
-            config_file = outputs(ConfigFile)
-            return config_file
 
 
 # -- built-in symlink ingestion rule ------------------------------------------

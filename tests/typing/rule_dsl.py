@@ -160,12 +160,6 @@ class SubSource(Source):
     filename = "sub.txt"
 
 
-@text_file
-def text_source(text: str) -> Source:
-    source = outputs(Source)
-    return source
-
-
 @command
 def precise(source: Source, /, *, count: int = 1, threads: Resource[int] = 1) -> Left:
     left = outputs(Left)
@@ -182,7 +176,8 @@ def check_precise_calls(source: Source, sub: SubSource) -> None:
     assert_type(source.path, Path)
     assert_type(precise(source, count=2), Left)
     assert_type(precise(pipeline, sub, threads=2), Left)
-    assert_type(text_source("hello"), Source)
+    assert_type(text_file(Source, "hello"), Source)
+    assert_type(text_file(SubSource, "hello", pipeline=pipeline), SubSource)
     assert_type(symlink(SubSource, Path("/tmp/input")), SubSource)
     assert_type(symlink(Source, "/tmp/input", pipeline=pipeline), Source)
 

@@ -818,14 +818,6 @@ class Command(Generic[_Params, _ReturnT]):
         return self._shape_outputs(nodes)
 
 
-def _parse_rule_fn(fn) -> tuple:
-    """Keep built-in declarations restricted to output assignments."""
-    parsed = parse_declaration(fn)
-    if parsed.resources:
-        raise TypeError("built-in declarations do not accept Resource parameters")
-    return parsed.name, parsed.inputs, parsed.outputs, parsed.info
-
-
 def _decorated_input_defaults(fn: Callable, input_names: set[str]) -> dict[str, Any]:
     """Return Python defaults belonging to annotated rule inputs."""
     import inspect
@@ -877,33 +869,6 @@ def command(fn=None, /, *, repeat: int = 1, **constraints):
         )
 
     return decorate if fn is None else decorate(fn)
-
-
-def _validate_builtin_declaration(fn: Callable, kind: str) -> tuple:
-    """Parse and validate the single-string-input, single-output built-in shape."""
-    import inspect
-
-    signature = inspect.signature(fn)
-    parameters = list(signature.parameters.values())
-    if len(parameters) != 1:
-        raise TypeError(f"{kind} rule {fn.__name__!r} must declare exactly one input")
-    parameter = parameters[0]
-    if parameter.kind is not inspect.Parameter.POSITIONAL_OR_KEYWORD:
-        raise TypeError(
-            f"{kind} rule {fn.__name__!r} input must be a normal named parameter"
-        )
-    if parameter.default is not inspect.Parameter.empty:
-        raise TypeError(f"{kind} rule {fn.__name__!r} input must not have a default")
-
-    name, inputs, outputs, info = _parse_rule_fn(fn)
-    if len(inputs) != 1 or next(iter(inputs.values()), None) is not str:
-        raise TypeError(f"{kind} rule {name!r} input must be annotated as str")
-    if len(outputs) != 1:
-        raise TypeError(f"{kind} rule {name!r} must declare exactly one output")
-    output_name, output = next(iter(outputs.items()))
-    if not _is_nodetype(output):
-        raise TypeError(f"{kind} rule {name!r} output must be a Node, got {output!r}")
-    return name, parameter.name, output_name, output, info
 
 
 def _make_text_file_rule(
@@ -964,23 +929,35 @@ def text_file_rule(
     )
 
 
-def text_file(fn: Callable[_Params, _ReturnT], /) -> Command[_Params, _ReturnT]:
-    """Declare a built-in text-file rule. Use text_file_rule(...) for a non-default encoding."""
-    name, input_name, output_name, output, info = _validate_builtin_declaration(
-        fn, "text_file"
+def text_file(
+    output: type[_OutputT],
+    text: str,
+    *,
+    encoding: str = "utf-8",
+    pipeline: Pipeline | None = None,
+) -> _OutputT:
+    """Register a typed text artifact in the active workflow.
+
+    Use ``text_file(Config, text)`` inside a workflow, or supply ``pipeline=P``
+    explicitly. The generated ``text_file_<TypeName>`` rule writes the exact
+    text during execution, using the existing cached materializer. Type identity,
+    filename, encoding, and text determine identity; labels and call sites do not.
+    Construction creates no filesystem entries.
+    """
+    from necroflow.pipeline import Pipeline
+
+    if not _is_nodetype(output):
+        raise TypeError(f"text_file output must be a Node subclass, got {output!r}")
+    if pipeline is None:
+        pipeline = _active_pipeline.get()
+    if pipeline is None:
+        raise RuntimeError("text_file requires an active @workflow or pipeline=P")
+    if not isinstance(pipeline, Pipeline):
+        raise TypeError("text_file pipeline must be a Pipeline")
+    rule = text_file_rule(
+        f"text_file_{output.__name__}", output, encoding=encoding, output_name="file"
     )
-    return cast(
-        Command[_Params, _ReturnT],
-        _make_text_file_rule(
-            name,
-            output,
-            input_name=input_name,
-            encoding="utf-8",
-            output_name=output_name,
-            info=info,
-            signature=inspect.signature(fn),
-        ),
-    )
+    return cast(_OutputT, rule(pipeline, text=text))
 
 
 def _make_symlink_file_rule(

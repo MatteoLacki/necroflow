@@ -151,7 +151,7 @@ src/necroflow/
   contexts.py        — immutable NamedValues mapping
   containers.py      — Docker config value, `{env}:` command prefix, docker run argv
   fingerprints.py    — canonical v4 rule/provenance hashes and callable AST identity
-  rules.py           — Command internals plus command, text-file declarations and typed symlink ingestion,
+  rules.py           — Command internals plus command, typed text-file creation and symlink ingestion,
                        parse_resource with SI/binary suffixes, threads="all" resolution
   schedulers.py      — RuleCall Scheduler protocol and fifo_scheduler
   fs.py              — node-store locking, path/shell validation, and output mtimes
@@ -232,3 +232,7 @@ the executable body AST identity path.
 External-file ingestion uses `symlink(Type, path)` in workflows or
 `symlink(Type, path, pipeline=P)` directly. `@symlink_file` is removed; see
 `docs/rules.md` and `docs/caching.md` for generated identity and content tracking.
+
+Text artifacts use `text_file(Type, text)` in workflows, or explicit `pipeline=P`,
+with optional `encoding="utf-8"`. `@text_file` is removed. The generated typed
+artifact uses the existing text materializer; see `docs/generated-config-files.md`.

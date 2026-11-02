@@ -582,3 +582,19 @@ Binding collects *arguments into that tuple, and BoundArguments expands it again
 when executing the declaration. Scalar/resource parameters after it are keyword-only.
 Annotated per-element Node types may carry Many bounds for the whole group.
 Non-Node varargs and VAR_KEYWORD declarations are rejected at decoration time.
+
+## Typed text-file shorthand
+
+`text_file(Type, text, *, encoding="utf-8", pipeline=None)` compiles through the
+existing text-file rule factory. Like `symlink`, it selects the active workflow
+Pipeline or explicit `pipeline=P`, then invokes `text_file_<TypeName>` with one
+string config input `text` and one typed output `file`. The return type preserves
+the supplied Node subclass, which must declare a filename.
+
+Type identity, filename, and the encoding-bearing writer recipe enter the rule
+hash; text enters provenance. Equivalent calls intern across labels and workflow
+views. Construction creates no files; the existing Python materializer writes
+text during execution. Owner validation, construction boundaries, resource policy,
+and execution follow the normal Command lifecycle. No registry or label-derived
+identity is introduced. The former `@text_file` decorator is removed; migrating
+its named declarations changes rule names and therefore cached artifact paths.

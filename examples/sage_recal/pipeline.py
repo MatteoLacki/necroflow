@@ -119,12 +119,6 @@ def raw_spectra(P: nf.Pipeline, path: str):
     )
 
 
-@nf.text_file
-def write_sage_config(text: str):
-    sage_config = nf.outputs(SageConfig)
-    return sage_config
-
-
 # --- compute rules ---
 @nf.command
 def select_recalibration_spectra(spectra: SpectraFile, top_k: int):
@@ -225,10 +219,11 @@ def recalibrated_sage_search(P: nf.Pipeline, config: dict) -> None:
     to correct for. A wide calibration-only tolerance fixes that."""
     P.spectra = raw_spectra(P, config["spectra_path"])
     P.fasta = nf.symlink(Fasta, config["fasta_path"])
-    P.sage_config = write_sage_config(
-        text=json.dumps(config["sage"], sort_keys=True, indent=2) + "\n"
+    P.sage_config = nf.text_file(
+        SageConfig, text=json.dumps(config["sage"], sort_keys=True, indent=2) + "\n"
     )
-    P.calibration_sage_config = write_sage_config(
+    P.calibration_sage_config = nf.text_file(
+        SageConfig,
         text=json.dumps(
             {**config["sage"], **config["calibration_tol"]}, sort_keys=True, indent=2
         )

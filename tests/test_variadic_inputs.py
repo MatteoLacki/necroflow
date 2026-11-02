@@ -354,11 +354,6 @@ def test_shell_log_tuple_concatenates_quoted_paths_in_order(tmp_path):
     class Log(Node):
         filename = "run {literal}'s $value.log"
 
-    @text_file
-    def make_log(text: str):
-        log = outputs(Log)
-        return log
-
     @command
     def combine_logs(logs: tuple[Log, ...]) -> Log:
         combined_log = outputs(Log)
@@ -368,8 +363,8 @@ def test_shell_log_tuple_concatenates_quoted_paths_in_order(tmp_path):
         return combined_log
 
     pipeline = Pipeline(DAG(tmp_path / "nodes {braces} 'quotes' $value; spaces"))
-    pipeline.first = make_log(pipeline, text="first\n")
-    pipeline.second = make_log(pipeline, text="second\n")
+    pipeline.first = text_file(Log, pipeline=pipeline, text="first\n")
+    pipeline.second = text_file(Log, pipeline=pipeline, text="second\n")
     logs = (pipeline.first, pipeline.second)
     pipeline.forward = combine_logs(pipeline, logs)
     pipeline.reverse = combine_logs(pipeline, tuple(reversed(logs)))
@@ -569,17 +564,11 @@ def star_merge(*bams: Bam, threads: Resource[int] = 1) -> Merged:
     return merged
 
 
-@text_file
-def bam_text(text: str):
-    bam = outputs(Bam)
-    return bam
-
-
 def test_star_inputs_execute_and_preserve_order(tmp_path):
     """Expanded positional artifacts bind as a tuple, with keyword-only resources."""
     pipeline = Pipeline(DAG(tmp_path / "star {braces} 'quotes' spaces"))
-    a = bam_text(pipeline, text="a\n")
-    b = bam_text(pipeline, text="b\n")
+    a = text_file(Bam, pipeline=pipeline, text="a\n")
+    b = text_file(Bam, pipeline=pipeline, text="b\n")
     pipeline.result = star_merge(pipeline, b, a, b, threads=2)
     assert star_merge(pipeline, *[b, a, b], threads=2) is pipeline.result
     assert pipeline.result.parents == [b, a, b]
@@ -619,7 +608,7 @@ def test_star_inputs_scoped_fixed_and_union(tmp_path):
 
     @workflow
     def build(P):
-        P.first = bam_text(text="first")
+        P.first = text_file(Bam, text="first")
         P.other = _source(P, "other", OtherBam)
         P.merged = mixed(P.first, P.other, P.first, label="scoped")
 

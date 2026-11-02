@@ -79,26 +79,23 @@ producer itself a necroflow rule.
 ## Generated config files
 
 For tools that normally consume a large config file, but whose settings belong in
-the main job TOML, register a built-in text-file rule and pass serialized config
-text from the workflow. The text is written directly by Python, so it
+the main job TOML, call `nf.text_file(Type, text)` directly in the workflow with serialized config
+text. The text is written directly by Python, so it
 avoids shell quoting problems and command-line length limits from patterns such
 as `printf {config}`.
 
 ```python
 import json
-from necroflow import Node, command, text_file, outputs
+import necroflow as nf
 
-class SageConfig(Node):
+class SageConfig(nf.Node):
     filename = "sage.json"
-@text_file
-def write_sage_config(text: str):
-    sage_config = outputs(SageConfig)
-    return sage_config
-@command
+
+@nf.command
 def run_sage(spectra: SageInputStaged, fasta: Fasta, sage_config: SageConfig):
-    outdir = outputs(SageRawOutdir)
-    run_info = outputs(SageRunInfo)
-    shell('necromerge2-run-sage {spectra} {fasta} {outdir} {run_info} --config {sage_config}')
+    outdir = nf.outputs(SageRawOutdir)
+    run_info = nf.outputs(SageRunInfo)
+    nf.shell("necromerge2-run-sage {spectra} {fasta} {outdir} {run_info} --config {sage_config}")
     return outdir, run_info
 ```
 
@@ -111,13 +108,24 @@ min_peaks = 15
 ```
 
 ```python
-P.sage_config = write_sage_config(
-    text=json.dumps(config["sage"], sort_keys=True, indent=2) + "\n"
+P.sage_config = nf.text_file(
+    SageConfig, json.dumps(config["sage"], sort_keys=True, indent=2) + "\n"
 )
 P.sage_out, P.run_info = run_sage(P.spectra, P.fasta, P.sage_config)
 ```
 
-`@text_file` and `text_file_rule(name, output, input_name="text")` create normal cached nodes.
+`text_file(Type, text, *, encoding="utf-8", pipeline=None)` returns a typed,
+normal cached Node. Like `symlink`, it uses the active workflow or an explicit
+`pipeline=P`. The Node subclass supplies the filename. Serialization stays explicit;
+no file is written until execution. Repeated equivalent calls deduplicate regardless
+of labels or call sites.
+
+The old `@text_file` decorator is removed: retain the Node subclass, delete the
+writer declaration, and replace `write_config(text=value)` with
+`nf.text_file(Config, value)`. Generated rule names change to `text_file_<TypeName>`,
+so migrating old declarations changes cache paths.
+`text_file_rule(name, output, input_name="text")` remains available for explicitly
+named rules.
 The text value participates in the node fingerprint, and the built-in writer
 recipe (`necroflow.text_file/v1`) is hashed in place of shell command text.
 
