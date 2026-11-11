@@ -2,6 +2,9 @@
 
 For a compact map of the current software surface, start with `features.txt`.
 
+For compact Python node declarations, follow [skills/compact_cols.md](skills/compact_cols.md):
+class grouping, aligned field columns, formatter guards, and docstring spacing.
+
 ## Dependency decision
 
 Keep `tomlkit`; do not remove or replace it solely to reduce dependency count.

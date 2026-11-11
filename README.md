@@ -326,6 +326,7 @@ text = '{\n  "mode": "uppercase"\n}\n'
 - [Job TOML and parameter grids](docs/job-toml.md)
 - [Config validation](docs/config-validation.md)
 - [Rules and typed outputs](docs/rules.md)
+- [Compact class columns: node declaration formatting](skills/compact_cols.md)
 - [Command-call lifecycle and pipeline internals](docs/rule-call-lifecycle.md)
 - [Generated config files](docs/generated-config-files.md)
 - [Executor, classification, scheduling, and cleanup](docs/executor.md)
